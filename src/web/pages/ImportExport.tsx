@@ -92,8 +92,7 @@ const WEBDAV_EXPORT_TYPE_OPTIONS = [
   { value: 'preferences', label: tr('pages.importExport.systemSettings') },
 ] as const;
 
-function downloadJsonFile(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+function downloadFile(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -357,14 +356,8 @@ export default function ImportExport() {
   const handleExport = async (type: BackupType) => {
     setExportingType(type);
     try {
-      const data = await api.exportBackup(type);
-      const date = new Date().toISOString().split('T')[0];
-      const fileName: Record<BackupType, string> = {
-        all: `metapi-backup-${date}.json`,
-        accounts: `metapi-accounts-${date}.json`,
-        preferences: `metapi-preferences-${date}.json`,
-      };
-      downloadJsonFile(data, fileName[type]);
+      const data = await api.downloadBackup(type);
+      downloadFile(data.blob, data.filename);
       toast.success(tr('pages.importExport.exportSuccessful'));
     } catch (err: any) {
       toast.error(err?.message || tr('pages.importExport.exportFailed'));
@@ -373,24 +366,30 @@ export default function ImportExport() {
     }
   };
 
-  const readFile = (file: File) => {
-    if (!file.name.endsWith('.json') && file.type !== 'application/json') {
+  const readFile = async (file: File) => {
+    const isGzip = file.name.toLowerCase().endsWith('.json.gz') || file.type === 'application/gzip';
+    if (!isGzip && !file.name.endsWith('.json') && file.type !== 'application/json') {
       toast.error(tr('pages.importExport.pleaseSelectBackupFileJsonFormat'));
       return;
     }
     setSelectedFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setImportData(String(e.target?.result || ''));
-    };
-    reader.onerror = () => toast.error(tr('pages.importExport.failedReadFile'));
-    reader.readAsText(file);
+    try {
+      if (isGzip) {
+        if (typeof DecompressionStream === 'undefined') throw new Error('Gzip decompression is not supported by this browser');
+        const stream = file.stream().pipeThrough(new DecompressionStream('gzip'));
+        setImportData(await new Response(stream).text());
+      } else {
+        setImportData(await file.text());
+      }
+    } catch {
+      toast.error(tr('pages.importExport.failedReadFile'));
+    }
   };
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    readFile(file);
+    void readFile(file);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -398,7 +397,7 @@ export default function ImportExport() {
     e.stopPropagation();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) readFile(file);
+    if (file) void readFile(file);
   };
 
   const handleDragOver = (e: React.DragEvent) => {

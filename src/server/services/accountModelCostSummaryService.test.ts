@@ -20,17 +20,19 @@ describe("accountModelCostSummaryService", () => {
       },
     });
 
-    const { buildAccountModelCostSummary } = await import(
+    const { buildModelCostSummary, resolveAccountPricingToken } = await import(
       "./accountModelCostSummaryService.js"
     );
-    const summary = await buildAccountModelCostSummary({
-      siteId: 1,
-      accountId: 2,
+    const summary = await buildModelCostSummary({
+      subject: {
+        siteId: 1,
+        accountId: 2,
+        token: resolveAccountPricingToken([
+          { id: 10, tokenGroup: "backup", enabled: true, isDefault: false },
+          { id: 11, tokenGroup: "primary", enabled: true, isDefault: true },
+        ]),
+      },
       modelName: "gpt-4o-mini",
-      tokenRows: [
-        { id: 10, tokenGroup: "backup", enabled: true, isDefault: false },
-        { id: 11, tokenGroup: "primary", enabled: true, isDefault: true },
-      ],
     });
 
     expect(quoteEndpointPricingMock).toHaveBeenCalledWith({
@@ -54,18 +56,41 @@ describe("accountModelCostSummaryService", () => {
     });
   });
 
+  it("projects account and token rows through the same pricing function", async () => {
+    quoteEndpointPricingMock.mockResolvedValue({
+      endpoint: { matchedScope: "provider_catalog", sourceId: "catalog", summary: { totalCost: 2 } },
+    });
+    const { buildPricedModelRows, resolveAccountPricingToken } = await import("./accountModelCostSummaryService.js");
+    const token = { id: 10, tokenGroup: "primary", enabled: true, isDefault: true };
+    const models = [{ name: "shared-model", disabled: false, latencyMs: 12 }];
+
+    const [accountRow] = await buildPricedModelRows({
+      models,
+      subject: { siteId: 1, accountId: 2, token: resolveAccountPricingToken([token]) },
+    });
+    const [tokenRow] = await buildPricedModelRows({
+      models,
+      subject: { siteId: 1, accountId: 2, token },
+    });
+
+    expect(accountRow).toEqual(tokenRow);
+    expect(accountRow.costPricing).toMatchObject({
+      status: "configured",
+      matchedScope: "provider_catalog",
+      totalCost: 2,
+    });
+  });
+
   it("returns an empty summary when no pricing matches", async () => {
     quoteEndpointPricingMock.mockResolvedValue({ endpoint: null });
 
-    const { buildAccountModelCostSummary } = await import(
+    const { buildModelCostSummary } = await import(
       "./accountModelCostSummaryService.js"
     );
     await expect(
-      buildAccountModelCostSummary({
-        siteId: 1,
-        accountId: 2,
+      buildModelCostSummary({
+        subject: { siteId: 1, accountId: 2, token: null },
         modelName: "unpriced-model",
-        tokenRows: [],
       }),
     ).resolves.toEqual({
       status: "unconfigured",
@@ -77,18 +102,36 @@ describe("accountModelCostSummaryService", () => {
     });
   });
 
+  it("uses an explicit token subject without changing the pricing projection", async () => {
+    quoteEndpointPricingMock.mockResolvedValue({ endpoint: null });
+
+    const { buildModelCostSummary } = await import(
+      "./accountModelCostSummaryService.js"
+    );
+    await buildModelCostSummary({
+      subject: {
+        siteId: 1,
+        accountId: 2,
+        token: { id: 10, tokenGroup: "backup", enabled: true, isDefault: false },
+      },
+      modelName: "token-specific-model",
+    });
+
+    expect(quoteEndpointPricingMock).toHaveBeenCalledWith(expect.objectContaining({
+      supply: expect.objectContaining({ tokenId: 10, tokenGroup: "backup" }),
+    }));
+  });
+
   it("returns an error summary when pricing quote evaluation fails", async () => {
     quoteEndpointPricingMock.mockRejectedValue(new Error("catalog unavailable"));
 
-    const { buildAccountModelCostSummary } = await import(
+    const { buildModelCostSummary } = await import(
       "./accountModelCostSummaryService.js"
     );
     await expect(
-      buildAccountModelCostSummary({
-        siteId: 1,
-        accountId: 2,
+      buildModelCostSummary({
+        subject: { siteId: 1, accountId: 2, token: null },
         modelName: "temporarily-unpriced-model",
-        tokenRows: [],
       }),
     ).resolves.toEqual({
       status: "error",

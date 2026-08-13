@@ -26,7 +26,11 @@ type UpstreamTokenOption = {
 type UpstreamCostPricingEditorProps = {
   open: boolean;
   siteId: number;
-  accountId: number;
+  ownerScope: 'site' | 'account';
+  allowedScopes?: readonly UpstreamCostPricingScope[];
+  initialScope?: UpstreamCostPricingScope;
+  fixedTokenId?: number | null;
+  accountId?: number | null;
   modelName: string;
   siteName?: string | null;
   accountName?: string | null;
@@ -175,10 +179,6 @@ function recordToForm(record: UpstreamCostPricingRecord | null, fallback: Partia
   };
 }
 
-function resolveDefaultScope(tokens: UpstreamTokenOption[]): UpstreamCostPricingScope {
-  return tokens.length > 0 ? 'token_model' : 'account_model';
-}
-
 function pickInitialToken(tokens: UpstreamTokenOption[]) {
   return tokens.find((token) => token.isDefault && token.enabled !== false) || tokens.find((token) => token.enabled !== false) || tokens[0] || null;
 }
@@ -186,9 +186,20 @@ function pickInitialToken(tokens: UpstreamTokenOption[]) {
 function buildPayload(input: {
   form: SimplePricingForm;
   siteId: number;
-  accountId: number;
+  accountId: number | null;
   modelName: string;
+  ownerScope: 'site' | 'account';
+  allowedScopes: UpstreamCostPricingScope[];
 }): UpstreamCostPricingPayload {
+  if (input.ownerScope === 'site' && input.form.scope !== 'site_model') {
+    throw new Error('Site scope only supports site-level pricing.');
+  }
+  if (input.ownerScope === 'account' && input.form.scope === 'site_model') {
+    throw new Error('Account scope cannot edit site-level pricing.');
+  }
+  if (!input.allowedScopes.includes(input.form.scope)) {
+    throw new Error('Pricing scope is not available in this editor.');
+  }
   const tokenId = input.form.tokenId ? Number(input.form.tokenId) : undefined;
   const tokenGroup = input.form.scope === 'token_model_group' ? input.form.tokenGroup.trim() : null;
   return {
@@ -214,9 +225,9 @@ function buildPayload(input: {
   };
 }
 
-function isSameScope(record: UpstreamCostPricingRecord, form: SimplePricingForm, accountId: number) {
+function isSameScope(record: UpstreamCostPricingRecord, form: SimplePricingForm, accountId: number | null, ownerScope: 'site' | 'account') {
   if (record.scope !== form.scope) return false;
-  if (form.scope === 'site_model') return record.accountId == null && record.tokenId == null;
+  if (form.scope === 'site_model') return ownerScope === 'site' && record.accountId == null && record.tokenId == null;
   if (record.accountId !== accountId) return false;
   if (form.scope === 'account_model') return record.tokenId == null;
   if (record.tokenId !== Number(form.tokenId)) return false;
@@ -227,6 +238,10 @@ function isSameScope(record: UpstreamCostPricingRecord, form: SimplePricingForm,
 export function UpstreamCostPricingEditor({
   open,
   siteId,
+  ownerScope,
+  allowedScopes: allowedScopesProp,
+  initialScope,
+  fixedTokenId,
   accountId,
   modelName,
   siteName,
@@ -236,6 +251,16 @@ export function UpstreamCostPricingEditor({
   onSaved,
   toast,
 }: UpstreamCostPricingEditorProps) {
+  const allowedScopes = useMemo<UpstreamCostPricingScope[]>(() => {
+    const ownerDefaults: UpstreamCostPricingScope[] = ownerScope === 'site'
+      ? ['site_model']
+      : ['account_model', 'token_model', 'token_model_group'];
+    const requested = allowedScopesProp?.filter((scope) => ownerDefaults.includes(scope)) || ownerDefaults;
+    return requested.length > 0 ? requested : ownerDefaults;
+  }, [allowedScopesProp, ownerScope]);
+  const defaultScope = useMemo<UpstreamCostPricingScope>(() => (
+    initialScope && allowedScopes.includes(initialScope) ? initialScope : allowedScopes[0]
+  ), [allowedScopes, initialScope]);
   const availableTokens = useMemo(() => tokens.filter((token) => token.enabled !== false), [tokens]);
   const [records, setRecords] = useState<UpstreamCostPricingRecord[]>([]);
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null);
@@ -243,7 +268,7 @@ export function UpstreamCostPricingEditor({
     const token = pickInitialToken(availableTokens);
     return {
       ...EMPTY_FORM,
-      scope: resolveDefaultScope(availableTokens),
+      scope: defaultScope,
       tokenId: token ? String(token.id) : '',
       tokenGroup: token?.tokenGroup || '',
     };
@@ -263,26 +288,35 @@ export function UpstreamCostPricingEditor({
     setSelectedRecordId(null);
     setForm({
       ...EMPTY_FORM,
-      scope: resolveDefaultScope(availableTokens),
+      scope: defaultScope,
       tokenId: token ? String(token.id) : '',
       tokenGroup: token?.tokenGroup || '',
     });
     setPreview(null);
-  }, [availableTokens]);
+  }, [availableTokens, defaultScope]);
 
   const loadRecords = useCallback(async () => {
-    if (!open || !siteId || !accountId || !modelName) return;
+    if (!open || !siteId || !modelName || (ownerScope === 'account' && !accountId)) return;
     setLoading(true);
     try {
-      const next = await api.listUpstreamCostPricings({ siteId, modelName });
+      const next = await api.listUpstreamCostPricings({
+        siteId,
+        accountId: accountId ?? undefined,
+        tokenId: fixedTokenId ?? undefined,
+        modelName,
+        includeSiteScope: false,
+      });
       setRecords(next);
-      const preferred = next.find((record) => record.accountId === accountId)
-        || next.find((record) => record.scope === 'site_model')
+      const preferred = next.find((record) => ownerScope === 'site'
+        ? record.scope === 'site_model'
+        : record.accountId === accountId)
         || next[0]
         || null;
       if (preferred) {
         setSelectedRecordId(preferred.id);
-        setForm(recordToForm(preferred));
+        const savedForm = recordToForm(preferred);
+        if (allowedScopes.includes(savedForm.scope)) setForm(savedForm);
+        else resetToNew();
       } else {
         resetToNew();
       }
@@ -291,22 +325,22 @@ export function UpstreamCostPricingEditor({
     } finally {
       setLoading(false);
     }
-  }, [accountId, modelName, open, resetToNew, siteId, toast]);
+  }, [accountId, allowedScopes, fixedTokenId, modelName, open, ownerScope, resetToNew, siteId, toast]);
 
   useEffect(() => {
     void loadRecords();
   }, [loadRecords]);
 
   useEffect(() => {
-    if (!open || !siteId || !accountId || !modelName) return;
+    if (!open || !siteId || !modelName || (ownerScope === 'account' && !accountId)) return;
     let cancelled = false;
     const token = pickInitialToken(availableTokens);
     setPreviewLoading(true);
     api.previewUpstreamCostPricing({
       siteId,
-      accountId,
-      tokenId: token?.id,
-      tokenGroup: token?.tokenGroup || undefined,
+      accountId: accountId ?? undefined,
+      tokenId: ownerScope === 'account' ? token?.id : undefined,
+      tokenGroup: ownerScope === 'account' ? token?.tokenGroup || undefined : undefined,
       modelName,
       usage: PREVIEW_USAGE,
     })
@@ -322,9 +356,10 @@ export function UpstreamCostPricingEditor({
     return () => {
       cancelled = true;
     };
-  }, [accountId, availableTokens, modelName, open, siteId]);
+  }, [accountId, availableTokens, modelName, open, ownerScope, siteId]);
 
   const updateForm = (patch: Partial<SimplePricingForm>) => {
+    if (patch.scope && !allowedScopes.includes(patch.scope)) return;
     setForm((current) => {
       const next = { ...current, ...patch };
       if (patch.scope === 'site_model' || patch.scope === 'account_model') {
@@ -345,8 +380,8 @@ export function UpstreamCostPricingEditor({
   const handlePreview = async () => {
     setPreviewLoading(true);
     try {
-      const payload = buildPayload({ form, siteId, accountId, modelName });
-      const savedLike = selectedRecord && isSameScope(selectedRecord, form, accountId);
+      const payload = buildPayload({ form, siteId, accountId: accountId ?? null, modelName, ownerScope, allowedScopes });
+      const savedLike = selectedRecord && isSameScope(selectedRecord, form, accountId ?? null, ownerScope);
       if (savedLike) {
         const result = await api.previewUpstreamCostPricing({
           siteId,
@@ -378,11 +413,11 @@ export function UpstreamCostPricingEditor({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = buildPayload({ form, siteId, accountId, modelName });
+      const payload = buildPayload({ form, siteId, accountId: accountId ?? null, modelName, ownerScope, allowedScopes });
       if (!payload.simpleTokenPricing || Object.values(payload.simpleTokenPricing).every((value) => value === undefined)) {
         throw new Error(tr('upstreamCostPricing.errors.emptyPricing'));
       }
-      const matched = records.find((record) => isSameScope(record, form, accountId));
+      const matched = records.find((record) => isSameScope(record, form, accountId ?? null, ownerScope));
       const saved = matched
         ? await api.updateUpstreamCostPricing(matched.id, payload)
         : await api.createUpstreamCostPricing(payload);
@@ -414,7 +449,7 @@ export function UpstreamCostPricingEditor({
     }
   };
 
-  const canUseTokenScope = availableTokens.length > 0;
+  const canUseTokenScope = ownerScope === 'account' && availableTokens.length > 0;
   const selectedToken = availableTokens.find((token) => String(token.id) === form.tokenId) || null;
 
   if (!open) return null;
@@ -428,7 +463,7 @@ export function UpstreamCostPricingEditor({
             {tr('upstreamCostPricing.title')}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {siteName || `${tr('common.site')} ${siteId}`} · {accountName || `${tr('common.account')} ${accountId}`} · <span className="font-mono">{modelName}</span>
+    {siteName || `${tr('common.site')} ${siteId}`}{ownerScope === 'account' ? <> · {accountName || `${tr('common.account')} ${accountId}`}</> : null} · <span className="font-mono">{modelName}</span>
           </div>
         </div>
         <ButtonGroup>
@@ -531,10 +566,11 @@ export function UpstreamCostPricingEditor({
                 <Select value={form.scope} onValueChange={(scope) => updateForm({ scope: scope as UpstreamCostPricingScope })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="site_model">{tr('upstreamCostPricing.scope.siteModel')}</SelectItem>
-                    <SelectItem value="account_model">{tr('upstreamCostPricing.scope.accountModel')}</SelectItem>
-                    <SelectItem value="token_model" disabled={!canUseTokenScope}>{tr('upstreamCostPricing.scope.tokenModel')}</SelectItem>
-                    <SelectItem value="token_model_group" disabled={!canUseTokenScope}>{tr('upstreamCostPricing.scope.tokenGroupModel')}</SelectItem>
+                    {allowedScopes.map((scope) => (
+                      <SelectItem key={scope} value={scope} disabled={(scope === 'token_model' || scope === 'token_model_group') && !canUseTokenScope}>
+                        {scopeLabel(scope)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <span>{scopeDescription(form.scope)}</span>

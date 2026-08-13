@@ -1,6 +1,6 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
-import { db, schema } from '../../db/index.js';
+import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING,
@@ -8,6 +8,7 @@ import {
   isMaskedPendingAccountToken,
   isMaskedTokenValue,
   isUsableAccountToken,
+  getAvailableModelsForAccountToken,
   listTokensWithRelations,
   normalizeTokenForDisplay,
   maskToken,
@@ -33,6 +34,7 @@ import {
   parseAccountTokenBatchPayload,
   parseAccountTokenCreatePayload,
   parseAccountTokenSyncAllPayload,
+  parseAccountTokenModelsPayload,
   parseAccountTokenUpdatePayload,
 } from '../../contracts/accountTokensRoutePayloads.js';
 import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
@@ -484,6 +486,100 @@ export async function accountTokensRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { accountId?: string } }>('/api/account-tokens', async (request) => {
     const accountId = request.query.accountId ? Number.parseInt(request.query.accountId, 10) : undefined;
     return listTokensWithRelations(Number.isFinite(accountId as number) ? accountId : undefined);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/account-tokens/:id/models', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
+    }
+    const result = await getAvailableModelsForAccountToken(tokenId);
+    if (!result) {
+      return reply.code(404).send({ success: false, message: '令牌不存在' });
+    }
+    return result;
+  });
+
+  app.post<{ Params: { id: string } }>('/api/account-tokens/:id/models/refresh', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
+    }
+    const before = await getAvailableModelsForAccountToken(tokenId);
+    if (!before) return reply.code(404).send({ success: false, message: '令牌不存在' });
+
+    const result = await convergeAccountMutation({
+      accountId: before.account.id,
+      refreshModels: true,
+      rebuildRoutes: true,
+      continueOnError: false,
+    });
+    const models = await getAvailableModelsForAccountToken(tokenId);
+    return {
+      success: true,
+      refresh: result.modelRefreshResult,
+      models,
+    };
+  });
+
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/account-tokens/:id/models/disabled', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
+    }
+    const parsed = parseAccountTokenModelsPayload(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
+    const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
+    const token = await db.select({ id: schema.accountTokens.id, accountId: schema.accountTokens.accountId })
+      .from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
+
+    await db.transaction(async (tx) => {
+      await tx.delete(schema.tokenDisabledModels).where(eq(schema.tokenDisabledModels.tokenId, tokenId)).run();
+      if (models.length > 0) {
+        await tx.insert(schema.tokenDisabledModels).values(models.map((modelName) => ({ tokenId, modelName }))).run();
+      }
+    });
+    const convergence = await convergeAccountMutation({ accountId: token.accountId, rebuildRoutes: true });
+    return { success: true, rebuild: convergence.rebuildResult };
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/account-tokens/:id/models/manual', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
+    }
+    const parsed = parseAccountTokenModelsPayload(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
+    const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
+    if (models.length === 0) return reply.code(400).send({ success: false, message: '模型列表不能为空' });
+    const token = await db.select({ id: schema.accountTokens.id, accountId: schema.accountTokens.accountId })
+      .from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
+
+    const checkedAt = new Date().toISOString();
+    await db.transaction(async (tx) => {
+      for (const modelName of models) {
+        if (runtimeDbDialect === 'mysql') {
+          const existing = await tx.select().from(schema.tokenModelAvailability)
+            .where(and(eq(schema.tokenModelAvailability.tokenId, tokenId), eq(schema.tokenModelAvailability.modelName, modelName))).get();
+          if (existing) {
+            await tx.update(schema.tokenModelAvailability).set({ available: true, isManual: true, latencyMs: null, checkedAt })
+              .where(eq(schema.tokenModelAvailability.id, existing.id)).run();
+          } else {
+            await tx.insert(schema.tokenModelAvailability).values({ tokenId, modelName, available: true, isManual: true, latencyMs: null, checkedAt }).run();
+          }
+        } else {
+          await (tx.insert(schema.tokenModelAvailability).values({ tokenId, modelName, available: true, isManual: true, latencyMs: null, checkedAt }) as any)
+            .onConflictDoUpdate({
+              target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
+              set: { available: true, isManual: true, latencyMs: null, checkedAt },
+            }).run();
+        }
+      }
+    });
+    const convergence = await convergeAccountMutation({ accountId: token.accountId, rebuildRoutes: true });
+    return { success: true, rebuild: convergence.rebuildResult };
   });
 
   app.post<{ Body: unknown }>('/api/account-tokens', async (request, reply) => {

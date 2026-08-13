@@ -1,4 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq, gt } from 'drizzle-orm';
+import { Readable } from 'node:stream';
+import { createGunzip, createGzip } from 'node:zlib';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
@@ -23,6 +25,9 @@ const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
+// Some configuration rows contain arbitrary JSON or full route graphs. Keep
+// each database page to one row so no unbounded collection is resident.
+const BACKUP_EXPORT_PAGE_SIZE = 1;
 
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   'auth_token',
@@ -79,6 +84,7 @@ interface AccountsBackupSection {
   accountTokens: Array<typeof schema.accountTokens.$inferSelect>;
   modelAvailability?: Array<typeof schema.modelAvailability.$inferSelect>;
   tokenModelAvailability?: Array<typeof schema.tokenModelAvailability.$inferSelect>;
+  tokenDisabledModels?: Array<typeof schema.tokenDisabledModels.$inferSelect>;
   upstreamModelCostPricings?: Array<typeof schema.upstreamModelCostPricings.$inferSelect>;
   providerPricingCatalogCaches?: Array<typeof schema.providerPricingCatalogCaches.$inferSelect>;
   walletAcquisitionProfiles?: Array<typeof schema.walletAcquisitionProfiles.$inferSelect>;
@@ -91,7 +97,6 @@ interface AccountsBackupSection {
   siteDisabledModels?: Array<typeof schema.siteDisabledModels.$inferSelect>;
   downstreamApiKeys?: Array<typeof schema.downstreamApiKeys.$inferSelect>;
   siteAnnouncements?: Array<typeof schema.siteAnnouncements.$inferSelect>;
-  proxyLogs?: Array<typeof schema.proxyLogs.$inferSelect>;
 }
 
 interface PreferencesBackupSection {
@@ -201,13 +206,19 @@ function normalizeBackupWebdavConfig(raw: unknown): BackupWebdavConfig {
     : BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON;
   return {
     enabled: source.enabled === true,
-    fileUrl: asString(source.fileUrl),
+    fileUrl: normalizeBackupWebdavExportFileUrl(asString(source.fileUrl)),
     username: asString(source.username),
     password: typeof source.password === 'string' ? source.password : '',
     exportType,
     autoSyncEnabled: source.autoSyncEnabled === true,
     autoSyncCron,
   };
+}
+
+function normalizeBackupWebdavExportFileUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value || value.toLowerCase().endsWith('.gz')) return value;
+  return value.toLowerCase().endsWith('.json') ? `${value}.gz` : `${value}.json.gz`;
 }
 
 function normalizeBackupWebdavState(raw: unknown): BackupWebdavState {
@@ -319,6 +330,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     accountTokens,
     modelAvailability,
     tokenModelAvailability,
+    tokenDisabledModels,
     upstreamModelCostPricings,
     providerPricingCatalogCaches,
     walletAcquisitionProfiles,
@@ -330,7 +342,6 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     siteDisabledModels,
     downstreamApiKeys,
     siteAnnouncements,
-    proxyLogs,
     routeGraph,
   ] = await Promise.all([
     db.select().from(schema.sites).all(),
@@ -343,6 +354,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.accountTokens).all(),
     db.select().from(schema.modelAvailability).all(),
     db.select().from(schema.tokenModelAvailability).all(),
+    db.select().from(schema.tokenDisabledModels).all(),
     db.select().from(schema.upstreamModelCostPricings).all(),
     db.select().from(schema.providerPricingCatalogCaches).all(),
     db.select().from(schema.walletAcquisitionProfiles).all(),
@@ -354,7 +366,6 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.siteDisabledModels).all(),
     db.select().from(schema.downstreamApiKeys).all(),
     db.select().from(schema.siteAnnouncements).all(),
-    db.select().from(schema.proxyLogs).all(),
     exportRouteGraphSection(),
   ]);
 
@@ -369,6 +380,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     accountTokens,
     modelAvailability,
     tokenModelAvailability,
+    tokenDisabledModels,
     upstreamModelCostPricings,
     providerPricingCatalogCaches,
     walletAcquisitionProfiles,
@@ -381,7 +393,6 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     siteDisabledModels,
     downstreamApiKeys,
     siteAnnouncements,
-    proxyLogs,
   };
 }
 
@@ -395,6 +406,164 @@ async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
   return {
     settings: migratePublishedMainPreferenceSettings(settings).settings,
   };
+}
+
+async function* jsonArrayFromIdPages(table: any): AsyncGenerator<string> {
+  let afterId = 0;
+  let first = true;
+  yield '[';
+  while (true) {
+    const rows = await db.select().from(table)
+      .where(gt(table.id, afterId))
+      .orderBy(asc(table.id))
+      .limit(BACKUP_EXPORT_PAGE_SIZE)
+      .all();
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      yield `${first ? '' : ','}${JSON.stringify(row)}`;
+      first = false;
+    }
+    afterId = Number(rows[rows.length - 1]?.id);
+  }
+  yield ']';
+}
+
+async function* preferencesJson(): AsyncGenerator<string> {
+  let afterKey = '';
+  let first = true;
+  let sawPricingReferenceConfig = false;
+  let sawPlatformPricingConfig = false;
+  let sawConfigVersion = false;
+  let legacyRoutingFallbackUnitCost: number | null = null;
+  yield '{"settings":[';
+  while (true) {
+    const rows = await db.select().from(schema.settings)
+      .where(gt(schema.settings.key, afterKey))
+      .orderBy(asc(schema.settings.key))
+      .limit(BACKUP_EXPORT_PAGE_SIZE)
+      .all();
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      afterKey = row.key;
+      if (EXCLUDED_SETTING_KEYS.has(row.key)) continue;
+      const value = parseSettingValue(row.value);
+      if (row.key === 'routing_fallback_unit_cost') {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) legacyRoutingFallbackUnitCost = numeric;
+        continue;
+      }
+      if (row.key === 'pricing_reference_config_v1') sawPricingReferenceConfig = true;
+      if (row.key === 'platform_pricing_config_v1') sawPlatformPricingConfig = true;
+      if (row.key === 'metapi_config_version') {
+        sawConfigVersion = true;
+        yield `${first ? '' : ','}${JSON.stringify({ key: row.key, value: CURRENT_CONFIG_VERSION })}`;
+        first = false;
+        continue;
+      }
+      yield `${first ? '' : ','}${JSON.stringify({ key: row.key, value })}`;
+      first = false;
+    }
+  }
+  const migrated = migratePublishedMainPreferenceSettings([]).settings;
+  if (!sawPricingReferenceConfig) {
+    const row = migrated.find((item) => item.key === 'pricing_reference_config_v1');
+    if (row) {
+      yield `${first ? '' : ','}${JSON.stringify(row)}`;
+      first = false;
+    }
+  }
+  if (!sawPlatformPricingConfig) {
+    const row = migrated.find((item) => item.key === 'platform_pricing_config_v1');
+    if (row) {
+      const value = legacyRoutingFallbackUnitCost === null
+        ? row.value
+        : {
+          ...(row.value as Record<string, unknown>),
+          upstreamDefaultPricing: {
+            ...((row.value as any).upstreamDefaultPricing),
+            inputPerMillion: legacyRoutingFallbackUnitCost,
+            outputPerMillion: legacyRoutingFallbackUnitCost,
+          },
+        };
+      yield `${first ? '' : ','}${JSON.stringify({ key: row.key, value })}`;
+      first = false;
+    }
+  }
+  if (!sawConfigVersion) {
+    const row = migrated.find((item) => item.key === 'metapi_config_version');
+    if (row) {
+      yield `${first ? '' : ','}${JSON.stringify(row)}`;
+      first = false;
+    }
+  }
+  yield ']}';
+}
+
+async function* accountsJson(): AsyncGenerator<string> {
+  const fields: Array<[string, any]> = [
+    ['sites', schema.sites],
+    ['siteApiEndpoints', schema.siteApiEndpoints],
+    ['modelCatalogSources', schema.modelCatalogSources],
+    ['apiEndpointProfiles', schema.apiEndpointProfiles],
+    ['endpointModelObservations', schema.endpointModelObservations],
+    ['credentialEndpointBindings', schema.credentialEndpointBindings],
+    ['accounts', schema.accounts],
+    ['accountTokens', schema.accountTokens],
+    ['modelAvailability', schema.modelAvailability],
+    ['tokenModelAvailability', schema.tokenModelAvailability],
+    ['tokenDisabledModels', schema.tokenDisabledModels],
+    ['upstreamModelCostPricings', schema.upstreamModelCostPricings],
+    ['providerPricingCatalogCaches', schema.providerPricingCatalogCaches],
+    ['walletAcquisitionProfiles', schema.walletAcquisitionProfiles],
+    ['fxRateSnapshots', schema.fxRateSnapshots],
+    ['runtimeExecutionTargets', schema.runtimeExecutionTargets],
+    ['runtimeExecutionTargetState', schema.runtimeExecutionTargetState],
+    ['oauthRouteUnits', schema.oauthRouteUnits],
+    ['oauthRouteUnitMembers', schema.oauthRouteUnitMembers],
+    ['siteDisabledModels', schema.siteDisabledModels],
+    ['downstreamApiKeys', schema.downstreamApiKeys],
+    ['siteAnnouncements', schema.siteAnnouncements],
+  ];
+  yield '{';
+  let first = true;
+  for (const [name, table] of fields) {
+    yield `${first ? '' : ','}${JSON.stringify(name)}:`;
+    yield* jsonArrayFromIdPages(table);
+    first = false;
+  }
+  yield ',"routeGraph":{"versions":';
+  yield* jsonArrayFromIdPages(schema.routeGraphVersions);
+  const activeVersion = await db.select().from(schema.routeGraphActiveVersion)
+    .where(eq(schema.routeGraphActiveVersion.id, 1)).get();
+  yield `,"activeVersion":${JSON.stringify(activeVersion ?? null)},"drafts":`;
+  yield* jsonArrayFromIdPages(schema.routeGraphDrafts);
+  yield ',"operationBatches":';
+  yield* jsonArrayFromIdPages(schema.routeGraphWorkspaceOperationBatches);
+  yield '}}';
+}
+
+/**
+ * Creates a gzip-compressed backup stream. Every table is paged before JSON
+ * serialization so the server never retains the complete backup in memory.
+ */
+export function createBackupExportStream(type: BackupExportType): Readable {
+  const source = Readable.from((async function* () {
+    yield `{"version":${JSON.stringify(BACKUP_VERSION)},"timestamp":${Date.now()}`;
+    if (type === 'accounts') {
+      yield ',"type":"accounts","accounts":';
+      yield* accountsJson();
+    } else if (type === 'preferences') {
+      yield ',"type":"preferences","preferences":';
+      yield* preferencesJson();
+    } else {
+      yield ',"accounts":';
+      yield* accountsJson();
+      yield ',"preferences":';
+      yield* preferencesJson();
+    }
+    yield '}';
+  })());
+  return source.pipe(createGzip());
 }
 
 export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
@@ -440,6 +609,7 @@ function coerceAccountsSection(input: unknown): CoercedAccountsSection | null {
     accountTokens,
     modelAvailability: Array.isArray(input.modelAvailability) ? input.modelAvailability as AccountsBackupSection['modelAvailability'] : undefined,
     tokenModelAvailability: Array.isArray(input.tokenModelAvailability) ? input.tokenModelAvailability as AccountsBackupSection['tokenModelAvailability'] : undefined,
+    tokenDisabledModels: Array.isArray(input.tokenDisabledModels) ? input.tokenDisabledModels as AccountsBackupSection['tokenDisabledModels'] : undefined,
     upstreamModelCostPricings: Array.isArray(input.upstreamModelCostPricings) ? input.upstreamModelCostPricings as AccountsBackupSection['upstreamModelCostPricings'] : undefined,
     providerPricingCatalogCaches: Array.isArray(input.providerPricingCatalogCaches) ? input.providerPricingCatalogCaches as AccountsBackupSection['providerPricingCatalogCaches'] : undefined,
     walletAcquisitionProfiles: Array.isArray(input.walletAcquisitionProfiles) ? input.walletAcquisitionProfiles as AccountsBackupSection['walletAcquisitionProfiles'] : undefined,
@@ -459,7 +629,6 @@ function coerceAccountsSection(input: unknown): CoercedAccountsSection | null {
     siteDisabledModels: Array.isArray(input.siteDisabledModels) ? input.siteDisabledModels as AccountsBackupSection['siteDisabledModels'] : undefined,
     downstreamApiKeys: Array.isArray(input.downstreamApiKeys) ? input.downstreamApiKeys as AccountsBackupSection['downstreamApiKeys'] : undefined,
     siteAnnouncements: Array.isArray(input.siteAnnouncements) ? input.siteAnnouncements as AccountsBackupSection['siteAnnouncements'] : undefined,
-    proxyLogs: Array.isArray(input.proxyLogs) ? input.proxyLogs as AccountsBackupSection['proxyLogs'] : undefined,
   };
   const migrated: BackupImportRouteRuntimeMigrationResult = migratePreviousRouteBackupToCurrentRuntime(section, input);
   return {
@@ -546,9 +715,8 @@ async function importAccountsSection(
 ): Promise<void> {
   const graphSource = options.graphSource ?? activeSourceFromBackupRouteGraph(section.routeGraph);
   await db.transaction(async (tx) => {
-    await deleteAll(tx, schema.proxyLogs);
-    await deleteAll(tx, schema.proxyDebugAttempts);
-    await deleteAll(tx, schema.proxyDebugTraces);
+    // Proxy request and debug history are local operational data, never configuration.
+    // Older backups may contain proxyLogs; coercion intentionally ignores them.
     await deleteAll(tx, schema.siteAnnouncements);
     await deleteAll(tx, schema.downstreamApiKeys);
     await restoreRouteGraph(tx, options.graphSource ? undefined : section.routeGraph);
@@ -557,6 +725,7 @@ async function importAccountsSection(
     await deleteAll(tx, schema.oauthRouteUnitMembers);
     await deleteAll(tx, schema.oauthRouteUnits);
     await deleteAll(tx, schema.tokenModelAvailability);
+    await deleteAll(tx, schema.tokenDisabledModels);
     await deleteAll(tx, schema.modelAvailability);
     await deleteAll(tx, schema.endpointModelObservations);
     await deleteAll(tx, schema.credentialEndpointBindings);
@@ -582,6 +751,7 @@ async function importAccountsSection(
     await insertRows(tx, schema.endpointModelObservations, section.endpointModelObservations);
     await insertRows(tx, schema.modelAvailability, section.modelAvailability);
     await insertRows(tx, schema.tokenModelAvailability, section.tokenModelAvailability);
+    await insertRows(tx, schema.tokenDisabledModels, section.tokenDisabledModels);
     await insertRows(tx, schema.upstreamModelCostPricings, section.upstreamModelCostPricings);
     await insertRows(tx, schema.providerPricingCatalogCaches, section.providerPricingCatalogCaches);
     await insertRows(tx, schema.walletAcquisitionProfiles, section.walletAcquisitionProfiles);
@@ -593,7 +763,6 @@ async function importAccountsSection(
     await insertRows(tx, schema.runtimeExecutionTargetState, section.runtimeExecutionTargetState);
     await insertRows(tx, schema.downstreamApiKeys, section.downstreamApiKeys);
     await insertRows(tx, schema.siteAnnouncements, section.siteAnnouncements);
-    await insertRows(tx, schema.proxyLogs, section.proxyLogs);
   });
 
   invalidateRouteGraphReadCaches('route-source-mutated');
@@ -695,7 +864,7 @@ export async function saveBackupWebdavConfig(input: Partial<BackupWebdavConfig> 
   const existing = await loadBackupWebdavConfig();
   const next: BackupWebdavConfig = {
     enabled: input.enabled !== undefined ? input.enabled === true : existing.enabled,
-    fileUrl: input.fileUrl !== undefined ? asString(input.fileUrl) : existing.fileUrl,
+    fileUrl: input.fileUrl !== undefined ? normalizeBackupWebdavExportFileUrl(asString(input.fileUrl)) : existing.fileUrl,
     username: input.username !== undefined ? asString(input.username) : existing.username,
     password: input.clearPassword
       ? ''
@@ -720,8 +889,9 @@ export async function exportBackupToWebdav(type?: BackupExportType) {
   if (!config.fileUrl) throw new Error('WebDAV 文件地址不能为空');
 
   const exportType = type && isValidBackupExportType(type) ? type : config.exportType;
-  const payload = await exportBackup(exportType);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/gzip',
+  };
   const authHeader = resolveBackupWebdavAuthHeader(config);
   if (authHeader) headers.Authorization = authHeader;
 
@@ -729,8 +899,9 @@ export async function exportBackupToWebdav(type?: BackupExportType) {
     const response = await fetchBackupWebdav(config.fileUrl, {
       method: 'PUT',
       headers,
-      body: JSON.stringify(payload, null, 2),
-    });
+      body: createBackupExportStream(exportType) as any,
+      duplex: 'half' as any,
+    } as any);
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new Error(`WebDAV 导出失败：HTTP ${response.status}${text ? ` ${text.slice(0, 120)}` : ''}`);
@@ -774,8 +945,12 @@ export async function importBackupFromWebdav() {
       const text = await response.text().catch(() => '');
       throw new Error(`WebDAV 导入失败：HTTP ${response.status}${text ? ` ${text.slice(0, 120)}` : ''}`);
     }
-    const raw = await response.text();
-    const result = await importBackup(JSON.parse(raw) as RawBackupData);
+    const raw = response.headers.get('content-encoding') === 'gzip' || config.fileUrl.toLowerCase().endsWith('.gz')
+      ? Readable.fromWeb(response.body as any).pipe(createGunzip())
+      : response.body as any;
+    const chunks: Buffer[] = [];
+    for await (const chunk of raw as AsyncIterable<Buffer>) chunks.push(Buffer.from(chunk));
+    const result = await importBackup(JSON.parse(Buffer.concat(chunks).toString('utf8')) as RawBackupData);
     const syncedAt = new Date().toISOString();
     await writeBackupWebdavState({ lastSyncAt: syncedAt, lastError: null });
     return {

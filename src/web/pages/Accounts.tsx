@@ -411,23 +411,28 @@ export default function Accounts() {
       isDefault?: boolean;
       valueStatus?: string | null;
     }>;
-    pendingDisabled: Set<string>;
+    tokenModels?: Array<{
+      tokenId: number;
+      observed: boolean;
+      models: Array<{
+        name: string;
+        available: boolean;
+        latencyMs: number | null;
+        checkedAt?: string | null;
+        disabled: boolean;
+      }>;
+    }>;
     loading: boolean;
     saving: boolean;
     siteName: string;
-    manualModelsInput: string;
-    addingManualModels: boolean;
   }>({
     open: false,
     account: null,
     models: [],
     accountTokens: [],
-    pendingDisabled: new Set(),
     loading: false,
     saving: false,
     siteName: "",
-    manualModelsInput: "",
-    addingManualModels: false,
   });
   const [endpointBindingsTarget, setEndpointBindingsTarget] = useState<{
     siteId: number;
@@ -889,15 +894,12 @@ export default function Accounts() {
 
   const applyLoadedModelModal = (account: any, result: any) => {
     const models = Array.isArray(result?.models) ? result.models : [];
-    const disabledSet = new Set<string>(
-      models.filter((m: any) => m.disabled).map((m: any) => m.name as string),
-    );
     setModelModal((s) => ({
       ...s,
       loading: false,
       models,
       accountTokens: Array.isArray(result?.accountTokens) ? result.accountTokens : [],
-      pendingDisabled: disabledSet,
+      tokenModels: Array.isArray(result?.tokenModels) ? result.tokenModels : [],
       siteName: result?.siteName || account.site?.name || s.siteName,
     }));
   };
@@ -922,9 +924,8 @@ export default function Accounts() {
         ? {
             models: [],
             accountTokens: [],
-            pendingDisabled: new Set<string>(),
+            tokenModels: [],
             siteName: "",
-            manualModelsInput: "",
           }
         : {}),
     }));
@@ -963,29 +964,18 @@ export default function Accounts() {
       ...s,
       open: false,
       account: null,
-      manualModelsInput: "",
-      addingManualModels: false,
     }));
   };
 
-  const toggleModelDisabled = (modelName: string) => {
-    setModelModal((s) => {
-      const next = new Set(s.pendingDisabled);
-      if (next.has(modelName)) next.delete(modelName);
-      else next.add(modelName);
-      return { ...s, pendingDisabled: next };
-    });
-  };
-
-  const saveModelDisabled = async () => {
+  const saveModelDisabled = async (tokenId: number | null, disabledModels: Set<string>) => {
     if (!modelModal.account) return;
-    const siteId = modelModal.account.siteId;
     setModelModal((s) => ({ ...s, saving: true }));
     try {
-      await api.updateSiteDisabledModels(
-        siteId,
-        Array.from(modelModal.pendingDisabled),
-      );
+      if (tokenId == null) {
+        await api.updateSiteDisabledModels(modelModal.account.siteId, Array.from(disabledModels));
+      } else {
+        await api.updateAccountTokenDisabledModels(tokenId, Array.from(disabledModels));
+      }
       try {
         await api.rebuildRoutes(false, false);
         toast.success(tr('pages.accounts.modeldisabledsettingsSaveRoutes'));
@@ -1000,23 +990,14 @@ export default function Accounts() {
     }
   };
 
-  const handleAddManualModels = async () => {
-    if (!modelModal.account || !modelModal.manualModelsInput.trim()) return;
-    const modelsToAdd = modelModal.manualModelsInput
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
-    if (modelsToAdd.length === 0) return;
-
-    setModelModal((s) => ({ ...s, addingManualModels: true }));
+  const handleAddManualModels = async (tokenId: number | null, modelsToAdd: string[]) => {
+    if (!modelModal.account || modelsToAdd.length === 0) return;
     try {
-      const res = await api.addAccountAvailableModels(
-        modelModal.account.id,
-        modelsToAdd,
-      );
+      const res = tokenId == null
+        ? await api.addAccountAvailableModels(modelModal.account.id, modelsToAdd)
+        : await api.addAccountTokenAvailableModels(tokenId, modelsToAdd);
       if (res.success) {
         toast.success(tr('pages.accounts.modelManualadd'));
-        setModelModal((s) => ({ ...s, manualModelsInput: "" }));
         await loadModelModalModels(modelModal.account, {
           refreshUpstream: false,
         });
@@ -1025,9 +1006,7 @@ export default function Accounts() {
       }
     } catch (e: any) {
       toast.error(e.message || tr('pages.accounts.manualaddmodelfailed'));
-    } finally {
-      setModelModal((s) => ({ ...s, addingManualModels: false }));
-    }
+    } finally {}
   };
 
   const openEndpointBindingsForAccount = (account: any) => {
@@ -3430,8 +3409,13 @@ export default function Accounts() {
         modelModal={modelModal}
         onClose={closeModelModal}
         onSave={saveModelDisabled}
-        onRefresh={async () => {
+        onRefresh={async (tokenId) => {
           if (!modelModal.account) return;
+          if (tokenId != null) {
+            await api.refreshAccountTokenModels(tokenId);
+            await loadModelModalModels(modelModal.account, { refreshUpstream: false });
+            return;
+          }
           await loadModelModalModels(modelModal.account, {
             refreshUpstream: true,
             successMessage: tr('pages.accounts.modelRefresh'),
@@ -3445,13 +3429,6 @@ export default function Accounts() {
             errorMessage: tr('pages.accounts.modelFailed'),
           });
         }}
-        onToggleModelDisabled={toggleModelDisabled}
-        onSetPendingDisabled={(pendingDisabled) =>
-          setModelModal((state) => ({ ...state, pendingDisabled }))
-        }
-        onManualInputChange={(value) =>
-          setModelModal((state) => ({ ...state, manualModelsInput: value }))
-        }
         onAddManualModels={handleAddManualModels}
       />
       <WalletAcquisitionEditor

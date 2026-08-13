@@ -60,6 +60,7 @@ type Query = {
   tokenId?: string;
   modelName?: string;
   enabled?: string;
+  includeSiteScope?: string;
 };
 
 type Body = Partial<UpstreamCostPricingPayload> & {
@@ -282,6 +283,7 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
       tokenId: parseOptionalPositiveInt(request.query.tokenId),
       modelName: normalizeOptionalString(request.query.modelName) ?? undefined,
       enabled: parseOptionalBoolean(request.query.enabled),
+      includeSiteScope: parseOptionalBoolean(request.query.includeSiteScope),
     });
   });
 

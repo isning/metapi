@@ -33,6 +33,7 @@ import {
   TableActionBar,
 } from '../components/workspace/ActionBar.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
+import { UpstreamCostPricingEditor } from '../components/UpstreamCostPricingEditor.js';
 import WalletAcquisitionEditor, { type WalletAcquisitionEditorSubject } from '../components/WalletAcquisitionEditor.js';
 import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
@@ -77,6 +78,7 @@ import { Input } from '../components/ui/input/index.js';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group/index.js';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
+import * as Dialog from '../components/ui/dialog/index.js';
 import {
   CheckCircle2,
   CircleSlash,
@@ -588,6 +590,7 @@ export default function Sites() {
   const probeAbortRef = useRef<AbortController | null>(null);
   const probeLogEndRef = useRef<HTMLDivElement | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [siteCostModelName, setSiteCostModelName] = useState<string | null>(null);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
   const initializationPresetOptions = useMemo(() => listSiteInitializationPresets(), []);
   const selectedInitializationPreset = useMemo(
@@ -801,6 +804,7 @@ export default function Sites() {
     setDisabledModels([]);
     setDisabledModelInput('');
     setDiscoveredModels([]);
+    setSiteCostModelName(null);
     setDisabledModelSearch('');
     setProbeEnabled(!!site.postRefreshProbeEnabled);
     setProbeModel(typeof site.postRefreshProbeModel === 'string' ? site.postRefreshProbeModel : '');
@@ -2131,6 +2135,32 @@ export default function Sites() {
             </ConfigSection>
           )}
 
+          {isEditing && (
+            <ConfigSection
+              title={tr('upstreamCostPricing.siteEditor.title')}
+              description={tr('upstreamCostPricing.siteEditor.description')}
+            >
+              {brandGroups.length === 0 ? (
+                <div className="text-sm text-muted-foreground">{tr('upstreamCostPricing.siteEditor.empty')}</div>
+              ) : (
+                <div className="flex max-h-56 flex-wrap gap-2 overflow-y-auto rounded-md border p-3">
+                  {brandGroups.flatMap(([, models]) => models).map((model) => (
+                    <Button
+                      key={model}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="max-w-full font-mono"
+                      onClick={() => setSiteCostModelName(model)}
+                    >
+                      {model}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </ConfigSection>
+          )}
+
           <ResponsiveFormGrid>
             <div className="flex flex-col gap-1.5">
               <Input
@@ -2161,6 +2191,33 @@ export default function Sites() {
           </ResponsiveFormGrid>
         </CenteredModal>
       )}
+
+      <Dialog.Root open={!!siteCostModelName} onOpenChange={(open) => {
+        if (!open) setSiteCostModelName(null);
+      }}>
+        <Dialog.Content className="w-[min(94vw,980px)] overflow-hidden p-0" onClose={() => setSiteCostModelName(null)}>
+          <Dialog.Header className="shrink-0 border-b px-5 py-4">
+            <Dialog.Title>{tr('upstreamCostPricing.siteEditor.dialogTitle')}</Dialog.Title>
+            <Dialog.Description>{tr('upstreamCostPricing.siteEditor.dialogDescription')}</Dialog.Description>
+          </Dialog.Header>
+          {siteCostModelName && activeEditor?.mode === 'edit' ? (
+            <div className="min-h-0 overflow-y-auto px-5 py-4">
+              <UpstreamCostPricingEditor
+                open={!!siteCostModelName}
+                ownerScope="site"
+                siteId={activeEditor.editingSiteId}
+                modelName={siteCostModelName}
+                siteName={form.name}
+                onOpenChange={(open) => {
+                  if (!open) setSiteCostModelName(null);
+                }}
+                onSaved={() => void load()}
+                toast={toast}
+              />
+            </div>
+          ) : null}
+        </Dialog.Content>
+      </Dialog.Root>
 
       <>
         {!loaded ? (

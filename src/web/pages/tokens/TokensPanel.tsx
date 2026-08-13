@@ -23,11 +23,12 @@ import { UpstreamCompatibilityPolicyEditor } from '../../components/UpstreamComp
 import WalletAcquisitionEditor, { type WalletAcquisitionEditorSubject } from '../../components/WalletAcquisitionEditor.js';
 import { Button } from '../../components/ui/button/index.js';
 import { ButtonGroup } from '../../components/ui/button-group/index.js';
-import { Ellipsis, LoaderCircle, Wallet, Waypoints } from 'lucide-react';
+import { Clipboard, Ellipsis, LoaderCircle, Search, Wallet, Waypoints } from 'lucide-react';
 import { Skeleton } from '../../components/ui/skeleton/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import InfoNote from '../../components/InfoNote.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
+import AccountModelsModal from '../accounts/AccountModelsModal.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card/index.js';
 import { DataTable } from '../../components/ui/data-table/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table/index.js';
@@ -109,6 +110,57 @@ const isMaskedPendingSyncResult = (result: AccountTokenSyncResult | null | undef
   String(result?.reason || '').trim().toLowerCase() === 'upstream_masked_tokens'
   && Number(result?.maskedPending || 0) > 0;
 
+type TokenHealth = {
+  state: 'healthy' | 'unhealthy' | 'degraded' | 'disabled' | 'unknown';
+  label: string;
+  tone: string;
+  dotClass: string;
+  pulse: boolean;
+  reason: string;
+};
+
+const resolveTokenHealth = (token: any): TokenHealth => {
+  const accountHealth = token?.account?.runtimeHealth;
+  if (token?.valueStatus === 'masked_pending') {
+    return {
+      state: 'unhealthy',
+      label: tr('pages.tokens.incomplete'),
+      tone: 'error',
+      dotClass: 'status-dot-error',
+      pulse: true,
+      reason: tr('pages.tokens.tokenPendingCompleteDescription'),
+    };
+  }
+  if (token?.enabled === false || token?.account?.status === 'disabled' || token?.site?.status === 'disabled') {
+    return {
+      state: 'disabled',
+      label: tr('pages.accounts.disabled2'),
+      tone: 'muted',
+      dotClass: 'status-dot-muted',
+      pulse: false,
+      reason: tr('pages.accounts.accountSiteHasBeenDisabled'),
+    };
+  }
+  const state = accountHealth?.state;
+  if (state === 'healthy' || state === 'unhealthy' || state === 'degraded' || state === 'disabled') {
+    const map: Record<string, Omit<TokenHealth, 'state' | 'reason'>> = {
+      healthy: { label: tr('pages.accounts.healthy'), tone: 'success', dotClass: 'status-dot-success', pulse: true },
+      unhealthy: { label: tr('pages.accounts.error'), tone: 'error', dotClass: 'status-dot-error', pulse: true },
+      degraded: { label: tr('pages.accounts.downgrade'), tone: 'warning', dotClass: 'status-dot-pending', pulse: true },
+      disabled: { label: tr('pages.accounts.disabled2'), tone: 'muted', dotClass: 'status-dot-muted', pulse: false },
+    };
+    return { state, ...map[state], reason: accountHealth.reason || tr('pages.accounts.runningHealthInformationHasNotBeenObtained') };
+  }
+  return {
+    state: 'unknown',
+    label: tr('pages.accounts.unknown2'),
+    tone: 'muted',
+    dotClass: 'status-dot-pending',
+    pulse: false,
+    reason: tr('pages.accounts.runningHealthInformationHasNotBeenObtained'),
+  };
+};
+
 const resolveAccountLabel = (result: AccountTokenSyncResult | null | undefined) => {
   const name = typeof result?.accountName === 'string' ? result.accountName.trim() : '';
   if (name) return name;
@@ -178,6 +230,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
     count?: number;
   }>(null);
   const [walletEditorSubject, setWalletEditorSubject] = useState<WalletAcquisitionEditorSubject | null>(null);
+  const [tokenAccountModelModal, setTokenAccountModelModal] = useState<any>({
+    open: false,
+    account: null,
+    tokenId: null,
+    models: [],
+    accountTokens: [],
+    tokenModels: [],
+    loading: false,
+    saving: false,
+    siteName: '',
+  });
   const [form, setForm] = useState(initialCreateForm);
   const [createCompatibilityPolicyForm, setCreateCompatibilityPolicyForm] = useState(() => emptyUpstreamCompatibilityPolicyForm());
   const [editForm, setEditForm] = useState({
@@ -204,12 +267,27 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
         api.getAccountTokens(),
         api.getAccountsSnapshot(),
       ]);
-      const nextTokens = tokenRows || [];
-      setTokens(nextTokens);
-      setSelectedTokenIds((current) => current.filter((id) => nextTokens.some((token: any) => token.id === id)));
       const latestAccounts: SyncableAccount[] = Array.isArray(accountSnapshot?.accounts)
         ? accountSnapshot.accounts
         : [];
+      const accountById = new Map(latestAccounts.map((account: any) => [Number(account.id), account]));
+      const nextTokens = (tokenRows || []).map((token: any) => {
+        const account = accountById.get(Number(token.accountId));
+        return account ? {
+          ...token,
+          account: {
+            ...token.account,
+            status: account.status,
+            runtimeHealth: account.runtimeHealth,
+          },
+          site: {
+            ...token.site,
+            status: account.site?.status,
+          },
+        } : token;
+      });
+      setTokens(nextTokens);
+      setSelectedTokenIds((current) => current.filter((id) => nextTokens.some((token: any) => token.id === id)));
       setAccounts(latestAccounts);
 
       const syncableAccounts = latestAccounts.filter(isAccountSyncable);
@@ -566,6 +644,27 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
       accountLabel: accountName,
       tokenLabel: tokenName,
     });
+  }, [toast]);
+
+  const openTokenModels = useCallback(async (token: any) => {
+    try {
+      setTokenAccountModelModal((state: any) => ({ ...state, open: true, loading: true }));
+      const result = await api.getAccountModels(Number(token.accountId));
+      setTokenAccountModelModal({
+        open: true,
+        tokenId: Number(token.id),
+        account: { ...token.account, id: token.accountId, siteId: token.site?.id, site: token.site },
+        models: Array.isArray(result?.models) ? result.models : [],
+        accountTokens: Array.isArray(result?.accountTokens) ? result.accountTokens : [],
+        tokenModels: Array.isArray(result?.tokenModels) ? result.tokenModels : [],
+        loading: false,
+        saving: false,
+        siteName: result?.siteName || token.site?.name || '',
+      });
+    } catch (error: any) {
+      setTokenAccountModelModal((state: any) => ({ ...state, open: false, loading: false }));
+      toast.error(error?.message || tr('pages.accounts.accountModelsModal.loadingModelList'));
+    }
   }, [toast]);
 
   const closeEditPanel = useCallback(() => {
@@ -1209,25 +1308,14 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                         >
                           {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
                         </Button>
-                        {!isPending ? (
-                          <Button type="button" variant="ghost" size="sm"
-                            onClick={() => handleCopyToken(token.id, token.name || '')}
-                            disabled={!!rowLoading[`${loadingPrefix}-copy`]}
-
-                            data-testid={`token-copy-${token.id}`}
-                          >
-                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.modelTester.copy')}
-                          </Button>
-                        ) : null}
                         <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEditPanel(token)}
 
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => openTokenWalletCost(token)}>
-                          <Wallet className="size-4" />
-                          {tr('upstreamCostPricing.walletEditor.configureAction')}
+                        <Button type="button" variant="ghost" size="sm" onClick={() => void openTokenModels(token)}>
+                          {tr('components.modelAnalysisPanel.model')}
                         </Button>
                         {onConfigureEndpointBindings ? (
                           <Button
@@ -1240,11 +1328,42 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                             {tr('pages.accounts.endpointBindings.action')}
                           </Button>
                         ) : null}
+                        <Button type="button" variant="ghost" size="sm" onClick={() => openTokenWalletCost(token)}>
+                          <Wallet className="size-4" />
+                          {tr('upstreamCostPricing.walletEditor.configureAction')}
+                        </Button>
                       </>
                     )}
                   >
-                    <MobileField label={tr('components.searchModal.accounts2')} value={token.account?.username || `account-${token.accountId}`} />
-                    <MobileField label={tr('pages.tokens.group')} value={token.tokenGroup || tr('pages.tokens.default')} />
+                    <MobileField
+                      label={tr('pages.tokens.sites')}
+                      value={<ToneBadge tone="-muted">{token.site?.name || tr('pages.proxyLogs.unknownSite')}</ToneBadge>}
+                    />
+                    <MobileField
+                      label={tr('components.searchModal.accounts2')}
+                      value={<ToneBadge tone="-muted">{token.account?.username || `account-${token.accountId}`}</ToneBadge>}
+                    />
+                    <MobileField
+                      label={tr('pages.tokens.group')}
+                      value={<ToneBadge tone="-muted">{token.tokenGroup || tr('pages.tokens.default')}</ToneBadge>}
+                    />
+                    {(() => {
+                      const health = resolveTokenHealth(token);
+                      return (
+                        <MobileField
+                          label={tr('pages.accounts.healthystatus')}
+                          value={(
+                            <div className="flex flex-col gap-1">
+                              <ToneBadge tone={health.tone}>
+                                <span className={`status-dot ${health.dotClass} ${health.pulse ? 'animate-pulse-dot' : ''}`} />
+                                {health.label}
+                              </ToneBadge>
+                              <span className="text-[11px] text-muted-foreground" data-tooltip={health.reason}>{health.reason}</span>
+                            </div>
+                          )}
+                        />
+                      );
+                    })()}
                     <MobileField
                       label={tr('components.notificationPanel.status')}
                       value={(
@@ -1258,25 +1377,25 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                         <MobileField
                           label={tr('pages.tokens.token3')}
                           stacked
-                          value={<span className="break-all font-mono text-xs">{token.tokenMasked || '***'}</span>}
-                        />
-                        <MobileField
-                          label={tr('pages.tokens.sites')}
-                          value={token.site?.url ? (
-                            <a
-                              href={token.site.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex"
-                            >
-                              <ToneBadge tone="-muted">
-                                {token.site?.name || tr('pages.proxyLogs.unknownSite')}
-                              </ToneBadge>
-                            </a>
-                          ) : (
-                            <ToneBadge tone="-muted">
-                              {token.site?.name || tr('pages.proxyLogs.unknownSite')}
-                            </ToneBadge>
+                          value={(
+                            <div className="flex min-w-0 items-center gap-1">
+                              <span className="break-all font-mono text-xs">{token.tokenMasked || '***'}</span>
+                              {!isPending ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 shrink-0"
+                                  onClick={() => void handleCopyToken(token.id, token.name || '')}
+                                  disabled={!!rowLoading[`${loadingPrefix}-copy`]}
+                                  aria-label={tr('pages.modelTester.copy')}
+                                  data-tooltip={tr('pages.modelTester.copy')}
+                                  data-testid={`token-copy-${token.id}`}
+                                >
+                                  {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : <Clipboard className="size-4" />}
+                                </Button>
+                              ) : null}
+                            </div>
                           )}
                         />
                         <MobileField
@@ -1337,12 +1456,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                     onCheckedChange={(checked) => toggleSelectAllTokens(checked === true)}      />
                 </TableHead>
                 <TableHead>{tr('pages.tokens.tokenname')}</TableHead>
-                <TableHead>{tr('pages.tokens.token3')}</TableHead>
                 <TableHead>{tr('pages.tokens.sites')}</TableHead>
+                <TableHead className="min-w-56">{tr('pages.accounts.healthystatus')}</TableHead>
                 <TableHead>{tr('components.searchModal.accounts2')}</TableHead>
                 <TableHead>{tr('pages.tokens.group')}</TableHead>
-                <TableHead>{tr('components.notificationPanel.status')}</TableHead>
-                <TableHead>{tr('pages.tokens.default')}</TableHead>
                 <TableHead>{tr('pages.tokens.time')}</TableHead>
                 <TableHead className="min-w-36 text-right">{tr('pages.accounts.actions2')}</TableHead>
               </TableRow>
@@ -1370,58 +1487,94 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                         onCheckedChange={(checked) => toggleTokenSelection(token.id, checked === true)}            onClick={(e) => e.stopPropagation()}
                       />
                     </TableCell>
-                    <TableCell className="font-semibold">{token.name || '-'}</TableCell>
-                    <TableCell className="font-mono text-xs">{token.tokenMasked || '***'}</TableCell>
+                    <TableCell className="text-foreground">
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <div className="truncate font-semibold">{token.name || '-'}</div>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="max-w-48 truncate font-mono text-[11px] text-muted-foreground">{token.tokenMasked || '***'}</span>
+                          {!isPending ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 shrink-0"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleCopyToken(token.id, token.name || '');
+                              }}
+                              disabled={!!rowLoading[`${loadingPrefix}-copy`]}
+                              aria-label={tr('pages.modelTester.copy')}
+                              data-tooltip={tr('pages.modelTester.copy')}
+                              data-testid={`token-copy-${token.id}`}
+                            >
+                              {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : <Clipboard className="size-4" />}
+                            </Button>
+                          ) : null}
+                          {isPending ? <ToneBadge tone="warning">{tr('pages.tokens.incomplete')}</ToneBadge> : null}
+                          {token.isDefault ? <ToneBadge tone="warning">{tr('pages.tokens.default')}</ToneBadge> : null}
+                        </div>
+                      </div>
+                    </TableCell>
                     <TableCell>
-                      {token.site?.url ? (
-                        <a
-                          href={token.site.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                      <div className="flex min-w-0 items-start">
+                        {token.site?.url ? (
+                          <a
+                            href={token.site.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ToneBadge tone="-muted">
+                              {token.site?.name || tr('pages.proxyLogs.unknownSite')}
+                            </ToneBadge>
+                          </a>
+                        ) : (
                           <ToneBadge tone="-muted">
                             {token.site?.name || tr('pages.proxyLogs.unknownSite')}
                           </ToneBadge>
-                        </a>
-                      ) : (
-                        <ToneBadge tone="-muted">
-                          {token.site?.name || tr('pages.proxyLogs.unknownSite')}
-                        </ToneBadge>
-                      )}
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell>{token.account?.username || `account-${token.accountId}`}</TableCell>
-                    <TableCell>{token.tokenGroup || tr('pages.tokens.default')}</TableCell>
                     <TableCell>
-                      {isPending ? (
-                        <ToneBadge tone="-warning">{tr('pages.tokens.incomplete')}</ToneBadge>
-                      ) : (
-                        <ToneBadge tone={token.enabled ? 'success' : 'muted'}>
-                          {token.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
-                        </ToneBadge>
-                      )}
+                      {(() => {
+                        const health = resolveTokenHealth(token);
+                        return (
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <ToneBadge tone={health.tone}>
+                              <span className={`status-dot ${health.dotClass} ${health.pulse ? 'animate-pulse-dot' : ''}`} />
+                              {health.label}
+                            </ToneBadge>
+                            <span className="max-w-[240px] truncate text-[11px] text-muted-foreground" data-tooltip={health.reason}>{health.reason}</span>
+                          </div>
+                        );
+                      })()}
                     </TableCell>
-                    <TableCell>{token.isDefault ? <ToneBadge tone="-warning">{tr('pages.tokens.default')}</ToneBadge> : '-'}</TableCell>
+                    <TableCell><ToneBadge tone="-muted">{token.account?.username || `account-${token.accountId}`}</ToneBadge></TableCell>
+                    <TableCell><ToneBadge tone="-muted">{token.tokenGroup || tr('pages.tokens.default')}</ToneBadge></TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDateTimeLocal(token.updatedAt)}</TableCell>
                     <TableCell className="min-w-36 text-right" onClick={(event) => event.stopPropagation()}>
                       <ButtonGroup className="justify-end">
-                        {!isPending ? (
-                          <Button type="button" variant="ghost" size="sm"
-                            onClick={() => handleCopyToken(token.id, token.name || '')}
-                            disabled={!!rowLoading[`${loadingPrefix}-copy`]}
-
-                            data-testid={`token-copy-${token.id}`}
-                          >
-                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.modelTester.copy')}
-                          </Button>
-                        ) : null}
                         <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEditPanel(token)}
 
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
+                        <Button type="button" variant="ghostPrimary" size="sm" onClick={() => void openTokenModels(token)}>
+                          {tr('components.modelAnalysisPanel.model')}
+                        </Button>
+                        {onConfigureEndpointBindings ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onConfigureEndpointBindings(token)}
+                          >
+                            <Waypoints className="size-4" />
+                            {tr('pages.accounts.endpointBindings.action')}
+                          </Button>
+                        ) : null}
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
                             <Button type="button" variant="ghost" size="icon" aria-label={tr('pages.accounts.actions2')}>
@@ -1446,12 +1599,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                               <Wallet className="size-4" />
                               {tr('upstreamCostPricing.walletEditor.configureAction')}
                             </DropdownMenu.Item>
-                            {onConfigureEndpointBindings ? (
-                              <DropdownMenu.Item onSelect={() => onConfigureEndpointBindings(token)}>
-                                <Waypoints className="size-4" />
-                                {tr('pages.accounts.endpointBindings.action')}
-                              </DropdownMenu.Item>
-                            ) : null}
+                            <DropdownMenu.Item onSelect={() => void openTokenModels(token)}>
+                              <Search className="size-4" />
+                              {tr('pages.accounts.accountModelsModal.modelManagement')}
+                            </DropdownMenu.Item>
                             {!isPending ? (
                               <DropdownMenu.Item
                                 onSelect={() => void withRowLoading(`${loadingPrefix}-toggle`, async () => {
@@ -1499,6 +1650,51 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
           if (!open) setWalletEditorSubject(null);
         }}
         toast={toast}
+      />
+      <AccountModelsModal
+        modelModal={tokenAccountModelModal}
+        initialTokenId={tokenAccountModelModal.tokenId}
+        onClose={() => setTokenAccountModelModal((state: any) => ({ ...state, open: false }))}
+        onSave={async (tokenId, disabledModels) => {
+          const targetTokenId = tokenId ?? tokenAccountModelModal.tokenId;
+          if (!targetTokenId) return;
+          setTokenAccountModelModal((state: any) => ({ ...state, saving: true }));
+          try {
+            await api.updateAccountTokenDisabledModels(targetTokenId, Array.from(disabledModels));
+            setTokenAccountModelModal((state: any) => ({ ...state, open: false, saving: false }));
+          } catch (error: any) {
+            toast.error(error?.message || tr('pages.accounts.saveFailed'));
+            setTokenAccountModelModal((state: any) => ({ ...state, saving: false }));
+          }
+        }}
+        onRefresh={async (tokenId) => {
+          const accountId = Number(tokenAccountModelModal.account?.id || 0);
+          if (!accountId) return;
+          if (tokenId != null) await api.refreshAccountTokenModels(tokenId);
+          else await api.checkModels(accountId);
+          const result = await api.getAccountModels(accountId);
+          setTokenAccountModelModal((state: any) => ({
+            ...state,
+            loading: false,
+            models: Array.isArray(result?.models) ? result.models : [],
+            accountTokens: Array.isArray(result?.accountTokens) ? result.accountTokens : [],
+            tokenModels: Array.isArray(result?.tokenModels) ? result.tokenModels : [],
+          }));
+        }}
+        onReload={async () => undefined}
+        onAddManualModels={async (tokenId, models) => {
+          const targetTokenId = tokenId ?? tokenAccountModelModal.tokenId;
+          if (!targetTokenId) return;
+          await api.addAccountTokenAvailableModels(targetTokenId, models);
+          const accountId = Number(tokenAccountModelModal.account?.id || 0);
+          const result = await api.getAccountModels(accountId);
+          setTokenAccountModelModal((state: any) => ({
+            ...state,
+            models: Array.isArray(result?.models) ? result.models : [],
+            accountTokens: Array.isArray(result?.accountTokens) ? result.accountTokens : [],
+            tokenModels: Array.isArray(result?.tokenModels) ? result.tokenModels : [],
+          }));
+        }}
       />
     </div>
   );

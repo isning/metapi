@@ -626,7 +626,7 @@ export type ProxyLogBillingDetails = ProxyBillingDetails | null;
 export type UpstreamCostPricingScope =
   "site_model" | "account_model" | "token_model" | "token_model_group";
 export type UpstreamCostMatchedScope =
-  UpstreamCostPricingScope | "provider_catalog";
+  UpstreamCostPricingScope | "provider_catalog" | "system_default";
 
 export type UpstreamCostPricingRecord = {
   id: number;
@@ -1489,6 +1489,29 @@ export const api = {
   // Account tokens
   getAccountTokens: (accountId?: number) =>
     request(`/api/account-tokens${accountId ? `?accountId=${accountId}` : ""}`),
+  getAccountTokenModels: (id: number) => request<{
+    token: { id: number; accountId: number; name: string; tokenGroup?: string | null; enabled?: boolean; isDefault?: boolean };
+    account: { id: number; username?: string | null };
+    site: { id: number; name: string };
+    observed: boolean;
+    modelDetails: Array<{ name: string; available: boolean; latencyMs: number | null; checkedAt: string | null; disabled: boolean }>;
+    models: string[];
+  }>(`/api/account-tokens/${id}/models`),
+  refreshAccountTokenModels: (id: number) => request<{
+    success: boolean;
+    models: {
+      token: { id: number; accountId: number; name: string; tokenGroup?: string | null; enabled?: boolean; isDefault?: boolean };
+      account: { id: number; username?: string | null };
+      site: { id: number; name: string };
+      observed: boolean;
+      modelDetails: Array<{ name: string; available: boolean; latencyMs: number | null; checkedAt: string | null; disabled: boolean }>;
+      models: string[];
+    };
+  }>(`/api/account-tokens/${id}/models/refresh`, { method: 'POST' }),
+  updateAccountTokenDisabledModels: (id: number, models: string[]) =>
+    requestJson(`/api/account-tokens/${id}/models/disabled`, { method: 'PUT', body: { models } }),
+  addAccountTokenAvailableModels: (id: number, models: string[]) =>
+    requestJson(`/api/account-tokens/${id}/models/manual`, { method: 'POST', body: { models } }),
   addAccountToken: (data: any) =>
     requestJson("/api/account-tokens", {
       method: "POST",
@@ -2282,6 +2305,16 @@ export const api = {
     ),
   exportBackup: (type: "all" | "accounts" | "preferences" = "all") =>
     request(`/api/settings/backup/export?type=${encodeURIComponent(type)}`),
+  downloadBackup: async (type: "all" | "accounts" | "preferences" = "all") => {
+    const response = await fetchAuthenticatedResponse(`/api/settings/backup/export?type=${encodeURIComponent(type)}`);
+    if (!response.ok) throw await buildApiRequestError(response);
+    const blob = await response.blob();
+    return {
+      blob,
+      filename: parseContentDispositionFilename(response.headers.get('content-disposition'))
+        || `metapi-${type}-backup.json.gz`,
+    };
+  },
   importBackup: (data: any) =>
     requestJson("/api/settings/backup/import", {
       method: "POST",
@@ -2537,6 +2570,7 @@ export const api = {
     tokenId?: number;
     modelName?: string;
     enabled?: boolean;
+    includeSiteScope?: boolean;
   }) =>
     request<UpstreamCostPricingRecord[]>(
       `/api/pricing/upstream-cost${buildQueryString(params)}`,

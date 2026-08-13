@@ -278,4 +278,50 @@ describe('accounts manual models endpoint', () => {
       message: 'Invalid models. Expected string[].',
     });
   });
+
+  it('returns distinct upstream /models discovery results for every account token', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Token Discovery Site',
+      url: 'https://token-discovery.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'session-token',
+    }).returning().get();
+    const [firstToken, secondToken] = await db.insert(schema.accountTokens).values([
+      { accountId: account.id, name: 'first', token: 'sk-first', enabled: true, isDefault: true },
+      { accountId: account.id, name: 'second', token: 'sk-second', enabled: true, isDefault: false },
+    ]).returning().all();
+    await db.insert(schema.tokenModelAvailability).values([
+      { tokenId: firstToken.id, modelName: 'first-only', available: true, latencyMs: 13 },
+      { tokenId: firstToken.id, modelName: 'shared-disabled', available: true, latencyMs: 14 },
+      { tokenId: secondToken.id, modelName: 'second-unavailable', available: false, latencyMs: 25 },
+    ]).run();
+    await db.insert(schema.siteDisabledModels).values({
+      siteId: site.id,
+      modelName: 'shared-disabled',
+    }).run();
+
+    const response = await app.inject({ method: 'GET', url: `/api/accounts/${account.id}/models` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      tokenModels: expect.arrayContaining([
+        expect.objectContaining({
+          tokenId: firstToken.id,
+          observed: true,
+          models: expect.arrayContaining([
+            expect.objectContaining({ name: 'first-only', available: true, latencyMs: 13, disabled: false }),
+            expect.objectContaining({ name: 'shared-disabled', available: true, disabled: true }),
+          ]),
+        }),
+        expect.objectContaining({
+          tokenId: secondToken.id,
+          observed: true,
+          models: [expect.objectContaining({ name: 'second-unavailable', available: false, latencyMs: 25 })],
+        }),
+      ]),
+    });
+  });
 });

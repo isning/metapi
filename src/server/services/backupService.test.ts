@@ -153,12 +153,30 @@ describe('backupService graph-native route runtime', () => {
     expect(backup.accounts.accountTokens).toHaveLength(1);
     expect(backup.accounts).not.toHaveProperty('routeGroups');
     expect(backup.accounts).not.toHaveProperty('routeGraphExecutionTargetBindings');
+    expect(backup.accounts).not.toHaveProperty('proxyLogs');
     expect(backup.accounts.runtimeExecutionTargets.length).toBeGreaterThan(0);
     expect(backup.accounts.routeGraph.versions.length).toBeGreaterThan(0);
     expect(backup.accounts.routeGraph.activeVersion.versionId).toBeGreaterThan(0);
     expect(backup.accounts.routeGraph.versions.some((version: { sourceGraphJson?: string | null }) => (
       parseRouteGraphSource(version.sourceGraphJson).macros.some((macro) => macro.id === seeded.group.id)
     ))).toBe(true);
+  });
+
+  it('excludes unbounded proxy history and preserves local history on import', async () => {
+    const { account } = await seedRouteRuntime();
+    await db.insert(schema.proxyLogs).values({
+      accountId: account.id,
+      status: 'success',
+      modelRequested: 'backup-model',
+      billingDetails: 'x'.repeat(1_000_000),
+    }).run();
+
+    const exported = await backupService.exportBackup('accounts') as any;
+    expect(exported.accounts).not.toHaveProperty('proxyLogs');
+
+    const beforeImport = await db.select().from(schema.proxyLogs).all();
+    await backupService.importBackup(exported);
+    expect(await db.select().from(schema.proxyLogs).all()).toEqual(beforeImport);
   });
 
   it('imports current route runtime backup data without legacy route storage', async () => {

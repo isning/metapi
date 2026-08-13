@@ -10,6 +10,8 @@ import { migratePublishedMainRouteRuntime } from './mainRouteRuntimeMigration.js
 import { bootstrapRuntimeDatabaseSchema } from './runtimeSchemaBootstrap.js';
 import { resolveSqliteDatabasePath } from './sqlitePath.js';
 
+const TOKEN_MODEL_OVERRIDES_MIGRATION_CREATED_AT = 1786646359692;
+
 function resolveSqliteDbPath(): string {
   return resolveSqliteDatabasePath({ dbUrl: config.dbUrl, dataDir: config.dataDir });
 }
@@ -62,6 +64,51 @@ function adoptCurrentDrizzleBaseline(sqlite: Database.Database, migrationsFolder
     .run(baseline.hash, baseline.folderMillis);
 }
 
+function hasColumn(sqlite: Database.Database, table: string, column: string): boolean {
+  return sqlite.prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((row) => (
+      typeof row === 'object'
+      && row !== null
+      && 'name' in row
+      && (row as { name?: unknown }).name === column
+    ));
+}
+
+function hasIndex(sqlite: Database.Database, index: string): boolean {
+  return !!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1")
+    .get(index);
+}
+
+/**
+ * SQLite can persist DDL from an interrupted migration before Drizzle writes
+ * its metadata row. Adopt only this fully-verifiable migration state so the
+ * next startup remains retryable without replaying already-created objects.
+ */
+function recoverCompletedTokenModelOverridesMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): void {
+  if (!hasTable(sqlite, '__drizzle_migrations')) return;
+  const migrations = readMigrationFiles({ migrationsFolder });
+  const migration = migrations.find((item) => item.folderMillis === TOKEN_MODEL_OVERRIDES_MIGRATION_CREATED_AT);
+  if (!migration) return;
+  const recorded = sqlite.prepare(
+    'SELECT 1 FROM __drizzle_migrations WHERE hash = ? AND created_at = ? LIMIT 1',
+  ).get(migration.hash, migration.folderMillis);
+  if (recorded) return;
+
+  const complete = hasTable(sqlite, 'token_disabled_models')
+    && hasIndex(sqlite, 'token_disabled_models_token_model_unique')
+    && hasIndex(sqlite, 'token_disabled_models_token_id_idx')
+    && hasColumn(sqlite, 'token_model_availability', 'is_manual');
+  if (!complete) return;
+
+  sqlite.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+    .run(migration.hash, migration.folderMillis);
+  console.warn('Recovered completed Drizzle migration 0002_red_vertigo after interrupted SQLite startup.');
+}
+
 /** Applies the native schema, with one direct conversion from published main data. */
 export async function runSqliteMigrations(): Promise<void> {
   const dbPath = resolveSqliteDbPath();
@@ -83,6 +130,7 @@ export async function runSqliteMigrations(): Promise<void> {
       adoptCurrentDrizzleBaseline(sqlite, migrationsFolder);
       recordPublishedMainMigrationStage(sqlite, 'complete');
     }
+    recoverCompletedTokenModelOverridesMigration(sqlite, migrationsFolder);
     migrate(drizzle(sqlite), { migrationsFolder });
   } finally {
     sqlite.close();

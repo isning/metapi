@@ -36,10 +36,15 @@ const accountTokenSyncAllPayloadSchema = z.object({
   wait: z.boolean().optional(),
 }).passthrough();
 
+const accountTokenModelsPayloadSchema = z.object({
+  models: z.array(z.string()).optional(),
+}).passthrough();
+
 export type AccountTokenBatchPayload = z.output<typeof accountTokenBatchPayloadSchema>;
 export type AccountTokenCreatePayload = z.output<typeof accountTokenCreatePayloadSchema>;
 export type AccountTokenSyncAllPayload = z.output<typeof accountTokenSyncAllPayloadSchema>;
 export type AccountTokenUpdatePayload = z.output<typeof accountTokenUpdatePayloadSchema>;
+export type AccountTokenModelsPayload = z.output<typeof accountTokenModelsPayloadSchema>;
 
 function normalizeAccountTokenPayloadInput(input: unknown): unknown {
   return input === undefined ? {} : input;
@@ -83,6 +88,9 @@ function formatAccountTokenPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'wait') {
     return 'Invalid wait. Expected boolean.';
+  }
+  if (firstPath === 'models') {
+    return 'Invalid models. Expected string[].';
   }
   return 'Invalid account token payload.';
 }
@@ -145,4 +153,11 @@ export function parseAccountTokenSyncAllPayload(input: unknown):
     success: true,
     data: result.data,
   };
+}
+
+export function parseAccountTokenModelsPayload(input: unknown):
+{ success: true; data: AccountTokenModelsPayload } | { success: false; error: string } {
+  const result = accountTokenModelsPayloadSchema.safeParse(normalizeAccountTokenPayloadInput(input));
+  if (!result.success) return { success: false, error: formatAccountTokenPayloadError(result.error) };
+  return { success: true, data: result.data };
 }

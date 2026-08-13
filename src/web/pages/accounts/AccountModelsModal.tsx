@@ -1,27 +1,34 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
 import { Button } from '../../components/ui/button/index.js';
-import { Coins, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../../components/ToneBadge.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card/index.js';
-import { ScrollArea } from '../../components/ui/scroll-area/index.js';
 import * as Dialog from '../../components/ui/dialog/index.js';
 import { UpstreamCostPricingEditor } from '../../components/UpstreamCostPricingEditor.js';
 import { useToast } from '../../components/Toast.js';
+import ModernSelect from '../../components/ModernSelect.js';
+import {
+  ModelAvailabilityList,
+  type ModelAvailabilityRow,
+  type ModelAvailabilityToken,
+  type TokenModelAvailability,
+} from '../../components/ModelAvailabilityList.js';
 
 import { tr } from '../../i18n.js';
+import type { UpstreamCostMatchedScope } from '../../api.js';
 type AccountModelRow = {
   name: string;
   latencyMs: number | null;
   disabled: boolean;
   isManual?: boolean;
   costPricing?: {
-    status?: 'configured' | 'unconfigured' | 'error';
+    status: 'configured' | 'unconfigured' | 'error';
     configured: boolean;
-    matchedScope: string | null;
+    matchedScope: UpstreamCostMatchedScope | null;
     pricingId: number | null;
     totalCost: number | null;
     diagnostics?: Array<{ level: string; message: string }>;
@@ -32,33 +39,30 @@ type AccountModelModalState = {
   open: boolean;
   account: any | null;
   models: AccountModelRow[];
-  accountTokens?: Array<{
-    id: number;
-    name: string;
-    tokenGroup?: string | null;
-    enabled?: boolean;
-    isDefault?: boolean;
-    valueStatus?: string | null;
-  }>;
-  pendingDisabled: Set<string>;
+  accountTokens?: ModelAvailabilityToken[];
+  tokenModels?: TokenModelAvailability[];
   loading: boolean;
   saving: boolean;
   siteName: string;
-  manualModelsInput: string;
-  addingManualModels: boolean;
 };
 
 type AccountModelsModalProps = {
   modelModal: AccountModelModalState;
   onClose: () => void;
-  onSave: () => void;
-  onRefresh: () => Promise<void> | void;
+  onSave: (tokenId: number | null, disabledModels: Set<string>) => Promise<void> | void;
+  onRefresh: (tokenId: number | null) => Promise<void> | void;
   onReload: () => Promise<void> | void;
-  onToggleModelDisabled: (modelName: string) => void;
-  onSetPendingDisabled: (pendingDisabled: Set<string>) => void;
-  onManualInputChange: (value: string) => void;
-  onAddManualModels: () => Promise<void> | void;
+  onAddManualModels: (tokenId: number | null, models: string[]) => Promise<void> | void;
+  initialTokenId?: number | null;
 };
+
+function sameModelNames(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const name of left) {
+    if (!right.has(name)) return false;
+  }
+  return true;
+}
 
 export default function AccountModelsModal({
   modelModal,
@@ -66,31 +70,77 @@ export default function AccountModelsModal({
   onSave,
   onRefresh,
   onReload,
-  onToggleModelDisabled,
-  onSetPendingDisabled,
-  onManualInputChange,
   onAddManualModels,
+  initialTokenId = null,
 }: AccountModelsModalProps) {
   const toast = useToast();
   const [costModelName, setCostModelName] = useState<string | null>(null);
+  const [selectedTokenId, setSelectedTokenId] = useState<number | null>(null);
+  const [pendingDisabled, setPendingDisabled] = useState<Set<string>>(new Set());
+  const [manualModelsInput, setManualModelsInput] = useState('');
+  const [addingManualModels, setAddingManualModels] = useState(false);
   const account = modelModal.account;
   const siteId = Number(account?.siteId || account?.site?.id || 0);
   const accountId = Number(account?.id || 0);
-  const accountTokens = modelModal.accountTokens || account?.accountTokens || account?.tokens || [];
+  const accountTokens: ModelAvailabilityToken[] = modelModal.accountTokens || account?.accountTokens || account?.tokens || [];
+  const tokenModels: TokenModelAvailability[] = modelModal.tokenModels || [];
+  const selectedToken = accountTokens.find((token) => token.id === selectedTokenId) || null;
+  const selectedTokenModels = useMemo(
+    () => tokenModels.find((entry) => entry.tokenId === selectedTokenId) || null,
+    [selectedTokenId, tokenModels],
+  );
+  const isTokenView = selectedToken !== null;
+  const displayedModels: ModelAvailabilityRow[] = isTokenView
+    ? selectedTokenModels?.models || []
+    : modelModal.models;
 
-  const formatCostSummary = (value: number | null | undefined) => {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-    return value.toFixed(6).replace(/\.?0+$/, '');
+  useEffect(() => {
+    const initialDisabled = new Set(displayedModels.filter((model) => model.disabled).map((model) => model.name));
+    setPendingDisabled((current) => sameModelNames(current, initialDisabled) ? current : initialDisabled);
+    setManualModelsInput('');
+  }, [selectedTokenId, modelModal.open, modelModal.models, tokenModels]);
+
+  const toggleModelDisabled = (modelName: string) => {
+    setPendingDisabled((current) => {
+      const next = new Set(current);
+      if (next.has(modelName)) next.delete(modelName); else next.add(modelName);
+      return next;
+    });
   };
 
-  const scopeLabel = (scope: string | null | undefined) => {
-    if (scope === 'site_model') return tr('components.searchModal.sites2');
-    if (scope === 'account_model') return tr('components.searchModal.accounts2');
-    if (scope === 'token_model') return 'Token';
-    if (scope === 'token_model_group') return tr('pages.accounts.accountModelsModal.tokenGroup');
-    if (scope === 'provider_catalog') return tr('upstreamCostPricing.source.providerCatalog');
-    return tr('pages.settings.notConfigured');
+  const addManualModels = async () => {
+    const models = Array.from(new Set(manualModelsInput.split(/[\s,]+/).map((model) => model.trim()).filter(Boolean)));
+    if (models.length === 0) return;
+    setAddingManualModels(true);
+    try {
+      await onAddManualModels(selectedTokenId, models);
+      setManualModelsInput('');
+    } finally {
+      setAddingManualModels(false);
+    }
   };
+
+  useEffect(() => {
+    if (initialTokenId != null && accountTokens.some((token) => token.id === initialTokenId)) {
+      setSelectedTokenId(initialTokenId);
+    }
+  }, [initialTokenId, accountTokens]);
+
+  useEffect(() => {
+    if (selectedTokenId != null && !accountTokens.some((token) => token.id === selectedTokenId)) {
+      setSelectedTokenId(null);
+    }
+  }, [accountTokens, selectedTokenId]);
+
+  const scopeLabels: Record<UpstreamCostMatchedScope, string> = {
+    site_model: tr('components.searchModal.sites2'),
+    account_model: tr('components.searchModal.accounts2'),
+    token_model: 'Token',
+    token_model_group: tr('pages.accounts.accountModelsModal.tokenGroup'),
+    provider_catalog: tr('upstreamCostPricing.source.providerCatalog'),
+    system_default: tr('upstreamCostPricing.source.systemDefault'),
+  };
+  const scopeLabel = (scope: UpstreamCostMatchedScope) => scopeLabels[scope];
 
   return (
     <>
@@ -103,7 +153,7 @@ export default function AccountModelsModal({
           <>
             <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
             <Button type="button"
-              onClick={onSave}
+              onClick={() => void onSave(selectedTokenId, pendingDisabled)}
               disabled={modelModal.saving || modelModal.loading}
             >
               {modelModal.saving ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.accounts.saving')}</> : tr('app.save')}
@@ -118,7 +168,22 @@ export default function AccountModelsModal({
         </div>
       ) : (
         <div className="grid gap-3">
-          {modelModal.models.length === 0 ? (
+          <div className="grid gap-1.5 sm:max-w-sm">
+            <div className="text-xs font-medium text-muted-foreground">{tr('pages.accounts.accountModelsModal.modelSource')}</div>
+            <ModernSelect
+              value={selectedTokenId == null ? 'account' : String(selectedTokenId)}
+              onChange={(value) => setSelectedTokenId(value === 'account' ? null : Number(value))}
+              options={[
+                { value: 'account', label: tr('pages.accounts.accountModelsModal.accountModels') },
+                ...accountTokens.map((token) => ({
+                  value: String(token.id),
+                  label: token.name || `Token ${token.id}`,
+                  description: token.tokenGroup || undefined,
+                })),
+              ]}
+            />
+          </div>
+          {displayedModels.length === 0 ? (
             <div className="grid justify-items-center gap-3 py-4">
               <EmptyStateBlock
                 title={tr('pages.accounts.accountModelsModal.noAvailableModels')}
@@ -126,7 +191,7 @@ export default function AccountModelsModal({
                 className="p-0"
               />
               <Button type="button"
-                onClick={() => void onRefresh()}
+                onClick={() => void onRefresh(selectedTokenId)}
 
               >
                 {tr('pages.accounts.accountModelsModal.fetchModelsNow')}
@@ -139,22 +204,22 @@ export default function AccountModelsModal({
                   <Checkbox
 
                     checked={
-                      modelModal.pendingDisabled.size > 0 && modelModal.pendingDisabled.size < modelModal.models.length
+                      pendingDisabled.size > 0 && pendingDisabled.size < displayedModels.length
                         ? 'indeterminate'
-                        : modelModal.pendingDisabled.size === 0
+                        : pendingDisabled.size === 0
                     }
                     onCheckedChange={() => {
-                      const allEnabled = modelModal.pendingDisabled.size === 0;
-                      onSetPendingDisabled(allEnabled ? new Set(modelModal.models.map((model) => model.name)) : new Set());
+                      const allEnabled = pendingDisabled.size === 0;
+                      setPendingDisabled(allEnabled ? new Set(displayedModels.map((model) => model.name)) : new Set());
                     }}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {tr('pages.settings.enabled2')} <strong className="text-foreground">{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} {tr('pages.models.models2')}
+                    {tr('pages.settings.enabled2')} <strong className="text-foreground">{displayedModels.length - pendingDisabled.size}</strong> / {displayedModels.length} {tr('pages.models.models2')}
                   </span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline"
-                    onClick={() => void onRefresh()}
+                    onClick={() => void onRefresh(selectedTokenId)}
                     disabled={modelModal.saving}
 
 
@@ -164,10 +229,10 @@ export default function AccountModelsModal({
                   <Button type="button" variant="outline"
                     onClick={() => {
                       const next = new Set<string>();
-                      for (const model of modelModal.models) {
-                        if (!modelModal.pendingDisabled.has(model.name)) next.add(model.name);
+                      for (const model of displayedModels) {
+                        if (!pendingDisabled.has(model.name)) next.add(model.name);
                       }
-                      onSetPendingDisabled(next);
+                      setPendingDisabled(next);
                     }}
 
 
@@ -175,14 +240,14 @@ export default function AccountModelsModal({
                     {tr('pages.accounts.accountModelsModal.invert')}
                   </Button>
                   <Button type="button" variant="outline"
-                    onClick={() => onSetPendingDisabled(new Set(modelModal.models.map((model) => model.name)))}
+                    onClick={() => setPendingDisabled(new Set(displayedModels.map((model) => model.name)))}
 
 
                   >
                     {tr('pages.accounts.accountModelsModal.disableAll')}
                   </Button>
                   <Button type="button" variant="outline"
-                    onClick={() => onSetPendingDisabled(new Set())}
+                    onClick={() => setPendingDisabled(new Set())}
 
 
                   >
@@ -191,68 +256,14 @@ export default function AccountModelsModal({
                 </div>
               </div>
 
-              <ScrollArea className="h-72 rounded-md border">
-                {modelModal.models.map((model, idx) => {
-                  const isDisabled = modelModal.pendingDisabled.has(model.name);
-                  return (
-                    <div
-                      key={model.name}
-                      className={`flex items-center gap-3 px-3 py-2 transition-opacity ${idx < modelModal.models.length - 1 ? 'border-b' : ''} ${isDisabled ? 'bg-muted/50 opacity-60' : ''}`.trim()}
-                    >
-                      <Checkbox
-                        checked={!isDisabled}
-                        onCheckedChange={() => onToggleModelDisabled(model.name)}
-                        className="shrink-0"
-                        aria-label={`切换 ${model.name}`}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="min-w-0 flex-1 break-all text-left font-mono text-sm"
-                        onClick={() => onToggleModelDisabled(model.name)}
-                      >
-                        {model.name}
-                      </Button>
-                      {model.latencyMs != null ? (
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {model.latencyMs}ms
-                        </span>
-                      ) : null}
-                      {model.isManual ? (
-                        <ToneBadge tone="-info">{tr('pages.accounts.accountModelsModal.manual')}</ToneBadge>
-                      ) : null}
-                      {isDisabled ? (
-                        <ToneBadge tone="-error">{tr('pages.downstreamKeys.disabled')}</ToneBadge>
-                      ) : null}
-                      <div className="flex shrink-0 items-center gap-1">
-                        {model.costPricing?.status === 'error' ? (
-                          <ToneBadge tone="-error">{tr('pages.accounts.accountModelsModal.costPricingError')}</ToneBadge>
-                        ) : model.costPricing?.configured ? (
-                          <>
-                            <ToneBadge tone="-success">{scopeLabel(model.costPricing.matchedScope)}</ToneBadge>
-                            {formatCostSummary(model.costPricing.totalCost) ? (
-                              <span className="font-mono text-xs text-muted-foreground">
-                                {formatCostSummary(model.costPricing.totalCost)}
-                              </span>
-                            ) : null}
-                          </>
-                        ) : (
-                          <ToneBadge tone="-muted">{tr('pages.accounts.accountModelsModal.noCostPricing')}</ToneBadge>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCostModelName(model.name)}
-                      >
-                        <Coins className="size-4" />
-                        {tr('components.charts.downstreamKeyTrendChart.cost')}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </ScrollArea>
+              {/* Shared rows keep account and token model views visually identical. */}
+              <ModelAvailabilityList
+                models={displayedModels.map((model) => ({ ...model, disabled: pendingDisabled.has(model.name) }))}
+                selectable
+                onToggleDisabled={toggleModelDisabled}
+                onConfigureCost={setCostModelName}
+                scopeLabel={scopeLabel}
+              />
               <div className="text-xs text-muted-foreground">
                 {tr('pages.accounts.accountModelsModal.disabledModelsApplyWholeSiteNoConnection')}
               </div>
@@ -270,22 +281,22 @@ export default function AccountModelsModal({
             <div className="flex gap-2">
               <Input
                 placeholder={tr('pages.accounts.accountModelsModal.exampleGpt4CustomClaude35')}
-                value={modelModal.manualModelsInput}
-                onChange={(e) => onManualInputChange(e.target.value)}
+                value={manualModelsInput}
+                onChange={(e) => setManualModelsInput(e.target.value)}
                 className="flex-1 font-mono"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !modelModal.addingManualModels) {
-                    void onAddManualModels();
+                  if (e.key === 'Enter' && !addingManualModels) {
+                    void addManualModels();
                   }
                 }}
               />
               <Button type="button" size="sm"
-                disabled={!modelModal.manualModelsInput.trim() || modelModal.addingManualModels}
-                onClick={() => void onAddManualModels()}
+                disabled={!manualModelsInput.trim() || addingManualModels}
+                onClick={() => void addManualModels()}
 
 
               >
-                {modelModal.addingManualModels ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.oAuthManagement.add')}
+                {addingManualModels ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.oAuthManagement.add')}
               </Button>
             </div>
             </CardContent>
@@ -309,11 +320,13 @@ export default function AccountModelsModal({
               <UpstreamCostPricingEditor
                 open={!!costModelName}
                 siteId={siteId}
+                ownerScope="account"
                 accountId={accountId}
+                fixedTokenId={selectedTokenId ?? undefined}
                 modelName={costModelName}
                 siteName={modelModal.siteName || account?.site?.name}
                 accountName={account?.username}
-                tokens={accountTokens}
+                tokens={selectedToken ? [selectedToken] : accountTokens}
                 onOpenChange={(open) => {
                   if (!open) setCostModelName(null);
                 }}

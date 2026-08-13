@@ -3520,6 +3520,34 @@
         }
       }
     },
+    "token_disabled_models": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "token_model_availability": {
       "columns": {
         "id": {
@@ -3556,6 +3584,12 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "is_manual": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "false",
           "primaryKey": false
         }
       }
@@ -4995,6 +5029,23 @@
       "unique": false
     },
     {
+      "name": "token_disabled_models_token_id_idx",
+      "table": "token_disabled_models",
+      "columns": [
+        "token_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "token_disabled_models_token_model_unique",
+      "table": "token_disabled_models",
+      "columns": [
+        "token_id",
+        "model_name"
+      ],
+      "unique": true
+    },
+    {
       "name": "token_model_availability_available_idx",
       "table": "token_model_availability",
       "columns": [
@@ -5348,6 +5399,14 @@
       "columns": [
         "platform",
         "url"
+      ]
+    },
+    {
+      "name": "token_disabled_models_token_model_unique",
+      "table": "token_disabled_models",
+      "columns": [
+        "token_id",
+        "model_name"
       ]
     },
     {
@@ -5864,6 +5923,17 @@
         "site_id"
       ],
       "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "token_disabled_models",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
       "referencedColumns": [
         "id"
       ],

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { config } from "../config.js";
 import { db, schema } from "../db/index.js";
 import { requiresManagedAccountTokens } from "./accountExtraConfig.js";
@@ -89,6 +89,10 @@ export async function buildModelTokenCandidatesPayload(): Promise<ModelTokenCand
       eq(schema.accountTokens.accountId, schema.accounts.id),
     )
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.tokenDisabledModels, and(
+      eq(schema.tokenDisabledModels.tokenId, schema.accountTokens.id),
+      eq(schema.tokenDisabledModels.modelName, schema.tokenModelAvailability.modelName),
+    ))
     .where(
       and(
         eq(schema.tokenModelAvailability.available, true),
@@ -96,6 +100,7 @@ export async function buildModelTokenCandidatesPayload(): Promise<ModelTokenCand
         eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
         eq(schema.accounts.status, "active"),
         eq(schema.sites.status, "active"),
+        sql`${schema.tokenDisabledModels.id} is null`,
       ),
     )
     .all();

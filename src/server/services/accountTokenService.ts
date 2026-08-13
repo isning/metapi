@@ -518,3 +518,113 @@ export async function listTokensWithRelations(accountId?: number) {
     };
     });
 }
+
+export type AccountTokenAvailableModels = {
+  token: Pick<AccountTokenRow, 'id' | 'accountId' | 'name' | 'tokenGroup' | 'enabled' | 'isDefault'>;
+  account: {
+    id: number;
+    username: string | null;
+  };
+  site: {
+    id: number;
+    name: string;
+  };
+  observed: boolean;
+  modelDetails: Array<{
+    name: string;
+    available: boolean;
+    latencyMs: number | null;
+    checkedAt: string | null;
+    disabled: boolean;
+    siteDisabled: boolean;
+    tokenDisabled: boolean;
+    isManual: boolean;
+  }>;
+  models: string[];
+};
+
+/**
+ * Returns the models that can be priced for one concrete upstream token.
+ * Token observations take precedence once present; otherwise account coverage
+ * remains the authoritative fallback until that token has been probed.
+ */
+export async function getAvailableModelsForAccountToken(tokenId: number): Promise<AccountTokenAvailableModels | null> {
+  const row = await db.select()
+    .from(schema.accountTokens)
+    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(eq(schema.accountTokens.id, tokenId))
+    .get();
+  if (!row) return null;
+
+  const [tokenCoverage, accountCoverage, disabledRows, tokenDisabledRows] = await Promise.all([
+    db.select({
+      modelName: schema.tokenModelAvailability.modelName,
+      available: schema.tokenModelAvailability.available,
+      isManual: schema.tokenModelAvailability.isManual,
+      latencyMs: schema.tokenModelAvailability.latencyMs,
+      checkedAt: schema.tokenModelAvailability.checkedAt,
+    })
+      .from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, tokenId))
+      .all(),
+    db.select({
+      modelName: schema.modelAvailability.modelName,
+      available: schema.modelAvailability.available,
+      isManual: schema.modelAvailability.isManual,
+      latencyMs: schema.modelAvailability.latencyMs,
+      checkedAt: schema.modelAvailability.checkedAt,
+    })
+      .from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, row.accounts.id))
+      .all(),
+    db.select({ modelName: schema.siteDisabledModels.modelName })
+      .from(schema.siteDisabledModels)
+      .where(eq(schema.siteDisabledModels.siteId, row.sites.id))
+      .all(),
+    db.select({ modelName: schema.tokenDisabledModels.modelName })
+      .from(schema.tokenDisabledModels)
+      .where(eq(schema.tokenDisabledModels.tokenId, tokenId))
+      .all(),
+  ]);
+  const observed = tokenCoverage.length > 0;
+  const coverage = observed ? tokenCoverage : accountCoverage;
+  const siteDisabledModels = new Set<string>(disabledRows.map((item) => item.modelName));
+  const tokenDisabledModels = new Set<string>(tokenDisabledRows.map((item) => item.modelName));
+  const modelDetails = coverage.map((item) => ({
+    name: item.modelName,
+    available: item.available === true,
+    latencyMs: item.latencyMs ?? null,
+    checkedAt: item.checkedAt ?? null,
+    siteDisabled: siteDisabledModels.has(item.modelName),
+    tokenDisabled: tokenDisabledModels.has(item.modelName),
+    disabled: siteDisabledModels.has(item.modelName) || tokenDisabledModels.has(item.modelName),
+    isManual: item.isManual === true,
+  }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const models = modelDetails
+    .filter((item) => item.available && !item.disabled)
+    .map((item) => item.name);
+
+  return {
+    token: {
+      id: row.account_tokens.id,
+      accountId: row.account_tokens.accountId,
+      name: row.account_tokens.name,
+      tokenGroup: row.account_tokens.tokenGroup,
+      enabled: row.account_tokens.enabled,
+      isDefault: row.account_tokens.isDefault,
+    },
+    account: {
+      id: row.accounts.id,
+      username: row.accounts.username,
+    },
+    site: {
+      id: row.sites.id,
+      name: row.sites.name,
+    },
+    observed,
+    modelDetails,
+    models,
+  };
+}

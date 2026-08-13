@@ -52,6 +52,7 @@ export interface DatabaseMigrationSummary {
     checkinLogs: number;
     modelAvailability: number;
     tokenModelAvailability: number;
+    tokenDisabledModels: number;
     proxyLogs: number;
     proxyRequests: number;
     proxyDebugTraces: number;
@@ -111,6 +112,7 @@ const NATIVE_TABLES: NativeTableSpec[] = [
   { tableName: 'site_disabled_models', summaryKey: 'siteDisabledModels', selectRows: async () => await db.select().from(schema.siteDisabledModels).all() as Array<Record<string, unknown>> },
   { tableName: 'model_availability', summaryKey: 'modelAvailability', selectRows: async () => await db.select().from(schema.modelAvailability).all() as Array<Record<string, unknown>> },
   { tableName: 'token_model_availability', summaryKey: 'tokenModelAvailability', selectRows: async () => await db.select().from(schema.tokenModelAvailability).all() as Array<Record<string, unknown>> },
+  { tableName: 'token_disabled_models', summaryKey: 'tokenDisabledModels', selectRows: async () => await db.select().from(schema.tokenDisabledModels).all() as Array<Record<string, unknown>> },
   { tableName: 'upstream_model_cost_pricings', summaryKey: 'upstreamModelCostPricings', selectRows: async () => await db.select().from(schema.upstreamModelCostPricings).all() as Array<Record<string, unknown>> },
   { tableName: 'provider_pricing_catalog_caches', summaryKey: 'providerPricingCatalogCaches', selectRows: async () => await db.select().from(schema.providerPricingCatalogCaches).all() as Array<Record<string, unknown>> },
   { tableName: 'wallet_acquisition_profiles', summaryKey: 'walletAcquisitionProfiles', selectRows: async () => await db.select().from(schema.walletAcquisitionProfiles).all() as Array<Record<string, unknown>> },

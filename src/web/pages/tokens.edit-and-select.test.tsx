@@ -17,6 +17,9 @@ const { apiMock } = vi.hoisted(() => ({
     getAccountTokenGroups: vi.fn(),
     syncAccountTokens: vi.fn(),
     updateAccountToken: vi.fn(),
+    getAccountTokenModels: vi.fn(),
+    refreshAccountTokenModels: vi.fn(),
+    getAccountModels: vi.fn(),
   },
 }));
 
@@ -140,6 +143,34 @@ describe('Tokens edit modal and row selection', () => {
       created: 0,
       updated: 0,
     });
+    apiMock.getAccountTokenModels.mockResolvedValue({
+      token: { id: 22, accountId: 1, name: 'focus-token' },
+      account: { id: 1, username: 'session-user' },
+      site: { id: 10, name: 'Session Site' },
+      observed: true,
+      modelDetails: [{ name: 'gpt-token-model', available: true, latencyMs: 42, checkedAt: null, disabled: false }],
+      models: ['gpt-token-model'],
+    });
+    apiMock.getAccountModels.mockResolvedValue({
+      siteName: 'Session Site',
+      models: [{ name: 'gpt-token-model', available: true, latencyMs: 42, disabled: false }],
+      accountTokens: [{ id: 22, name: 'focus-token', tokenGroup: 'default' }],
+      tokenModels: [{ tokenId: 22, observed: true, models: [{
+        name: 'gpt-token-model', available: true, latencyMs: 42, disabled: false,
+        costPricing: { status: 'unconfigured', configured: false, matchedScope: null, totalCost: null },
+      }] }],
+    });
+    apiMock.refreshAccountTokenModels.mockResolvedValue({
+      success: true,
+      models: {
+        token: { id: 22, accountId: 1, name: 'focus-token' },
+        account: { id: 1, username: 'session-user' },
+        site: { id: 10, name: 'Session Site' },
+        observed: true,
+        modelDetails: [{ name: 'gpt-token-model-refreshed', available: true, latencyMs: 21, checkedAt: null, disabled: false }],
+        models: ['gpt-token-model-refreshed'],
+      },
+    });
   });
 
   afterEach(() => {
@@ -190,6 +221,34 @@ describe('Tokens edit modal and row selection', () => {
     }
   });
 
+  it('opens the selected token in the shared account model management view', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const modelButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '模型');
+      expect(modelButton).toBeTruthy();
+
+      await act(async () => {
+        await modelButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getAccountModels).toHaveBeenCalledWith(1);
+      expect(JSON.stringify(root.toJSON())).toContain('gpt-token-model');
+      expect(JSON.stringify(root.toJSON())).toContain('未配置成本');
+      expect(JSON.stringify(root.toJSON())).not.toContain('>未配置<');
+      expect(root.root.findAll((node) => node.type === 'button').some((node) => collectText(node).includes('成本'))).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('selects a token when clicking the row body, but not when clicking an action button', async () => {
     let root!: WebTestRenderer;
     try {
@@ -213,9 +272,8 @@ describe('Tokens edit modal and row selection', () => {
 
       expect(collectText(root.root)).toContain('已选 1 项');
 
-      const copyButton = root.root
-        .findAll((node) => node.type === 'button')
-        .find((node) => collectText(node).includes('复制'));
+      const copyButton = root.root.findAll((node) => node.type === 'button')
+        .find((node) => node.props['data-testid'] === 'token-copy-22');
       expect(copyButton).toBeTruthy();
 
       await act(async () => {
@@ -458,4 +516,5 @@ describe('Tokens edit modal and row selection', () => {
       root?.unmount();
     }
   });
+
 });

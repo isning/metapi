@@ -58,7 +58,10 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
-import { buildAccountModelCostSummary } from "../../services/accountModelCostSummaryService.js";
+import {
+  buildPricedModelRows,
+  resolveAccountPricingToken,
+} from "../../services/accountModelCostSummaryService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1805,6 +1808,35 @@ export async function accountsRoutes(app: FastifyInstance) {
         .where(eq(schema.accountTokens.accountId, accountId))
         .all();
 
+      const tokenAvailabilityRows = tokenRows.length > 0
+        ? await db
+          .select({
+            tokenId: schema.tokenModelAvailability.tokenId,
+            modelName: schema.tokenModelAvailability.modelName,
+            available: schema.tokenModelAvailability.available,
+            isManual: schema.tokenModelAvailability.isManual,
+            latencyMs: schema.tokenModelAvailability.latencyMs,
+            checkedAt: schema.tokenModelAvailability.checkedAt,
+          })
+          .from(schema.tokenModelAvailability)
+          .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
+          .where(eq(schema.accountTokens.accountId, accountId))
+          .all()
+        : [];
+      const tokenDisabledRows = tokenRows.length > 0
+        ? await db.select({ tokenId: schema.tokenDisabledModels.tokenId, modelName: schema.tokenDisabledModels.modelName })
+          .from(schema.tokenDisabledModels)
+          .innerJoin(schema.accountTokens, eq(schema.tokenDisabledModels.tokenId, schema.accountTokens.id))
+          .where(eq(schema.accountTokens.accountId, accountId))
+          .all()
+        : [];
+      const disabledByToken = new Map<number, Set<string>>();
+      for (const row of tokenDisabledRows) {
+        const current = disabledByToken.get(row.tokenId) || new Set<string>();
+        current.add(row.modelName);
+        disabledByToken.set(row.tokenId, current);
+      }
+
       const baseModels = modelRows
         .filter((r) => r.available)
         .map((r) => ({
@@ -1815,20 +1847,37 @@ export async function accountsRoutes(app: FastifyInstance) {
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      const costSummaries = await Promise.all(
-        baseModels.map((model) =>
-          buildAccountModelCostSummary({
-            siteId,
-            accountId,
-            modelName: model.name,
-            tokenRows,
-          }),
-        ),
-      );
+      const models = await buildPricedModelRows<(typeof baseModels)[number]>({
+        models: baseModels,
+        subject: {
+          siteId,
+          accountId,
+          token: resolveAccountPricingToken(tokenRows),
+        },
+      });
 
-      const models = baseModels.map((model, index) => ({
-        ...model,
-        costPricing: costSummaries[index],
+      const tokenModels = await Promise.all(tokenRows.map(async (token) => {
+        const rows = tokenAvailabilityRows
+          .filter((row) => row.tokenId === token.id)
+          .map((row) => ({
+            name: row.modelName,
+            available: row.available === true,
+            latencyMs: row.latencyMs,
+            checkedAt: row.checkedAt,
+            siteDisabled: disabledSet.has(row.modelName),
+            tokenDisabled: !!disabledByToken.get(token.id)?.has(row.modelName),
+            disabled: disabledSet.has(row.modelName) || !!disabledByToken.get(token.id)?.has(row.modelName),
+            isManual: !!row.isManual,
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name));
+        return {
+          tokenId: token.id,
+          observed: rows.length > 0,
+          models: await buildPricedModelRows<(typeof rows)[number]>({
+            models: rows,
+            subject: { siteId, accountId, token },
+          }),
+        };
       }));
 
       return {
@@ -1844,6 +1893,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           source: token.source,
         })),
         models,
+        tokenModels,
         totalCount: models.length,
         disabledCount: models.filter((m) => m.disabled).length,
       };

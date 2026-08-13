@@ -229,6 +229,7 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
   tokenId: integer('token_id').notNull().references(() => accountTokens.id, { onDelete: 'cascade' }),
   modelName: text('model_name').notNull(),
   available: integer('available', { mode: 'boolean' }),
+  isManual: integer('is_manual', { mode: 'boolean' }).default(false),
   latencyMs: integer('latency_ms'),
   checkedAt: text('checked_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -236,6 +237,16 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
   tokenAvailableIdx: index('token_model_availability_token_available_idx').on(table.tokenId, table.available),
   modelNameIdx: index('token_model_availability_model_name_idx').on(table.modelName),
   availableIdx: index('token_model_availability_available_idx').on(table.available),
+}));
+
+export const tokenDisabledModels = sqliteTable('token_disabled_models', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  tokenId: integer('token_id').notNull().references(() => accountTokens.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenModelUnique: uniqueIndex('token_disabled_models_token_model_unique').on(table.tokenId, table.modelName),
+  tokenIdIdx: index('token_disabled_models_token_id_idx').on(table.tokenId),
 }));
 
 export const upstreamModelCostPricings = sqliteTable('upstream_model_cost_pricings', {

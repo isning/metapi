@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Accounts from './Accounts.js';
 import { installAccountsSnapshotCompat } from './testApiCompat.js';
+import ModernSelect from '../components/ModernSelect.js';
 
 const { apiMock, toastMock } = vi.hoisted(() => ({
   apiMock: {
@@ -89,8 +90,8 @@ describe('Accounts edit panel', () => {
       siteId: 1,
       siteName: 'Site A',
       models: [
-        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { configured: false } },
-        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { configured: false } },
+        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { status: 'unconfigured', configured: false, matchedScope: null, totalCost: null } },
+        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { status: 'unconfigured', configured: false, matchedScope: null, totalCost: null } },
       ],
       accountTokens: [
         { id: 10, name: 'default token', tokenGroup: 'default', enabled: true, isDefault: true },
@@ -164,8 +165,8 @@ describe('Accounts edit panel', () => {
       siteId: 1,
       siteName: 'Site A',
       models: [
-        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { configured: false } },
-        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { configured: false } },
+        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { status: 'unconfigured', configured: false, matchedScope: null, totalCost: null } },
+        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { status: 'unconfigured', configured: false, matchedScope: null, totalCost: null } },
       ],
       totalCount: 2,
       disabledCount: 0,
@@ -241,7 +242,9 @@ describe('Accounts edit panel', () => {
 
       expect(apiMock.listUpstreamCostPricings).toHaveBeenCalledWith({
         siteId: 1,
+        accountId: 1,
         modelName: 'gpt-4',
+        includeSiteScope: false,
       });
 
       const priceInputs = root.root.findAll((node) => (
@@ -269,10 +272,10 @@ describe('Accounts edit panel', () => {
 
       expect(apiMock.createUpstreamCostPricing).toHaveBeenCalledWith(
         expect.objectContaining({
-          scope: 'token_model',
+          scope: 'account_model',
           siteId: 1,
           accountId: 1,
-          tokenId: 10,
+          tokenId: null,
           modelName: 'gpt-4',
           simpleTokenPricing: expect.objectContaining({
             inputPerMillion: 2,
@@ -418,6 +421,59 @@ describe('Accounts edit panel', () => {
       expect(apiMock.rebuildRoutes).toHaveBeenCalledWith(false, false);
       expect(toastMock.error).toHaveBeenCalledWith('模型禁用设置已保存，但路由重建失败，请手动刷新路由');
       expect(toastMock.success).not.toHaveBeenCalledWith('模型禁用设置已保存，路由已重建');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows each token\'s independent /models discovery result in the shared model panel', async () => {
+    apiMock.getAccountModels.mockResolvedValue({
+      siteId: 1,
+      siteName: 'Site A',
+      models: [{ name: 'account-model', latencyMs: 120, disabled: false }],
+      accountTokens: [
+        { id: 10, name: 'first token', tokenGroup: 'default', enabled: true, isDefault: true },
+        { id: 11, name: 'second token', tokenGroup: 'premium', enabled: true, isDefault: false },
+      ],
+      tokenModels: [
+        { tokenId: 10, observed: true, models: [{ name: 'first-only', available: true, latencyMs: 11, disabled: false }] },
+        { tokenId: 11, observed: true, models: [{ name: 'second-only', available: false, latencyMs: 22, disabled: false }] },
+      ],
+      totalCount: 1,
+      disabledCount: 0,
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider><Accounts /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const modelButton = root.root.find((node) => (
+        node.type === 'button' && typeof node.props.onClick === 'function' && collectText(node).trim() === '模型'
+      ));
+      await act(async () => {
+        await modelButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const sourceSelect = root.root.findAllByType(ModernSelect)
+        .find((node) => node.props.value === 'account');
+      expect(sourceSelect).toBeTruthy();
+      await act(async () => {
+        sourceSelect!.props.onChange('11');
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('second-only');
+      expect(rendered).toContain('不可用');
+      expect(rendered).not.toContain('first-only');
     } finally {
       root?.unmount();
     }

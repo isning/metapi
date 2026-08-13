@@ -1,4 +1,4 @@
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { insertAndGetById } from '../db/insertHelpers.js';
 import { db, schema } from '../db/index.js';
 import {
@@ -264,10 +264,20 @@ export async function listUpstreamCostPricings(filters: {
   tokenId?: number;
   modelName?: string;
   enabled?: boolean;
+  includeSiteScope?: boolean;
 } = {}): Promise<UpstreamCostPricingRecord[]> {
   const clauses: SQL[] = [];
   if (filters.siteId != null) clauses.push(eq(schema.upstreamModelCostPricings.siteId, normalizePositiveId(filters.siteId, 'siteId')));
-  if (filters.accountId != null) clauses.push(eq(schema.upstreamModelCostPricings.accountId, normalizePositiveId(filters.accountId, 'accountId')));
+  if (filters.accountId != null) {
+    const accountId = normalizePositiveId(filters.accountId, 'accountId');
+    const accountClause = filters.includeSiteScope
+      ? or(
+        eq(schema.upstreamModelCostPricings.accountId, accountId),
+        and(isNull(schema.upstreamModelCostPricings.accountId), isNull(schema.upstreamModelCostPricings.tokenId)),
+      )
+      : eq(schema.upstreamModelCostPricings.accountId, accountId);
+    if (accountClause) clauses.push(accountClause);
+  }
   if (filters.tokenId != null) clauses.push(eq(schema.upstreamModelCostPricings.tokenId, normalizePositiveId(filters.tokenId, 'tokenId')));
   if (filters.modelName) clauses.push(eq(schema.upstreamModelCostPricings.normalizedModelName, normalizeUpstreamModelName(filters.modelName)));
   if (filters.enabled != null) clauses.push(eq(schema.upstreamModelCostPricings.enabled, filters.enabled));
@@ -281,6 +291,7 @@ export async function listUpstreamCostPricings(filters: {
 
 export async function createUpstreamCostPricing(input: UpstreamCostPricingPayload): Promise<UpstreamCostPricingRecord> {
   const normalized = normalizeUpstreamCostPricingPayload(input);
+  await assertUpstreamCostPricingOwnership(normalized);
   const result = await insertAndGetById<Row>({
     table: schema.upstreamModelCostPricings,
     idColumn: schema.upstreamModelCostPricings.id,
@@ -307,6 +318,7 @@ export async function updateUpstreamCostPricing(id: number, input: Partial<Upstr
     metadata: input.metadata !== undefined ? input.metadata : existing.metadata,
     notes: input.notes !== undefined ? input.notes : existing.notes,
   });
+  await assertUpstreamCostPricingOwnership(normalized);
 
   await db.update(schema.upstreamModelCostPricings)
     .set({
@@ -719,6 +731,30 @@ function matchPriority(row: Row, input: UpstreamCostResolveInput): number {
     return row.accountId == null && row.tokenId == null && row.tokenGroup == null ? 100 : 0;
   }
   return 0;
+}
+
+async function assertUpstreamCostPricingOwnership(input: Pick<
+  UpstreamCostPricingPayload,
+  'scope' | 'siteId' | 'accountId' | 'tokenId'
+>): Promise<void> {
+  if (input.accountId == null) return;
+
+  const account = await db.select({ id: schema.accounts.id })
+    .from(schema.accounts)
+    .where(and(eq(schema.accounts.id, input.accountId), eq(schema.accounts.siteId, input.siteId)))
+    .get();
+  if (!account) {
+    throw new Error('Account does not belong to the specified site.');
+  }
+
+  if (input.tokenId == null) return;
+  const token = await db.select({ id: schema.accountTokens.id })
+    .from(schema.accountTokens)
+    .where(and(eq(schema.accountTokens.id, input.tokenId), eq(schema.accountTokens.accountId, input.accountId)))
+    .get();
+  if (!token) {
+    throw new Error('Token does not belong to the specified account.');
+  }
 }
 
 function toInsertValues(input: ReturnType<typeof normalizeUpstreamCostPricingPayload>) {

@@ -13,6 +13,7 @@ const getApiTokenMock = vi.fn();
 const createApiTokenMock = vi.fn();
 const getUserGroupsMock = vi.fn();
 const deleteApiTokenMock = vi.fn();
+const getModelsMock = vi.fn();
 
 type AccountTokenServiceModule = typeof import('../../services/accountTokenService.js');
 
@@ -23,6 +24,7 @@ vi.mock('../../services/platforms/index.js', () => ({
     createApiToken: (...args: unknown[]) => createApiTokenMock(...args),
     getUserGroups: (...args: unknown[]) => getUserGroupsMock(...args),
     deleteApiToken: (...args: unknown[]) => deleteApiTokenMock(...args),
+    getModels: (...args: unknown[]) => getModelsMock(...args),
   }),
 }));
 
@@ -33,6 +35,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let maskToken: AccountTokenServiceModule['maskToken'];
+  let buildModelTokenCandidatesPayload: (typeof import('../../services/modelTokenCandidateService.js'))['buildModelTokenCandidatesPayload'];
   let dataDir = '';
   let previousDataDir: string | undefined;
   let seedId = 0;
@@ -73,10 +76,12 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const accountTokenServiceModule = await import('../../services/accountTokenService.js');
+    const candidateServiceModule = await import('../../services/modelTokenCandidateService.js');
     const routesModule = await import('./accountTokens.js');
     db = dbModule.db;
     schema = dbModule.schema;
     maskToken = accountTokenServiceModule.maskToken;
+    buildModelTokenCandidatesPayload = candidateServiceModule.buildModelTokenCandidatesPayload;
 
     app = Fastify();
     await app.register(routesModule.accountTokensRoutes);
@@ -88,6 +93,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     createApiTokenMock.mockReset();
     getUserGroupsMock.mockReset();
     deleteApiTokenMock.mockReset();
+    getModelsMock.mockReset();
     seedId = 0;
 
     await db.delete(schema.accountTokens).run();
@@ -95,6 +101,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     await db.delete(schema.runtimeExecutionTargetState).run();
     await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
+    await db.delete(schema.tokenDisabledModels).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.accounts).run();
@@ -1196,5 +1203,117 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     expect(deleteApiTokenMock).not.toHaveBeenCalled();
     const removed = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();
     expect(removed).toBeUndefined();
+  });
+
+  it('returns token coverage first, falls back to account coverage, and excludes disabled site models', async () => {
+    const { site, account } = await seedAccount({ siteStatus: 'active' });
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'priced-token',
+      token: 'sk-priced-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'account-fallback', available: true },
+      { accountId: account.id, modelName: 'site-disabled', available: true },
+    ]).run();
+    await db.insert(schema.siteDisabledModels).values({
+      siteId: site.id,
+      modelName: 'site-disabled',
+    }).run();
+
+    const fallback = await app.inject({ method: 'GET', url: `/api/account-tokens/${token.id}/models` });
+    expect(fallback.statusCode).toBe(200);
+    expect(fallback.json()).toMatchObject({
+      token: { id: token.id, accountId: account.id },
+      account: { id: account.id },
+      site: { id: site.id },
+      observed: false,
+      models: ['account-fallback'],
+    });
+
+    await db.insert(schema.tokenModelAvailability).values([
+      { tokenId: token.id, modelName: 'token-available', available: true },
+      { tokenId: token.id, modelName: 'token-unavailable', available: false },
+      { tokenId: token.id, modelName: 'site-disabled', available: true },
+    ]).run();
+
+    const tokenScoped = await app.inject({ method: 'GET', url: `/api/account-tokens/${token.id}/models` });
+    expect(tokenScoped.statusCode).toBe(200);
+    expect(tokenScoped.json()).toMatchObject({
+      observed: true,
+      models: ['token-available'],
+      modelDetails: expect.arrayContaining([
+        expect.objectContaining({ name: 'token-unavailable', available: false }),
+      ]),
+    });
+  });
+
+  it('refreshes and returns token-scoped model discovery', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'refreshable-token',
+      token: 'sk-refreshable-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    getModelsMock.mockResolvedValue(['gpt-token-refresh']);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/${token.id}/models/refresh`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(getModelsMock).toHaveBeenCalled();
+    expect(response.json()).toMatchObject({
+      success: true,
+      models: {
+        observed: true,
+        models: ['gpt-token-refresh'],
+        modelDetails: [expect.objectContaining({ name: 'gpt-token-refresh', available: true })],
+      },
+    });
+  });
+
+  it('manages manual models and disabled overrides per token without affecting another token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const [first, second] = await db.insert(schema.accountTokens).values([
+      { accountId: account.id, name: 'first', token: 'sk-first', enabled: true, isDefault: true },
+      { accountId: account.id, name: 'second', token: 'sk-second', enabled: true },
+    ]).returning().all();
+
+    const add = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/${first!.id}/models/manual`,
+      payload: { models: ['manual-token-model'] },
+    });
+    expect(add.statusCode).toBe(200);
+    const manual = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, first!.id)).get();
+    expect(manual).toMatchObject({ modelName: 'manual-token-model', available: true, isManual: true });
+
+    await db.insert(schema.tokenModelAvailability).values({ tokenId: second!.id, modelName: 'manual-token-model', available: true }).run();
+    const before = await buildModelTokenCandidatesPayload();
+    expect(before.models['manual-token-model']?.map((candidate) => candidate.tokenId).sort())
+      .toEqual([first!.id, second!.id].sort());
+
+    const disable = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${first!.id}/models/disabled`,
+      payload: { models: ['manual-token-model'] },
+    });
+    expect(disable.statusCode).toBe(200);
+    const after = await buildModelTokenCandidatesPayload();
+    expect(after.models['manual-token-model']).toEqual([
+      expect.objectContaining({ tokenId: second!.id }),
+    ]);
+
+    const firstModels = await app.inject({ method: 'GET', url: `/api/account-tokens/${first!.id}/models` });
+    expect(firstModels.json().modelDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'manual-token-model', tokenDisabled: true, isManual: true }),
+    ]));
   });
 });

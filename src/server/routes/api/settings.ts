@@ -10,7 +10,7 @@ import { getAllBrandNames } from '../../services/brandMatcher.js';
 import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import {
-  exportBackup,
+  createBackupExportStream,
   exportBackupToWebdav,
   getBackupWebdavConfig,
   importBackup,
@@ -2074,7 +2074,14 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (rawType && !['all', 'accounts', 'preferences'].includes(rawType)) {
       return reply.code(400).send({ success: false, message: '导出类型无效，仅支持 all/accounts/preferences' });
     }
-    return await exportBackup(type);
+    const filename = type === 'accounts'
+      ? 'metapi-accounts-backup.json.gz'
+      : type === 'preferences'
+        ? 'metapi-preferences-backup.json.gz'
+        : 'metapi-backup.json.gz';
+    reply.header('Content-Type', 'application/gzip');
+    reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+    return reply.send(createBackupExportStream(type));
   });
 
   app.post<{ Body: unknown }>('/api/settings/backup/import', async (request, reply) => {

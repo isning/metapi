@@ -9,30 +9,35 @@ export type AccountModelCostSummary = {
   diagnostics: Array<{ level: 'error'; message: string }>;
 };
 
-type AccountModelCostToken = {
+export type AccountModelCostToken = {
   id: number;
   tokenGroup: string | null;
   enabled: boolean | null;
   isDefault: boolean | null;
 };
 
-export async function buildAccountModelCostSummary(input: {
+export type ModelPricingSubject = {
   siteId: number;
   accountId: number;
-  modelName: string;
-  tokenRows: AccountModelCostToken[];
-}): Promise<AccountModelCostSummary> {
-  const enabledTokens = input.tokenRows.filter((token) => token.enabled !== false);
-  const preferredToken =
-    enabledTokens.find((token) => token.isDefault) || enabledTokens[0] || null;
+  token: AccountModelCostToken | null;
+};
 
+export function resolveAccountPricingToken(tokens: AccountModelCostToken[]): AccountModelCostToken | null {
+  const enabledTokens = tokens.filter((token) => token.enabled !== false);
+  return enabledTokens.find((token) => token.isDefault) || enabledTokens[0] || null;
+}
+
+export async function buildModelCostSummary(input: {
+  subject: ModelPricingSubject;
+  modelName: string;
+}): Promise<AccountModelCostSummary> {
   try {
     const quote = await quoteEndpointPricing({
       supply: {
-        siteId: input.siteId,
-        accountId: input.accountId,
-        tokenId: preferredToken?.id,
-        tokenGroup: preferredToken?.tokenGroup || undefined,
+        siteId: input.subject.siteId,
+        accountId: input.subject.accountId,
+        tokenId: input.subject.token?.id,
+        tokenGroup: input.subject.token?.tokenGroup || undefined,
         modelName: input.modelName,
       },
       usageProfile: 'preview_1m_io',
@@ -62,6 +67,16 @@ export async function buildAccountModelCostSummary(input: {
       }],
     };
   }
+}
+
+export async function buildPricedModelRows<T extends { name: string }>(input: {
+  models: T[];
+  subject: ModelPricingSubject;
+}): Promise<Array<T & { costPricing: AccountModelCostSummary }>> {
+  const costPricing = await Promise.all(input.models.map((model) =>
+    buildModelCostSummary({ subject: input.subject, modelName: model.name }),
+  ));
+  return input.models.map((model, index) => ({ ...model, costPricing: costPricing[index] }));
 }
 
 function emptyAccountModelCostSummary(): AccountModelCostSummary {

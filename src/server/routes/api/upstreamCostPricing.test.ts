@@ -166,6 +166,79 @@ describe('upstream cost pricing routes', () => {
     expect(deleted.json()).toEqual({ success: true });
   });
 
+  it('rejects cost pricing that binds a token to another account', async () => {
+    const { site, token } = await seedSupply(db, schema);
+    const otherAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'other-route-cost-account',
+      accessToken: 'other-access-token',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/upstream-cost',
+      headers: app.adminHeaders(),
+      payload: {
+        scope: 'token_model',
+        siteId: site.id,
+        accountId: otherAccount.id,
+        tokenId: token.id,
+        modelName: 'route-free-model',
+        simpleTokenPricing: { inputPerMillion: 2 },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: 'Token does not belong to the specified account.',
+    });
+  });
+
+  it('resolves account pricing for an account token before the site default', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+
+    const sitePricing = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/upstream-cost',
+      headers: app.adminHeaders(),
+      payload: {
+        scope: 'site_model',
+        siteId: site.id,
+        modelName: 'account-priced-model',
+        simpleTokenPricing: { inputPerMillion: 1 },
+      },
+    });
+    expect(sitePricing.statusCode).toBe(201);
+
+    const accountPricing = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/upstream-cost',
+      headers: app.adminHeaders(),
+      payload: {
+        scope: 'account_model',
+        siteId: site.id,
+        accountId: account.id,
+        modelName: 'account-priced-model',
+        simpleTokenPricing: { inputPerMillion: 2 },
+      },
+    });
+    expect(accountPricing.statusCode).toBe(201);
+
+    const resolved = await app.inject({
+      method: 'GET',
+      url: `/api/pricing/upstream-cost/resolve?siteId=${site.id}&accountId=${account.id}&tokenId=${token.id}&tokenGroup=gold&modelName=account-priced-model`,
+      headers: app.adminHeaders(),
+    });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json()).toMatchObject({
+      matchedScope: 'account_model',
+      priority: 200,
+      pricing: {
+        id: accountPricing.json().id,
+      },
+    });
+  });
+
   it('reads and updates reference pricing config', async () => {
     const initial = await app.inject({
       method: 'GET',

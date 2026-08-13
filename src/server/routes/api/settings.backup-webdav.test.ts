@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import { gzipSync, gunzipSync } from 'node:zlib';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -67,7 +68,7 @@ describe('settings backup webdav api', () => {
     };
     expect(body.success).toBe(true);
     expect(body.config).toMatchObject({
-      fileUrl: 'https://dav.example.com/backups/metapi.json',
+      fileUrl: 'https://dav.example.com/backups/metapi.json.gz',
       username: 'alice',
       exportType: 'accounts',
       autoSyncEnabled: true,
@@ -77,7 +78,7 @@ describe('settings backup webdav api', () => {
     expect(body.config?.passwordMasked).toBeTruthy();
 
     const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'backup_webdav_config_v1')).get();
-    expect(saved?.value).toContain('"fileUrl":"https://dav.example.com/backups/metapi.json"');
+    expect(saved?.value).toContain('"fileUrl":"https://dav.example.com/backups/metapi.json.gz"');
     expect(saved?.value).toContain('"password":"secret-pass"');
   });
 
@@ -106,8 +107,16 @@ describe('settings backup webdav api', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json() as { success?: boolean; fileUrl?: string };
       expect(body.success).toBe(true);
-      expect(body.fileUrl).toBe('https://dav.example.com/backups/metapi.json');
+      expect(body.fileUrl).toBe('https://dav.example.com/backups/metapi.json.gz');
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [, init] = fetchSpy.mock.calls[0] || [];
+      expect((init?.headers as Record<string, string>)?.['Content-Type']).toBe('application/gzip');
+      expect(typeof init?.body).not.toBe('string');
+      const chunks: Buffer[] = [];
+      for await (const chunk of init?.body as AsyncIterable<Buffer>) chunks.push(Buffer.from(chunk));
+      expect(JSON.parse(gunzipSync(Buffer.concat(chunks)).toString('utf8'))).toMatchObject({
+        version: '3.0',
+      });
     } finally {
       fetchSpy.mockRestore();
     }
@@ -125,9 +134,9 @@ describe('settings backup webdav api', () => {
       },
     };
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(remotePayload), {
+    fetchSpy.mockResolvedValue(new Response(gzipSync(JSON.stringify(remotePayload)), {
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/gzip' },
     }));
     try {
       await db.insert(schema.settings).values({

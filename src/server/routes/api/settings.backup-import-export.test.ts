@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { gunzipSync } from 'node:zlib';
 
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import { clearRouteGroupMemberTestData, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
@@ -36,6 +37,10 @@ describe('settings backup import/export api', () => {
   beforeEach(async () => {
     await db.delete(schema.settings).run();
     await db.delete(schema.events).run();
+    await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyDebugAttempts).run();
+    await db.delete(schema.proxyDebugTraces).run();
+    await db.delete(schema.routeGraphWorkspaceOperationBatches).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.compiledRuntimeActiveArtifact).run();
     await db.delete(schema.compiledRuntimeArtifacts).run();
@@ -68,7 +73,7 @@ describe('settings backup import/export api', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
+    const body = JSON.parse(gunzipSync(response.rawPayload).toString('utf8')) as {
       version: string;
       type: string;
       preferences: { settings: Array<{ key: string; value: unknown }> };
@@ -115,6 +120,64 @@ describe('settings backup import/export api', () => {
       success: false,
       message: '导出类型无效，仅支持 all/accounts/preferences',
     });
+  });
+
+  it('exports account configuration without proxy request history', async () => {
+    await db.insert(schema.proxyLogs).values({
+      status: 'success',
+      modelRequested: 'backup-model',
+      billingDetails: 'x'.repeat(1_000_000),
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/settings/backup/export?type=accounts',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('application/gzip');
+    expect(response.headers['content-disposition']).toContain('metapi-accounts-backup.json.gz');
+    const body = JSON.parse(gunzipSync(response.rawPayload).toString('utf8')) as {
+      version: string;
+      type: string;
+      accounts: Record<string, unknown>;
+    };
+    expect(body).toMatchObject({
+      version: '3.0',
+      type: 'accounts',
+    });
+    expect(body.accounts).not.toHaveProperty('proxyLogs');
+    expect(response.rawPayload.toString('utf8')).not.toContain('billingDetails');
+  });
+
+  it('keeps complete route graph history in the streamed archive', async () => {
+    const versions = await db.insert(schema.routeGraphVersions).values([
+      { version: 1, sourceGraphJson: '{"schemaVersion":1,"nodes":[],"edges":[],"macros":[]}', status: 'archived' },
+      { version: 2, sourceGraphJson: '{"schemaVersion":1,"nodes":[],"edges":[],"macros":[{"id":"macro:history"}]}', status: 'active' },
+    ]).returning().all();
+    await db.insert(schema.routeGraphActiveVersion).values({ id: 1, versionId: versions[1]!.id }).run();
+    const draft = await db.insert(schema.routeGraphDrafts).values({
+      baseVersion: versions[1]!.id,
+      workingGraphJson: '{"schemaVersion":1,"nodes":[],"edges":[],"macros":[]}',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.routeGraphWorkspaceOperationBatches).values([
+      { draftId: draft.id, sourceRevision: 0, resultRevision: 1, forwardOperationsJson: '[]', inverseOperationsJson: '[]' },
+      { draftId: draft.id, sourceRevision: 1, resultRevision: 2, forwardOperationsJson: '[]', inverseOperationsJson: '[]' },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/settings/backup/export?type=accounts',
+      headers: app.adminHeaders(),
+    });
+
+    const body = JSON.parse(gunzipSync(response.rawPayload).toString('utf8')) as any;
+    expect(body.accounts.routeGraph.versions).toHaveLength(2);
+    expect(body.accounts.routeGraph.drafts).toHaveLength(1);
+    expect(body.accounts.routeGraph.operationBatches).toHaveLength(2);
+    expect(body.accounts.routeGraph.activeVersion.versionId).toBe(versions[1]!.id);
   });
 
   it('imports preferences through the settings route and applies imported settings', async () => {

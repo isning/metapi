@@ -102,6 +102,62 @@ describe('upstreamCostPricingService', () => {
     });
   });
 
+  it('keeps token cost pricing bound to the account and site that own the token', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    const otherSite = await db.insert(schema.sites).values({
+      name: 'Other Cost Site',
+      url: 'https://other-cost.example.com',
+      platform: 'openai',
+    }).returning().get();
+    const otherAccount = await db.insert(schema.accounts).values({
+      siteId: otherSite.id,
+      username: 'other-cost-account',
+      accessToken: 'other-access-token',
+    }).returning().get();
+
+    await expect(service.createUpstreamCostPricing({
+      scope: 'account_model',
+      siteId: site.id,
+      accountId: otherAccount.id,
+      modelName: 'gpt-5.5',
+      plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 1 }),
+    })).rejects.toThrow('Account does not belong to the specified site.');
+
+    await expect(service.createUpstreamCostPricing({
+      scope: 'token_model',
+      siteId: otherSite.id,
+      accountId: otherAccount.id,
+      tokenId: token.id,
+      modelName: 'gpt-5.5',
+      plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 1 }),
+    })).rejects.toThrow('Token does not belong to the specified account.');
+
+    const sitePricing = await service.createUpstreamCostPricing({
+      scope: 'site_model',
+      siteId: site.id,
+      modelName: 'gpt-5.5',
+      plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 1 }),
+    });
+    const tokenPricing = await service.createUpstreamCostPricing({
+      scope: 'token_model',
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      modelName: 'gpt-5.5',
+      plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 2 }),
+    });
+
+    await expect(service.listUpstreamCostPricings({
+      siteId: site.id,
+      accountId: account.id,
+      modelName: 'gpt-5.5',
+      includeSiteScope: true,
+    })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: sitePricing.id }),
+      expect.objectContaining({ id: tokenPricing.id }),
+    ]));
+  });
+
   it('evaluates simple token pricing plans with cache writes', async () => {
     const { site, account, token } = await seedSupply(db, schema);
     await service.createUpstreamCostPricing({
