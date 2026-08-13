@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +28,10 @@ describe('runSqliteMigrations', () => {
     try {
       migrate(drizzle(sqlite), { migrationsFolder: join(process.cwd(), 'drizzle') });
       sqlite.exec('ALTER TABLE site_api_endpoints DROP COLUMN base_path_mode');
-      sqlite.prepare('DELETE FROM __drizzle_migrations WHERE created_at = ?').run(1786526201900);
+      sqlite.exec('DROP TABLE token_disabled_models');
+      sqlite.exec('ALTER TABLE token_model_availability DROP COLUMN is_manual');
+      sqlite.prepare('DELETE FROM __drizzle_migrations WHERE created_at IN (?, ?)')
+        .run(1786526201900, 1786646359692);
     } finally {
       sqlite.close();
     }
@@ -42,7 +46,7 @@ describe('runSqliteMigrations', () => {
       expect(upgraded.prepare('PRAGMA table_info(site_api_endpoints)').all())
         .toEqual(expect.arrayContaining([expect.objectContaining({ name: 'base_path_mode' })]));
       expect(upgraded.prepare('SELECT COUNT(*) AS count FROM __drizzle_migrations').get())
-        .toEqual({ count: 2 });
+        .toEqual({ count: readMigrationFiles({ migrationsFolder: join(process.cwd(), 'drizzle') }).length });
     } finally {
       upgraded.close();
     }

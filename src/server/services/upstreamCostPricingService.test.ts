@@ -257,6 +257,46 @@ describe('upstreamCostPricingService', () => {
     ]));
   });
 
+  it('keeps using the last provider catalog during a transient refresh failure', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValueOnce({
+      models: new Map([['catalog-model', {
+        modelName: 'catalog-model',
+        quotaType: 0,
+        modelRatio: 2,
+        completionRatio: 3,
+        modelPrice: null,
+        enableGroups: ['default'],
+      }]]),
+      groupRatio: { default: 1 },
+    });
+
+    await service.resolveUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      modelName: 'catalog-model',
+      providerCatalogMode: 'refresh',
+    });
+
+    await db.update(schema.providerPricingCatalogCaches)
+      .set({ lastStatus: 'error', expiresAt: '2000-01-01T00:00:00.000Z' })
+      .run();
+
+    const resolved = await service.resolveUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      modelName: 'catalog-model',
+      providerCatalogMode: 'cache_only',
+    });
+
+    expect(resolved).toMatchObject({
+      matchedScope: 'provider_catalog',
+      pricing: { sourceType: 'provider_catalog', modelName: 'catalog-model' },
+    });
+  });
+
   it('does not synthesize zero output pricing when upstream catalog omits output price', async () => {
     const { site, account, token } = await seedSupply(db, schema);
     fetchUpstreamPricingCatalogMock.mockResolvedValue({

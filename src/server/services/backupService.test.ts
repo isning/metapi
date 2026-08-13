@@ -209,6 +209,80 @@ describe('backupService graph-native route runtime', () => {
     expect(typeof exported.version).toBe('string');
   });
 
+  it('normalizes explicitly marked API key connections from historical backups', async () => {
+    const payload = {
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'legacy-api-key-site',
+          url: 'https://legacy-api-key.example.test',
+          platform: 'new-api',
+          status: 'active',
+        }],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'legacy-api-key',
+            accessToken: 'legacy-api-key-value',
+            apiToken: null,
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+          },
+          {
+            id: 2,
+            siteId: 1,
+            username: 'legacy-auth-type-api-key',
+            accessToken: 'legacy-auth-type-api-key-value',
+            apiToken: null,
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: JSON.stringify({ authType: 'api_key' }),
+          },
+          {
+            id: 3,
+            siteId: 1,
+            username: 'session-account',
+            accessToken: 'session-value',
+            apiToken: 'session-default-api-key',
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: JSON.stringify({ credentialMode: 'session' }),
+          },
+        ],
+        accountTokens: [],
+      },
+    };
+
+    await backupService.importBackup(payload as any);
+
+    const accounts = await db.select().from(schema.accounts).orderBy(schema.accounts.id).all();
+    expect(accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        username: 'legacy-api-key',
+        accessToken: '',
+        apiToken: 'legacy-api-key-value',
+        checkinEnabled: false,
+      }),
+      expect.objectContaining({
+        username: 'legacy-auth-type-api-key',
+        accessToken: '',
+        apiToken: 'legacy-auth-type-api-key-value',
+        checkinEnabled: false,
+      }),
+      expect.objectContaining({
+        username: 'session-account',
+        accessToken: 'session-value',
+        apiToken: 'session-default-api-key',
+        checkinEnabled: true,
+      }),
+    ]));
+  });
+
   it('imports previous-version route backups into current route runtime tables', async () => {
     const payload = {
       version: '2.3',

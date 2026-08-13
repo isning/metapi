@@ -600,6 +600,34 @@ describe('NewApiAdapter', () => {
     ).toBe(true);
   });
 
+  it('reports an anyrouter pricing endpoint blocked after the shield retry', async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+    server = createServer((req, res) => {
+      const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+      if (req.url === '/api/pricing' && !cookieHeader.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`)) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Set-Cookie': `cdn_sec_tc=${SHIELD_LOGIN_COOKIE}; Path=/; HttpOnly`,
+        });
+        res.end(ANYROUTER_CHALLENGE_HTML);
+        return;
+      }
+      res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body>blocked</body></html>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const adapter = new AnyRouterAdapter();
+    await expect(adapter.getPricingCatalog(baseUrl, {
+      token: 'session-token',
+      tokenKind: 'access_token',
+    })).rejects.toThrow('HTTP 403: provider pricing endpoint returned text/html; charset=utf-8 instead of JSON.');
+  });
+
   it('parses token list response with data.items[] shape', async () => {
     const adapter = new NewApiAdapter();
     const token = await adapter.getApiToken(baseUrl, 'session-token', 11494);

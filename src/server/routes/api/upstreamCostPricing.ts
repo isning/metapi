@@ -109,6 +109,11 @@ type ProviderPricingCatalogRefreshSummary = {
   }>;
 };
 
+type ProviderPricingCatalogScopeRefreshBody = {
+  siteId?: unknown;
+  accountId?: unknown;
+};
+
 async function refreshProviderPricingCatalogCaches(): Promise<ProviderPricingCatalogRefreshSummary> {
   const subjects = await listProviderPricingCatalogRefreshSubjects();
   const results = await Promise.allSettled(
@@ -274,6 +279,40 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
       reused,
       jobId: task.id,
     });
+  });
+
+  app.post<{ Body: ProviderPricingCatalogScopeRefreshBody }>('/api/pricing/provider-catalog/refresh-scope', async (request, reply) => {
+    try {
+      const result = await refreshProviderPricingCatalog({
+        siteId: parseRequiredPositiveInt(request.body?.siteId, 'siteId'),
+        accountId: parseNullablePositiveInt(request.body?.accountId),
+        reason: 'editor-refresh',
+      });
+      clearEndpointPricingReferenceCache();
+      clearModelsMarketplaceCache();
+      clearModelPricingCaches();
+      invalidateRouteRuntimeCaches('pricing-config-mutated');
+      return {
+        success: result.status === 'success',
+        refreshed: result.refreshed,
+        status: result.status,
+        error: result.error,
+        record: result.record ? {
+          siteId: result.record.siteId,
+          accountId: result.record.accountId,
+          platform: result.record.platform,
+          credentialKind: result.record.credentialKind,
+          modelCount: result.record.modelCount,
+          groupCount: result.record.groupCount,
+          lastStatus: result.record.lastStatus,
+          lastError: result.record.lastError,
+          fetchedAt: result.record.fetchedAt,
+          expiresAt: result.record.expiresAt,
+        } : null,
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
   });
 
   app.get<{ Querystring: Query }>('/api/pricing/upstream-cost', async (request) => {

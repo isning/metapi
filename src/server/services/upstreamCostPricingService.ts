@@ -430,18 +430,18 @@ async function resolveProviderCatalogCostPricing(
 
   if (!catalogRecord?.catalog) {
     const existing = await getProviderPricingCatalogCacheRecord(catalogScope);
-    const expiresAt = Date.parse(existing?.expiresAt || '');
-    const hasFreshFailure = existing?.lastStatus === 'error'
-      && Number.isFinite(expiresAt)
-      && expiresAt > Date.now();
-    if (hasFreshFailure) return null;
-    if (input.providerCatalogMode !== 'refresh') return null;
+    if (input.providerCatalogMode === 'refresh') {
+      const refreshed = await refreshProviderPricingCatalog({
+        ...catalogScope,
+        reason: 'upstream-cost-resolution',
+      });
+      catalogRecord = refreshed.status === 'success' ? refreshed.record : null;
+    }
 
-    const refreshed = await refreshProviderPricingCatalog({
-      ...catalogScope,
-      reason: 'upstream-cost-resolution',
-    });
-    catalogRecord = refreshed.status === 'success' ? refreshed.record : null;
+    // Runtime routing must not perform upstream I/O. A periodic refresh keeps the
+    // catalog current; if that refresh is late or temporarily fails, continue
+    // pricing from the last successful catalog rather than dropping its cost.
+    catalogRecord ??= existing?.catalog ? existing : null;
   }
 
   const catalog = catalogRecord?.catalog;

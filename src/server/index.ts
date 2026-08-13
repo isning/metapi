@@ -56,7 +56,11 @@ import {
   startAdminSnapshotWarmScheduler,
   stopAdminSnapshotWarmScheduler,
 } from './services/adminSnapshotWarmService.js';
-import { startPostMigrationRuntimeFactWarm } from './services/runtimeFactWarmService.js';
+import {
+  startPostMigrationRuntimeFactWarm,
+  startRuntimeFactWarmScheduler,
+  stopRuntimeFactWarmScheduler,
+} from './services/runtimeFactWarmService.js';
 import {
   startUsageAggregationProjectorScheduler,
   stopUsageAggregationProjectorScheduler,
@@ -273,6 +277,7 @@ startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
 startAdminSnapshotWarmScheduler();
 startPostMigrationRuntimeFactWarm();
+startRuntimeFactWarmScheduler();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -291,6 +296,7 @@ app.addHook('onClose', async () => {
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();
+  await stopRuntimeFactWarmScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

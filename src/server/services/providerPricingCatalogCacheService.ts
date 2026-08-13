@@ -428,6 +428,37 @@ export async function listProviderPricingCatalogRefreshSubjects(): Promise<Array
   return subjects;
 }
 
+/**
+ * Returns catalog subjects that are absent or close enough to expiry to refresh
+ * in the next scheduler pass. This keeps provider I/O out of routing requests.
+ */
+export async function listDueProviderPricingCatalogRefreshSubjects(input: {
+  dueWithinMs?: number;
+  nowMs?: number;
+} = {}): Promise<Array<{ siteId: number; accountId: number | null }>> {
+  const subjects = await listProviderPricingCatalogRefreshSubjects();
+  if (subjects.length === 0) return [];
+
+  const nowMs = input.nowMs ?? Date.now();
+  const dueAtMs = nowMs + Math.max(0, input.dueWithinMs ?? 0);
+  const rows = await db.select({
+    siteId: schema.providerPricingCatalogCaches.siteId,
+    accountId: schema.providerPricingCatalogCaches.accountId,
+    expiresAt: schema.providerPricingCatalogCaches.expiresAt,
+  })
+    .from(schema.providerPricingCatalogCaches)
+    .all();
+  const expiryByScope = new Map(rows.map((row) => [
+    scopeKey({ siteId: Number(row.siteId), accountId: row.accountId == null ? null : Number(row.accountId) }),
+    Date.parse(row.expiresAt),
+  ]));
+
+  return subjects.filter((subject) => {
+    const expiresAtMs = expiryByScope.get(scopeKey(subject));
+    return !Number.isFinite(expiresAtMs) || (expiresAtMs as number) <= dueAtMs;
+  });
+}
+
 export async function listProviderPricingCatalogCaches(filters: {
   siteId?: number;
   accountId?: number | null;

@@ -109,7 +109,7 @@ describe("api proxy test timeout handling", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
-  it("keeps management write calls on the explicit JSON request variant", () => {
+  it("keeps management JSON writes on the explicit JSON request variant", () => {
     const source = readFileSync(resolve(process.cwd(), "src/web/api.ts"), "utf8");
     const sourceFile = ts.createSourceFile("api.ts", source, ts.ScriptTarget.Latest, true);
     const directRequestWrites: number[] = [];
@@ -140,7 +140,15 @@ describe("api proxy test timeout handling", () => {
     };
     visit(sourceFile);
 
-    expect(directRequestWrites).toEqual([]);
+    // This endpoint explicitly has no JSON request body. All other management
+    // writes must use requestJson so Content-Type and payload stay in sync.
+    expect(directRequestWrites).toHaveLength(1);
+    expect(source.slice(directRequestWrites[0], directRequestWrites[0] + 180)).toContain(
+      'request<{'
+    );
+    expect(source.slice(directRequestWrites[0], directRequestWrites[0] + 900)).toContain(
+      '`/api/account-tokens/${id}/models/refresh`, { method: \'POST\' }',
+    );
   });
 
   afterEach(() => {

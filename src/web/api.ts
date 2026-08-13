@@ -884,6 +884,25 @@ export type ProviderPricingCatalogRefreshTask = {
   jobId: string;
 };
 
+export type ProviderPricingCatalogScopeRefreshResult = {
+  success: boolean;
+  refreshed: boolean;
+  status: "success" | "error";
+  error: string | null;
+  record: {
+    siteId: number;
+    accountId: number | null;
+    platform: string;
+    credentialKind: string | null;
+    modelCount: number;
+    groupCount: number;
+    lastStatus: "success" | "error";
+    lastError: string | null;
+    fetchedAt: string;
+    expiresAt: string;
+  } | null;
+};
+
 export type WalletAcquisitionScope = "site" | "account" | "token";
 export type WalletAcquisitionInheritance = "inherit" | "override" | "disabled";
 export type DailyEarnedBalanceSource =
@@ -2515,6 +2534,14 @@ export const api = {
       {
         method: "POST",
         body: {},
+      },
+    ),
+  refreshProviderPricingCatalogScope: (data: { siteId: number; accountId?: number }) =>
+    requestJson<ProviderPricingCatalogScopeRefreshResult>(
+      "/api/pricing/provider-catalog/refresh-scope",
+      {
+        method: "POST",
+        body: data,
       },
     ),
   listWalletAcquisitionProfiles: (params?: {

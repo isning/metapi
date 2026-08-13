@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calculator, Coins, LoaderCircle, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { Calculator, Coins, LoaderCircle, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { api, type UpstreamCostMatchedScope, type UpstreamCostPricingPayload, type UpstreamCostPricingRecord, type UpstreamCostPricingScope } from '../api.js';
 import ToneBadge from './ToneBadge.js';
 import { Button } from './ui/button/index.js';
@@ -277,6 +277,8 @@ export function UpstreamCostPricingEditor({
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [providerRefreshLoading, setProviderRefreshLoading] = useState(false);
+  const previewRequestVersion = useRef(0);
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) || null,
@@ -331,32 +333,56 @@ export function UpstreamCostPricingEditor({
     void loadRecords();
   }, [loadRecords]);
 
-  useEffect(() => {
+  const refreshPreview = useCallback(async () => {
     if (!open || !siteId || !modelName || (ownerScope === 'account' && !accountId)) return;
-    let cancelled = false;
+    const requestVersion = ++previewRequestVersion.current;
     const token = pickInitialToken(availableTokens);
     setPreviewLoading(true);
-    api.previewUpstreamCostPricing({
-      siteId,
-      accountId: accountId ?? undefined,
-      tokenId: ownerScope === 'account' ? token?.id : undefined,
-      tokenGroup: ownerScope === 'account' ? token?.tokenGroup || undefined : undefined,
-      modelName,
-      usage: PREVIEW_USAGE,
-    })
-      .then((result) => {
-        if (!cancelled) setPreview(normalizePreviewResult(result));
-      })
-      .catch(() => {
-        if (!cancelled) setPreview(null);
-      })
-      .finally(() => {
-        if (!cancelled) setPreviewLoading(false);
+    try {
+      const result = await api.previewUpstreamCostPricing({
+        siteId,
+        accountId: accountId ?? undefined,
+        tokenId: ownerScope === 'account' ? token?.id : undefined,
+        tokenGroup: ownerScope === 'account' ? token?.tokenGroup || undefined : undefined,
+        modelName,
+        usage: PREVIEW_USAGE,
       });
-    return () => {
-      cancelled = true;
-    };
+      if (previewRequestVersion.current === requestVersion) {
+        setPreview(normalizePreviewResult(result));
+      }
+    } catch {
+      if (previewRequestVersion.current === requestVersion) setPreview(null);
+    } finally {
+      if (previewRequestVersion.current === requestVersion) setPreviewLoading(false);
+    }
   }, [accountId, availableTokens, modelName, open, ownerScope, siteId]);
+
+  useEffect(() => {
+    void refreshPreview();
+    return () => {
+      previewRequestVersion.current += 1;
+    };
+  }, [refreshPreview]);
+
+  const handleProviderCatalogRefresh = async () => {
+    setProviderRefreshLoading(true);
+    try {
+      const result = await api.refreshProviderPricingCatalogScope({
+        siteId,
+        accountId: accountId ?? undefined,
+      });
+      await Promise.all([loadRecords(), refreshPreview()]);
+      if (result.success) {
+        toast?.success?.(tr('upstreamCostPricing.providerCatalogRefreshed'));
+      } else {
+        toast?.error?.(result.error || tr('upstreamCostPricing.providerCatalogRefreshFailed'));
+      }
+    } catch (error: any) {
+      toast?.error?.(error?.message || tr('upstreamCostPricing.providerCatalogRefreshFailed'));
+    } finally {
+      setProviderRefreshLoading(false);
+    }
+  };
 
   const updateForm = (patch: Partial<SimplePricingForm>) => {
     if (patch.scope && !allowedScopes.includes(patch.scope)) return;
@@ -451,6 +477,12 @@ export function UpstreamCostPricingEditor({
 
   const canUseTokenScope = ownerScope === 'account' && availableTokens.length > 0;
   const selectedToken = availableTokens.find((token) => String(token.id) === form.tokenId) || null;
+  const previewScope = preview?.matchedScope as UpstreamCostMatchedScope | null | undefined;
+  const previewSourceType = typeof preview?.pricingSourceType === 'string'
+    ? preview.pricingSourceType
+    : null;
+  const showPreviewSourceType = previewSourceType
+    && sourceTypeLabel(previewSourceType) !== (previewScope ? scopeLabel(previewScope) : '');
 
   if (!open) return null;
 
@@ -467,13 +499,9 @@ export function UpstreamCostPricingEditor({
           </div>
         </div>
         <ButtonGroup>
-          <Button type="button" variant="outline" size="sm" onClick={() => void loadRecords()} disabled={loading || saving}>
-            {loading ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleProviderCatalogRefresh()} disabled={loading || saving || providerRefreshLoading}>
+            {providerRefreshLoading ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
             {tr('common.refresh')}
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={resetToNew} disabled={saving}>
-            <Plus className="size-4" />
-            {tr('common.new')}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>
             {tr('common.close')}
@@ -620,8 +648,8 @@ export function UpstreamCostPricingEditor({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewSummary')}</ToneBadge>
-                {preview?.matchedScope ? <ToneBadge tone={preview.matchedScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(preview.matchedScope as UpstreamCostMatchedScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
-                {preview?.pricingSourceType ? <ToneBadge tone={preview.pricingSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(String(preview.pricingSourceType))}</ToneBadge> : null}
+                {previewScope ? <ToneBadge tone={previewScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(previewScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
+                {showPreviewSourceType ? <ToneBadge tone={previewSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(previewSourceType)}</ToneBadge> : null}
                 {preview ? <ToneBadge tone="-info">{formatMoney(previewTotal(preview), previewCurrency(preview))}</ToneBadge> : null}
               </div>
               <ButtonGroup>

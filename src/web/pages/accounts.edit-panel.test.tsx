@@ -23,6 +23,7 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
     updateUpstreamCostPricing: vi.fn(),
     deleteUpstreamCostPricing: vi.fn(),
     previewUpstreamCostPricing: vi.fn(),
+    refreshProviderPricingCatalogScope: vi.fn(),
   },
   toastMock: {
     success: vi.fn(),
@@ -118,6 +119,13 @@ describe('Accounts edit panel', () => {
     apiMock.previewUpstreamCostPricing.mockResolvedValue({
       pricing: null,
       evaluation: { totalCost: 10 },
+    });
+    apiMock.refreshProviderPricingCatalogScope.mockResolvedValue({
+      success: true,
+      refreshed: true,
+      status: 'success',
+      error: null,
+      record: null,
     });
   });
 
@@ -284,6 +292,60 @@ describe('Accounts edit panel', () => {
         }),
       );
       expect(apiMock.getAccountModels).toHaveBeenCalledTimes(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('refreshes the current account provider catalog and recalculates the cost preview', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider><Accounts /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const modelButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '模型'
+      ));
+      await act(async () => {
+        await modelButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const costButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '成本'
+      ))[0]!;
+      await act(async () => {
+        costButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const initialPreviewCalls = apiMock.previewUpstreamCostPricing.mock.calls.length;
+      const refreshButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '刷新'
+      )).at(-1)!;
+      await act(async () => {
+        await refreshButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.refreshProviderPricingCatalogScope).toHaveBeenCalledWith({
+        siteId: 1,
+        accountId: 1,
+      });
+      expect(apiMock.previewUpstreamCostPricing.mock.calls.length).toBeGreaterThan(initialPreviewCalls);
+      expect(toastMock.success).toHaveBeenCalledWith('上游模型报价已刷新');
     } finally {
       root?.unmount();
     }

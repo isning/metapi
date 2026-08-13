@@ -1,10 +1,20 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
 } from '../../../testing/dbHarness.js';
+
+const fetchUpstreamPricingCatalogMock = vi.hoisted(() => vi.fn(async () => null));
+
+vi.mock('../../services/upstreamPricingCatalogService.js', () => ({
+  fetchUpstreamPricingCatalog: fetchUpstreamPricingCatalogMock,
+  fetchUpstreamPricingCatalogWithMetadata: async (input: unknown) => {
+    const catalog = await fetchUpstreamPricingCatalogMock(input);
+    return catalog ? { catalog, credentialKind: 'access_token' } : null;
+  },
+}));
 
 type DbModule = typeof import('../../db/index.js');
 type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
@@ -55,6 +65,8 @@ describe('upstream cost pricing routes', () => {
 
   beforeEach(async () => {
     resetBackgroundTasks();
+    fetchUpstreamPricingCatalogMock.mockReset();
+    fetchUpstreamPricingCatalogMock.mockResolvedValue(null);
     await db.delete(schema.settings).run();
     await db.delete(schema.events).run();
     await db.delete(schema.fxRateSnapshots).run();
@@ -535,6 +547,47 @@ describe('upstream cost pricing routes', () => {
         ]),
       }),
     ]));
+  });
+
+  it('refreshes only the requested provider catalog scope synchronously', async () => {
+    const { site, account } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([[
+        'route-free-model',
+        {
+          modelName: 'route-free-model',
+          inputPerMillion: 1,
+          outputPerMillion: 2,
+        },
+      ]]),
+      groupRatio: { default: 1 },
+    });
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/provider-catalog/refresh-scope',
+      headers: app.adminHeaders(),
+      payload: { siteId: site.id, accountId: account.id },
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(1);
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledWith(expect.objectContaining({
+      site: expect.objectContaining({ id: site.id }),
+      account: expect.objectContaining({ id: account.id }),
+    }));
+    expect(result.json()).toMatchObject({
+      success: true,
+      refreshed: true,
+      status: 'success',
+      error: null,
+      record: {
+        siteId: site.id,
+        accountId: account.id,
+        modelCount: 1,
+        lastStatus: 'success',
+      },
+    });
   });
 
   it('rejects invalid or duplicate unit conversions', async () => {

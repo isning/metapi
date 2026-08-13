@@ -720,7 +720,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
   private async fetchJsonRawWithCookie<T>(
     url: string,
     options?: UndiciRequestInit,
-  ): Promise<{ data: T | null; cookieHeader: string }> {
+  ): Promise<{ data: T | null; cookieHeader: string; failure?: string }> {
     const { fetch } = await import('undici');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -751,21 +751,26 @@ export class NewApiAdapter extends BasePlatformAdapter {
       if (parsed) return { data: parsed, cookieHeader };
 
       if (!this.isShieldChallenge(res.headers.get('content-type') || '', text)) {
-        return { data: null, cookieHeader };
+        const contentType = res.headers.get('content-type') || 'unknown content type';
+        return {
+          data: null,
+          cookieHeader,
+          failure: `HTTP ${res.status}: provider pricing endpoint returned ${contentType} instead of JSON.`,
+        };
       }
       if (!cookieHeader) {
-        return { data: null, cookieHeader };
+        return { data: null, cookieHeader, failure: 'Provider pricing endpoint was blocked by a browser challenge.' };
       }
 
       const acwScV2 = this.solveAcwScV2(text);
       if (!acwScV2) {
-        return { data: null, cookieHeader };
+        return { data: null, cookieHeader, failure: 'Provider pricing endpoint browser challenge could not be solved.' };
       }
       cookieHeader = this.upsertCookie(cookieHeader, 'acw_sc__v2', acwScV2);
       headers['Cookie'] = cookieHeader;
     }
 
-    return { data: null, cookieHeader };
+    return { data: null, cookieHeader, failure: 'Provider pricing endpoint browser challenge did not return JSON.' };
   }
 
   private async fetchJsonRaw<T>(url: string, options?: UndiciRequestInit): Promise<T | null> {
@@ -1264,16 +1269,24 @@ export class NewApiAdapter extends BasePlatformAdapter {
     token: string,
     platformUserId?: number,
   ): Promise<UpstreamPricingCatalog | null> {
+    let lastFailure: string | null = null;
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = {
           Cookie: cookie,
           ...this.userIdHeaders(platformUserId),
         };
-        const payload = await this.fetchJsonRaw<any>(`${baseUrl}/api/pricing`, { headers });
+        const response = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/pricing`, { headers });
+        const payload = response.data;
         const catalog = normalizeCommonPricingPayload(payload);
         if (catalog) return catalog;
-      } catch {}
+        lastFailure = response.failure || lastFailure;
+      } catch (error) {
+        lastFailure = this.formatRequestErrorMessage(error) || lastFailure;
+      }
+    }
+    if (this.platformName === 'anyrouter' && lastFailure) {
+      throw new Error(lastFailure);
     }
     return null;
   }

@@ -3,14 +3,14 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Tokens model cost entry', () => {
-  it('locks the token-page editor to the current token pricing scopes', () => {
+  it('uses the shared account model management surface with the current token selected', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/tokens/TokensPanel.tsx'), 'utf8');
 
-    expect(source).toContain('api.getAccountTokenModels(Number(token.id))');
-    expect(source).toContain('api.refreshAccountTokenModels(Number(tokenModelsSubject.token.id))');
-    expect(source).toContain("accountModelsModal.modelManagement");
-    expect(source).toContain('allowedScopes={TOKEN_COST_PRICING_SCOPES}');
-    expect(source).toContain('initialScope="token_model"');
-    expect(source).toContain('fixedTokenId={tokenCostSubject.token.id}');
+    expect(source).toContain('import AccountModelsModal from');
+    expect(source).toContain('api.getAccountModels(Number(token.accountId))');
+    expect(source).toContain('initialTokenId={tokenAccountModelModal.tokenId}');
+    expect(source).toContain('api.refreshAccountTokenModels(tokenId)');
+    expect(source).toContain('api.updateAccountTokenDisabledModels(targetTokenId, Array.from(disabledModels))');
+    expect(source).toContain('api.addAccountTokenAvailableModels(targetTokenId, models)');
   });
 });

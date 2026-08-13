@@ -4,6 +4,7 @@ import { createGunzip, createGzip } from 'node:zlib';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 import {
   CURRENT_CONFIG_VERSION,
   migratePublishedMainPreferenceSettings,
@@ -159,6 +160,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isLegacyApiKeyCredentialConfig(extraConfig: string | null | undefined): boolean {
+  if (typeof extraConfig !== 'string' || !extraConfig.trim()) return false;
+  try {
+    const parsed = JSON.parse(extraConfig) as unknown;
+    return isRecord(parsed) && String(parsed.authType || '').trim().toLowerCase() === 'api_key';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeImportedAccountCredentials(
+  accounts: AccountsBackupSection['accounts'],
+): AccountsBackupSection['accounts'] {
+  return accounts.map((account) => {
+    const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
+    const isApiKeyConnection = credentialMode === 'apikey'
+      || (credentialMode === undefined && isLegacyApiKeyCredentialConfig(account.extraConfig));
+    const legacyAccessToken = asString(account.accessToken);
+
+    if (!isApiKeyConnection || !legacyAccessToken) return account;
+
+    return {
+      ...account,
+      accessToken: '',
+      apiToken: asString(account.apiToken) || legacyAccessToken,
+      checkinEnabled: false,
+    };
+  });
 }
 
 function parseSettingValue(raw: string | null): unknown {
@@ -595,9 +626,10 @@ export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
 function coerceAccountsSection(input: unknown): CoercedAccountsSection | null {
   if (!isRecord(input)) return null;
   const sites = Array.isArray(input.sites) ? input.sites as AccountsBackupSection['sites'] : null;
-  const accounts = Array.isArray(input.accounts) ? input.accounts as AccountsBackupSection['accounts'] : null;
+  const rawAccounts = Array.isArray(input.accounts) ? input.accounts as AccountsBackupSection['accounts'] : null;
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountsBackupSection['accountTokens'] : null;
-  if (!sites || !accounts || !accountTokens) return null;
+  if (!sites || !rawAccounts || !accountTokens) return null;
+  const accounts = normalizeImportedAccountCredentials(rawAccounts);
   const section: AccountsBackupSection = {
     sites,
     siteApiEndpoints: Array.isArray(input.siteApiEndpoints) ? input.siteApiEndpoints as AccountsBackupSection['siteApiEndpoints'] : undefined,

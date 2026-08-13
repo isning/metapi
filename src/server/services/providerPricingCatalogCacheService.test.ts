@@ -105,6 +105,32 @@ describe('providerPricingCatalogCacheService', () => {
     });
     expect(failed.record?.catalog?.models.get('kept-model')?.modelName).toBe('kept-model');
   });
+
+  it('only schedules missing or expiring catalog subjects for refresh', async () => {
+    const { site, account } = await seedSubject(db, schema);
+    fetchUpstreamPricingCatalogWithMetadataMock.mockResolvedValue({
+      catalog: catalogWithModel('scheduled-model'),
+      credentialKind: 'access_token',
+    });
+    await service.refreshProviderPricingCatalog({
+      siteId: site.id,
+      accountId: account.id,
+      ttlMs: 60_000,
+    });
+
+    await expect(service.listDueProviderPricingCatalogRefreshSubjects({
+      nowMs: Date.now(),
+      dueWithinMs: 1_000,
+    })).resolves.toEqual(expect.arrayContaining([
+      { siteId: site.id, accountId: null },
+    ]));
+    await expect(service.listDueProviderPricingCatalogRefreshSubjects({
+      nowMs: Date.now(),
+      dueWithinMs: 1_000,
+    })).resolves.not.toEqual(expect.arrayContaining([
+      { siteId: site.id, accountId: account.id },
+    ]));
+  });
 });
 
 function catalogWithModel(modelName: string) {
