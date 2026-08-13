@@ -65,11 +65,10 @@ describe('modelPricingService upstream cost integration', () => {
       tokenGroup: 'paid',
     }).returning().get();
     await upstreamCost.createUpstreamCostPricing({
-      scope: 'token_model_group',
+      scope: 'token_model',
       siteId: site.id,
       accountId: account.id,
       tokenId: token.id,
-      tokenGroup: 'paid',
       modelName: 'manual-priced-model',
       plan: upstreamCost.createSimpleTokenPricingPlan({
         inputPerMillion: 10,
@@ -104,7 +103,7 @@ describe('modelPricingService upstream cost integration', () => {
         amount: 0.02,
         unit: 'currency',
         source: 'upstream_cost_pricing',
-        matchedScope: 'token_model_group',
+        matchedScope: 'token_model',
       },
       breakdown: {
         inputPerMillion: 10,
@@ -134,11 +133,10 @@ describe('modelPricingService upstream cost integration', () => {
       tokenGroup: 'paid',
     }).returning().get();
     await upstreamCost.createUpstreamCostPricing({
-      scope: 'token_model_group',
+      scope: 'token_model',
       siteId: site.id,
       accountId: account.id,
       tokenId: token.id,
-      tokenGroup: 'paid',
       modelName: 'manual-cache-priced-model',
       plan: upstreamCost.createSimpleTokenPricingPlan({
         inputPerMillion: 10,

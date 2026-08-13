@@ -918,7 +918,7 @@ pricing_period_states
 
 upstream_model_cost_pricings
   id
-  scope_kind             -- site_model | account_model | token_model | token_model_group
+  scope_kind             -- site_model | account_model | token_model
   site_id
   account_id
   token_id
@@ -1122,8 +1122,7 @@ and downstream API keys are not valid cost-binding scopes.
 type UpstreamCostScope =
   | { kind: 'site_model'; siteId: number; modelName: string }
   | { kind: 'account_model'; accountId: number; modelName: string }
-  | { kind: 'token_model'; tokenId: number; modelName: string }
-  | { kind: 'token_model_group'; tokenId: number; modelName: string; upstreamGroup: string };
+  | { kind: 'token_model'; tokenId: number; modelName: string };
 
 type UpstreamModelCostPricing = {
   id: number;
@@ -1148,19 +1147,20 @@ type UpstreamModelSupplyRef = {
 };
 ```
 
-`token_model_group` exists because New API / One API compatible platforms often
-price the same model differently per group. Non-group platforms simply omit the
-group.
+`upstreamGroup` remains part of an upstream supply because New API / One API
+compatible platforms can publish different catalog prices and multipliers for
+the same model in different groups. It is catalog-resolution context, not a
+manual cost-binding scope: a token already belongs to one upstream group, so a
+manual token-model override applies to that token regardless of its group.
 
 The resolver order is:
 
-1. token + model + upstream group manual cost;
-2. token + model manual cost;
-3. account + model manual cost;
-4. site + model manual cost;
-5. upstream catalog pricing, when the platform can provide it;
-6. `account.unitCost`;
-7. system fallback default.
+1. token + model manual cost;
+2. account + model manual cost;
+3. site + model manual cost;
+4. upstream catalog pricing, when the platform can provide it;
+5. `account.unitCost`;
+6. system fallback default.
 
 Manual cost never silently applies outside its scope. A token-level model
 binding does not affect another token with the same model name. A site-level
@@ -1200,7 +1200,6 @@ The runtime resolver returns:
 ```ts
 type ResolvedUpstreamCostPricing = {
   source:
-    | 'manual_token_model_group'
     | 'manual_token_model'
     | 'manual_account_model'
     | 'manual_site_model'
@@ -1226,13 +1225,12 @@ may aggregate costs across reachable upstream supplies for display only.
 Runtime cost estimation needs explicit priority:
 
 ```text
-1. manual token + model + group cost
-2. manual token + model cost
-3. manual account + model cost
-4. manual site + model cost
-5. upstream catalog pricing
-6. account unitCost
-7. system fallback default
+1. manual token + model cost
+2. manual account + model cost
+3. manual site + model cost
+4. upstream catalog pricing
+5. account unitCost
+6. system fallback default
 ```
 
 Measured billing is not in this priority list because it is evidence. It may

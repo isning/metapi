@@ -497,7 +497,6 @@ function normalizeBody(body: Body): UpstreamCostPricingPayload {
     siteId: parseRequiredPositiveInt(body.siteId, 'siteId'),
     accountId: parseOptionalPositiveInt(body.accountId),
     tokenId: parseOptionalPositiveInt(body.tokenId),
-    tokenGroup: normalizeOptionalString(body.tokenGroup),
     modelName: normalizeRequiredString(body.modelName, 'modelName'),
     displayName: normalizeOptionalString(body.displayName),
     enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
@@ -514,7 +513,6 @@ function normalizePatchBody(body: Body): Partial<UpstreamCostPricingPayload> {
   if (body.siteId !== undefined) result.siteId = parseRequiredPositiveInt(body.siteId, 'siteId');
   if (body.accountId !== undefined) result.accountId = parseOptionalPositiveInt(body.accountId);
   if (body.tokenId !== undefined) result.tokenId = parseOptionalPositiveInt(body.tokenId);
-  if (body.tokenGroup !== undefined) result.tokenGroup = normalizeOptionalString(body.tokenGroup);
   if (body.modelName !== undefined) result.modelName = normalizeRequiredString(body.modelName, 'modelName');
   if (body.displayName !== undefined) result.displayName = normalizeOptionalString(body.displayName);
   if (body.enabled !== undefined) result.enabled = !!body.enabled;

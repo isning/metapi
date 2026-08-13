@@ -91,11 +91,10 @@ describe('upstream cost pricing routes', () => {
       url: '/api/pricing/upstream-cost',
       headers: app.adminHeaders(),
       payload: {
-        scope: 'token_model_group',
+        scope: 'token_model',
         siteId: site.id,
         accountId: account.id,
         tokenId: token.id,
-        tokenGroup: 'gold',
         modelName: 'route-free-model',
         displayName: 'Route Free Model',
         simpleTokenPricing: {
@@ -109,7 +108,7 @@ describe('upstream cost pricing routes', () => {
     expect(create.statusCode).toBe(201);
     const created = create.json();
     expect(created).toMatchObject({
-      scope: 'token_model_group',
+      scope: 'token_model',
       normalizedModelName: 'route-free-model',
       planFingerprint: expect.any(String),
     });
@@ -129,7 +128,7 @@ describe('upstream cost pricing routes', () => {
     });
     expect(resolve.statusCode).toBe(200);
     expect(resolve.json()).toMatchObject({
-      matchedScope: 'token_model_group',
+      matchedScope: 'token_model',
       pricing: { id: created.id },
     });
 

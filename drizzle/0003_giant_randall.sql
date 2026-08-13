@@ -1,0 +1,1 @@
+DROP INDEX `upstream_model_cost_pricings_token_group_model_idx`;

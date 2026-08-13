@@ -69,16 +69,6 @@ describe('upstreamCostPricingService', () => {
       modelName,
       plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 3 }),
     });
-    const groupPricing = await service.createUpstreamCostPricing({
-      scope: 'token_model_group',
-      siteId: site.id,
-      accountId: account.id,
-      tokenId: token.id,
-      tokenGroup: 'premium',
-      modelName,
-      plan: service.createSimpleTokenPricingPlan({ inputPerMillion: 4 }),
-    });
-
     await expect(service.resolveUpstreamCostPricing({
       siteId: site.id,
       accountId: account.id,
@@ -86,9 +76,8 @@ describe('upstreamCostPricingService', () => {
       tokenGroup: 'premium',
       modelName: 'GPT-5.5',
     })).resolves.toMatchObject({
-      pricing: { id: groupPricing.id },
-      matchedScope: 'token_model_group',
-      priority: 400,
+      matchedScope: 'token_model',
+      priority: 300,
     });
 
     await expect(service.resolveUpstreamCostPricing({

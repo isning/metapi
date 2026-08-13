@@ -136,7 +136,6 @@ export default function AccountModelsModal({
     site_model: tr('components.searchModal.sites2'),
     account_model: tr('components.searchModal.accounts2'),
     token_model: 'Token',
-    token_model_group: tr('pages.accounts.accountModelsModal.tokenGroup'),
     provider_catalog: tr('upstreamCostPricing.source.providerCatalog'),
     system_default: tr('upstreamCostPricing.source.systemDefault'),
   };

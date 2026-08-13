@@ -115,7 +115,8 @@ describe('database schema parity', () => {
     expect(contract.tables.upstream_model_cost_pricings?.columns.site_id?.logicalType).toBe('integer');
     expect(contract.tables.upstream_model_cost_pricings?.columns.plan_json?.logicalType).toBe('json');
     expect(contract.tables.upstream_model_cost_pricings?.columns.plan_fingerprint?.logicalType).toBe('text');
-    expect(contract.indexes.some((index) => index.name === 'upstream_model_cost_pricings_token_group_model_idx')).toBe(true);
+    expect(contract.indexes.some((index) => index.name === 'upstream_model_cost_pricings_token_model_idx')).toBe(true);
+    expect(contract.indexes.some((index) => index.name === 'upstream_model_cost_pricings_token_group_model_idx')).toBe(false);
     expect(contract.uniques.some((unique) => unique.name === 'upstream_model_cost_pricings_scope_key_unique')).toBe(true);
     expect(mysqlBootstrap).toContain('`upstream_model_cost_pricings`');
     expect(mysqlBootstrap).toContain('`plan_json` JSON NOT NULL');

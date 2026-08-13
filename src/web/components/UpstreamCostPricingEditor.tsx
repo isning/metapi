@@ -17,7 +17,6 @@ import { tr } from '../i18n.js';
 type UpstreamTokenOption = {
   id: number;
   name: string;
-  tokenGroup?: string | null;
   enabled?: boolean;
   isDefault?: boolean;
   valueStatus?: string | null;
@@ -47,7 +46,6 @@ type UpstreamCostPricingEditorProps = {
 type SimplePricingForm = {
   scope: UpstreamCostPricingScope;
   tokenId: string;
-  tokenGroup: string;
   inputPerMillion: string;
   outputPerMillion: string;
   cacheReadPerMillion: string;
@@ -61,7 +59,6 @@ type SimplePricingForm = {
 const EMPTY_FORM: SimplePricingForm = {
   scope: 'account_model',
   tokenId: '',
-  tokenGroup: '',
   inputPerMillion: '',
   outputPerMillion: '',
   cacheReadPerMillion: '',
@@ -94,14 +91,13 @@ function scopeLabel(scope: UpstreamCostMatchedScope) {
   if (scope === 'account_model') return tr('upstreamCostPricing.scope.accountModel');
   if (scope === 'token_model') return tr('upstreamCostPricing.scope.tokenModel');
   if (scope === 'provider_catalog') return tr('upstreamCostPricing.source.providerCatalog');
-  return tr('upstreamCostPricing.scope.tokenGroupModel');
+  return tr('upstreamCostPricing.source.systemDefault');
 }
 
 function scopeDescription(scope: UpstreamCostPricingScope) {
   if (scope === 'site_model') return tr('upstreamCostPricing.scope.siteModelDescription');
   if (scope === 'account_model') return tr('upstreamCostPricing.scope.accountModelDescription');
-  if (scope === 'token_model') return tr('upstreamCostPricing.scope.tokenModelDescription');
-  return tr('upstreamCostPricing.scope.tokenGroupModelDescription');
+  return tr('upstreamCostPricing.scope.tokenModelDescription');
 }
 
 function sourceTypeLabel(sourceType: UpstreamCostPricingRecord['sourceType'] | string | null | undefined) {
@@ -113,7 +109,6 @@ function sourceTypeLabel(sourceType: UpstreamCostPricingRecord['sourceType'] | s
 }
 
 function recordScopeDetail(record: UpstreamCostPricingRecord): string {
-  if (record.tokenGroup) return `${tr('upstreamCostPricing.tokenGroup')}: ${record.tokenGroup}`;
   if (record.tokenId) return `${tr('components.notificationPanel.token')} ${record.tokenId}`;
   if (record.accountId) return `${tr('common.account')} ${record.accountId}`;
   return `${tr('common.site')} ${record.siteId}`;
@@ -217,7 +212,6 @@ function recordToForm(record: UpstreamCostPricingRecord | null, fallback: Partia
   return {
     scope: record.scope,
     tokenId: record.tokenId ? String(record.tokenId) : '',
-    tokenGroup: record.tokenGroup || '',
     inputPerMillion: readComponentUnit(record.plan, 'input_tokens'),
     outputPerMillion: readComponentUnit(record.plan, 'output_tokens'),
     cacheReadPerMillion: readComponentUnit(record.plan, 'cache_read_tokens'),
@@ -251,13 +245,11 @@ function buildPayload(input: {
     throw new Error('Pricing scope is not available in this editor.');
   }
   const tokenId = input.form.tokenId ? Number(input.form.tokenId) : undefined;
-  const tokenGroup = input.form.scope === 'token_model_group' ? input.form.tokenGroup.trim() : null;
   return {
     scope: input.form.scope,
     siteId: input.siteId,
     accountId: input.form.scope === 'site_model' ? null : input.accountId,
-    tokenId: input.form.scope === 'token_model' || input.form.scope === 'token_model_group' ? tokenId : null,
-    tokenGroup,
+    tokenId: input.form.scope === 'token_model' ? tokenId : null,
     modelName: input.modelName,
     enabled: input.form.enabled,
     simpleTokenPricing: {
@@ -281,8 +273,7 @@ function isSameScope(record: UpstreamCostPricingRecord, form: SimplePricingForm,
   if (record.accountId !== accountId) return false;
   if (form.scope === 'account_model') return record.tokenId == null;
   if (record.tokenId !== Number(form.tokenId)) return false;
-  if (form.scope === 'token_model_group') return (record.tokenGroup || '') === form.tokenGroup.trim();
-  return !record.tokenGroup;
+  return true;
 }
 
 export function UpstreamCostPricingEditor({
@@ -304,7 +295,7 @@ export function UpstreamCostPricingEditor({
   const allowedScopes = useMemo<UpstreamCostPricingScope[]>(() => {
     const ownerDefaults: UpstreamCostPricingScope[] = ownerScope === 'site'
       ? ['site_model']
-      : ['account_model', 'token_model', 'token_model_group'];
+      : ['account_model', 'token_model'];
     const requested = allowedScopesProp?.filter((scope) => ownerDefaults.includes(scope)) || ownerDefaults;
     return requested.length > 0 ? requested : ownerDefaults;
   }, [allowedScopesProp, ownerScope]);
@@ -324,7 +315,6 @@ export function UpstreamCostPricingEditor({
       ...EMPTY_FORM,
       scope: defaultScope,
       tokenId: token ? String(token.id) : '',
-      tokenGroup: token?.tokenGroup || '',
     };
   });
   const [loading, setLoading] = useState(false);
@@ -348,7 +338,6 @@ export function UpstreamCostPricingEditor({
       ...EMPTY_FORM,
       scope: defaultScope,
       tokenId: token ? String(token.id) : '',
-      tokenGroup: token?.tokenGroup || '',
     });
     setDraftPreview(null);
   }, [availableTokens, defaultScope]);
@@ -397,7 +386,7 @@ export function UpstreamCostPricingEditor({
         siteId,
         accountId: accountId ?? undefined,
         tokenId: ownerScope === 'account' ? pricingContextToken?.id : undefined,
-        tokenGroup: ownerScope === 'account' ? pricingContextToken?.tokenGroup || undefined : undefined,
+        tokenGroup: undefined,
         modelName,
         usage: PREVIEW_USAGE,
       });
@@ -444,13 +433,10 @@ export function UpstreamCostPricingEditor({
       const next = { ...current, ...patch };
       if (patch.scope === 'site_model' || patch.scope === 'account_model') {
         next.tokenId = '';
-        next.tokenGroup = '';
       }
-      if (patch.scope === 'token_model' || patch.scope === 'token_model_group') {
+      if (patch.scope === 'token_model') {
         const token = availableTokens.find((item) => String(item.id) === next.tokenId) || pickInitialToken(availableTokens);
         next.tokenId = token ? String(token.id) : '';
-        if (patch.scope === 'token_model_group' && !next.tokenGroup) next.tokenGroup = token?.tokenGroup || '';
-        if (patch.scope === 'token_model') next.tokenGroup = '';
       }
       return next;
     });
@@ -467,7 +453,7 @@ export function UpstreamCostPricingEditor({
           siteId,
           accountId: payload.accountId ?? undefined,
           tokenId: payload.tokenId ?? undefined,
-          tokenGroup: payload.tokenGroup ?? undefined,
+          tokenGroup: undefined,
           modelName,
           usage: PREVIEW_USAGE,
         });
@@ -706,7 +692,7 @@ export function UpstreamCostPricingEditor({
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {allowedScopes.map((scope) => (
-                      <SelectItem key={scope} value={scope} disabled={(scope === 'token_model' || scope === 'token_model_group') && !canUseTokenScope}>
+                      <SelectItem key={scope} value={scope} disabled={scope === 'token_model' && !canUseTokenScope}>
                         {scopeLabel(scope)}
                       </SelectItem>
                     ))}
@@ -714,28 +700,22 @@ export function UpstreamCostPricingEditor({
                 </Select>
                 <span>{scopeDescription(form.scope)}</span>
               </Label>
-              {form.scope === 'token_model' || form.scope === 'token_model_group' ? (
+              {form.scope === 'token_model' ? (
                 <Label className="grid gap-1.5 text-xs text-muted-foreground">
                   Token
                   <Select value={form.tokenId} onValueChange={(tokenId) => {
                     const token = availableTokens.find((item) => String(item.id) === tokenId);
-                    updateForm({ tokenId, tokenGroup: form.scope === 'token_model_group' ? token?.tokenGroup || '' : '' });
+                    updateForm({ tokenId });
                   }}>
                     <SelectTrigger><SelectValue placeholder={tr('upstreamCostPricing.selectToken')} /></SelectTrigger>
                     <SelectContent>
                       {availableTokens.map((token) => (
                         <SelectItem key={token.id} value={String(token.id)}>
-                          {token.name}{token.tokenGroup ? ` · ${token.tokenGroup}` : ''}
+                          {token.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </Label>
-              ) : null}
-              {form.scope === 'token_model_group' ? (
-                <Label className="grid gap-1.5 text-xs text-muted-foreground">
-                  {tr('upstreamCostPricing.tokenGroup')}
-                  <Input value={form.tokenGroup} onChange={(event) => updateForm({ tokenGroup: event.target.value })} placeholder={selectedToken?.tokenGroup || 'default'} />
                 </Label>
               ) : null}
             </div>

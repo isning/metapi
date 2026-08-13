@@ -189,7 +189,6 @@ CREATE INDEX "token_model_availability_model_name_idx" ON "token_model_availabil
 CREATE INDEX "token_model_availability_token_available_idx" ON "token_model_availability" ("token_id", "available");
 CREATE INDEX "upstream_model_cost_pricings_account_model_idx" ON "upstream_model_cost_pricings" ("account_id", "normalized_model_name", "enabled");
 CREATE INDEX "upstream_model_cost_pricings_site_model_idx" ON "upstream_model_cost_pricings" ("site_id", "normalized_model_name", "enabled");
-CREATE INDEX "upstream_model_cost_pricings_token_group_model_idx" ON "upstream_model_cost_pricings" ("token_id", "token_group", "normalized_model_name", "enabled");
 CREATE INDEX "upstream_model_cost_pricings_token_model_idx" ON "upstream_model_cost_pricings" ("token_id", "normalized_model_name", "enabled");
 CREATE INDEX "wallet_acquisition_profiles_account_idx" ON "wallet_acquisition_profiles" ("account_id", "enabled");
 CREATE INDEX "wallet_acquisition_profiles_site_scope_idx" ON "wallet_acquisition_profiles" ("site_id", "scope", "enabled");

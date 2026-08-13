@@ -80,6 +80,45 @@ function hasIndex(sqlite: Database.Database, index: string): boolean {
     .get(index);
 }
 
+function migrateLegacyTokenGroupCostPricings(sqlite: Database.Database): void {
+  if (!hasTable(sqlite, 'upstream_model_cost_pricings')) return;
+  const legacyRows = sqlite.prepare(`
+    SELECT id, site_id, account_id, token_id, normalized_model_name
+    FROM upstream_model_cost_pricings
+    WHERE scope = 'token_model_group'
+  `).all() as Array<{
+    id: number;
+    site_id: number;
+    account_id: number | null;
+    token_id: number | null;
+    normalized_model_name: string;
+  }>;
+  if (legacyRows.length === 0) return;
+
+  const hasCurrent = sqlite.prepare(`
+    SELECT 1 FROM upstream_model_cost_pricings
+    WHERE scope = 'token_model' AND site_id = ? AND account_id IS ? AND token_id IS ?
+      AND normalized_model_name = ?
+    LIMIT 1
+  `);
+  const deleteLegacy = sqlite.prepare('DELETE FROM upstream_model_cost_pricings WHERE id = ?');
+  const upgradeLegacy = sqlite.prepare(`
+    UPDATE upstream_model_cost_pricings
+    SET scope = 'token_model', token_group = NULL,
+        scope_key = 'token_model|site:' || site_id || '|account:' || account_id || '|token:' || token_id || '|group:-|model:' || normalized_model_name,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  for (const row of legacyRows) {
+    if (hasCurrent.get(row.site_id, row.account_id, row.token_id, row.normalized_model_name)) {
+      deleteLegacy.run(row.id);
+    } else {
+      upgradeLegacy.run(row.id);
+    }
+  }
+}
+
 /**
  * SQLite can persist DDL from an interrupted migration before Drizzle writes
  * its metadata row. Adopt only this fully-verifiable migration state so the
@@ -132,6 +171,7 @@ export async function runSqliteMigrations(): Promise<void> {
     }
     recoverCompletedTokenModelOverridesMigration(sqlite, migrationsFolder);
     migrate(drizzle(sqlite), { migrationsFolder });
+    migrateLegacyTokenGroupCostPricings(sqlite);
   } finally {
     sqlite.close();
   }

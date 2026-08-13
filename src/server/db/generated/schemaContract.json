@@ -5108,17 +5108,6 @@
       "unique": false
     },
     {
-      "name": "upstream_model_cost_pricings_token_group_model_idx",
-      "table": "upstream_model_cost_pricings",
-      "columns": [
-        "token_id",
-        "token_group",
-        "normalized_model_name",
-        "enabled"
-      ],
-      "unique": false
-    },
-    {
       "name": "upstream_model_cost_pricings_token_model_idx",
       "table": "upstream_model_cost_pricings",
       "columns": [

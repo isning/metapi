@@ -624,7 +624,7 @@ export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 export type ProxyLogBillingDetails = ProxyBillingDetails | null;
 
 export type UpstreamCostPricingScope =
-  "site_model" | "account_model" | "token_model" | "token_model_group";
+  "site_model" | "account_model" | "token_model";
 export type UpstreamCostMatchedScope =
   UpstreamCostPricingScope | "provider_catalog" | "system_default";
 
@@ -634,6 +634,7 @@ export type UpstreamCostPricingRecord = {
   siteId: number;
   accountId?: number | null;
   tokenId?: number | null;
+  /** Read-only compatibility field for legacy records during database upgrade. */
   tokenGroup?: string | null;
   modelName: string;
   normalizedModelName: string;
@@ -653,7 +654,6 @@ export type UpstreamCostPricingPayload = {
   siteId: number;
   accountId?: number | null;
   tokenId?: number | null;
-  tokenGroup?: string | null;
   modelName: string;
   displayName?: string | null;
   enabled?: boolean;

@@ -22,7 +22,7 @@ import {
 } from './providerPricingCatalogCacheService.js';
 import { loadPlatformPricingConfig } from './platformPricingConfigService.js';
 
-export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model' | 'token_model_group';
+export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model';
 export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog' | 'system_default';
 export type ProviderCatalogResolveMode = 'disabled' | 'cache_only' | 'refresh';
 
@@ -31,7 +31,6 @@ export interface UpstreamCostPricingPayload {
   siteId: number;
   accountId?: number | null;
   tokenId?: number | null;
-  tokenGroup?: string | null;
   modelName: string;
   displayName?: string | null;
   enabled?: boolean;
@@ -50,6 +49,8 @@ export interface UpstreamCostPricingRecord extends Omit<UpstreamCostPricingPaylo
   planFingerprint: string;
   sourceType: 'user' | 'official' | 'provider_catalog' | 'system_default';
   metadata: Record<string, unknown>;
+  /** Retained while upgrading databases that contain historical group records. */
+  tokenGroup?: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -108,7 +109,6 @@ const VALID_SCOPES = new Set<UpstreamCostPricingScope>([
   'site_model',
   'account_model',
   'token_model',
-  'token_model_group',
 ]);
 
 export function normalizeUpstreamModelName(modelName: string): string {
@@ -191,24 +191,20 @@ export function normalizeUpstreamCostPricingPayload(input: UpstreamCostPricingPa
   const siteId = normalizePositiveId(input.siteId, 'siteId');
   const accountId = input.accountId == null ? null : normalizePositiveId(input.accountId, 'accountId');
   const tokenId = input.tokenId == null ? null : normalizePositiveId(input.tokenId, 'tokenId');
-  const tokenGroup = normalizeOptionalText(input.tokenGroup, 128);
   const modelName = String(input.modelName || '').trim();
   const normalizedModelName = normalizeUpstreamModelName(modelName);
   if (!normalizedModelName) {
     throw new Error('modelName is required.');
   }
 
-  if (scope === 'site_model' && (accountId != null || tokenId != null || tokenGroup != null)) {
-    throw new Error('site_model scope cannot include accountId, tokenId, or tokenGroup.');
+  if (scope === 'site_model' && (accountId != null || tokenId != null)) {
+    throw new Error('site_model scope cannot include accountId or tokenId.');
   }
-  if (scope === 'account_model' && (accountId == null || tokenId != null || tokenGroup != null)) {
+  if (scope === 'account_model' && (accountId == null || tokenId != null)) {
     throw new Error('account_model scope requires accountId only.');
   }
-  if (scope === 'token_model' && (accountId == null || tokenId == null || tokenGroup != null)) {
+  if (scope === 'token_model' && (accountId == null || tokenId == null)) {
     throw new Error('token_model scope requires accountId and tokenId.');
-  }
-  if (scope === 'token_model_group' && (accountId == null || tokenId == null || !tokenGroup)) {
-    throw new Error('token_model_group scope requires accountId, tokenId, and tokenGroup.');
   }
 
   const parsedPlan = parsePricingPlan(input.plan);
@@ -221,7 +217,6 @@ export function normalizeUpstreamCostPricingPayload(input: UpstreamCostPricingPa
     siteId,
     accountId,
     tokenId,
-    tokenGroup,
     normalizedModelName,
   });
 
@@ -231,7 +226,6 @@ export function normalizeUpstreamCostPricingPayload(input: UpstreamCostPricingPa
     siteId,
     accountId,
     tokenId,
-    tokenGroup,
     modelName,
     normalizedModelName,
     displayName: normalizeOptionalText(input.displayName, 160),
@@ -249,7 +243,6 @@ export function buildUpstreamCostPricingScopeKey(input: {
   siteId: number;
   accountId: number | null;
   tokenId: number | null;
-  tokenGroup: string | null;
   normalizedModelName: string;
 }): string {
   return [
@@ -257,7 +250,7 @@ export function buildUpstreamCostPricingScopeKey(input: {
     `site:${input.siteId}`,
     `account:${input.accountId ?? '-'}`,
     `token:${input.tokenId ?? '-'}`,
-    `group:${input.tokenGroup || '-'}`,
+    'group:-',
     `model:${input.normalizedModelName}`,
   ].join('|');
 }
@@ -313,7 +306,6 @@ export async function updateUpstreamCostPricing(id: number, input: Partial<Upstr
     siteId: input.siteId ?? existing.siteId,
     accountId: input.accountId !== undefined ? input.accountId : existing.accountId,
     tokenId: input.tokenId !== undefined ? input.tokenId : existing.tokenId,
-    tokenGroup: input.tokenGroup !== undefined ? input.tokenGroup : existing.tokenGroup,
     modelName: input.modelName ?? existing.modelName,
     displayName: input.displayName !== undefined ? input.displayName : existing.displayName,
     enabled: input.enabled !== undefined ? input.enabled : existing.enabled,
@@ -689,25 +681,24 @@ function sanitizeNonNegative(value: unknown): number | undefined {
 }
 
 function matchPriority(row: Row, input: UpstreamCostResolveInput): number {
-  const scope = row.scope as UpstreamCostPricingScope;
+  const scope = String(row.scope);
   const accountId = input.accountId ?? null;
   const tokenId = input.tokenId ?? null;
-  const tokenGroup = normalizeOptionalText(input.tokenGroup, 128);
-
-  if (scope === 'token_model_group') {
-    return tokenId != null
-      && row.tokenId === tokenId
-      && row.accountId === accountId
-      && row.tokenGroup === tokenGroup
-      ? 400
-      : 0;
-  }
   if (scope === 'token_model') {
     return tokenId != null
       && row.tokenId === tokenId
       && row.accountId === accountId
       && row.tokenGroup == null
       ? 300
+      : 0;
+  }
+  // Historical group-scoped bindings were bound to one token and therefore
+  // have the same effective scope as token_model in the current model.
+  if (scope === 'token_model_group') {
+    return tokenId != null
+      && row.tokenId === tokenId
+      && row.accountId === accountId
+      ? 250
       : 0;
   }
   if (scope === 'account_model') {
@@ -755,7 +746,7 @@ function toInsertValues(input: ReturnType<typeof normalizeUpstreamCostPricingPay
     siteId: input.siteId,
     accountId: input.accountId,
     tokenId: input.tokenId,
-    tokenGroup: input.tokenGroup,
+    tokenGroup: null,
     modelName: input.modelName,
     normalizedModelName: input.normalizedModelName,
     displayName: input.displayName,
