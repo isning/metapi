@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,6 +128,36 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     });
     expect(getApiTokensMock).not.toHaveBeenCalled();
     expect(getApiTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts the explicit JSON command body for single-account sync over HTTP', async () => {
+    const { account } = await seedAccount({ siteStatus: 'disabled' });
+    const routesModule = await import('./accountTokens.js');
+    const httpApp = Fastify();
+    await httpApp.register(routesModule.accountTokensRoutes);
+    await httpApp.listen({ host: '127.0.0.1', port: 0 });
+
+    try {
+      const address = httpApp.server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/account-tokens/sync/${account.id}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        },
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        success: true,
+        synced: false,
+        status: 'skipped',
+        reason: 'site_disabled',
+      });
+    } finally {
+      await httpApp.close();
+    }
   });
 
   it('returns skipped when upstream has no api tokens', async () => {

@@ -1472,7 +1472,7 @@ export const api = {
       body: data,
     }),
   refreshBalance: (id: number) =>
-    request(`/api/accounts/${id}/balance`, { method: "POST" }),
+    requestJson(`/api/accounts/${id}/balance`, { method: "POST", body: {} }),
   getAccountModels: (id: number) => request(`/api/accounts/${id}/models`),
   addAccountAvailableModels: (accountId: number, models: string[]) =>
     requestJson(`/api/accounts/${accountId}/models/manual`, {
@@ -1509,12 +1509,13 @@ export const api = {
   getAccountTokenGroups: (accountId: number) =>
     request(`/api/account-tokens/groups/${accountId}`),
   setDefaultAccountToken: (id: number) =>
-    request(`/api/account-tokens/${id}/default`, { method: "POST" }),
+    requestJson(`/api/account-tokens/${id}/default`, { method: "POST", body: {} }),
   getAccountTokenValue: (id: number) =>
     request(`/api/account-tokens/${id}/value`),
   syncAccountTokens: (accountId: number) =>
-    request(`/api/account-tokens/sync/${accountId}`, {
+    requestJson(`/api/account-tokens/sync/${accountId}`, {
       method: "POST",
+      body: {},
       timeoutMs: 45_000,
     }),
   syncAllAccountTokens: (wait = false) =>
@@ -1525,12 +1526,14 @@ export const api = {
     }),
 
   // Check-in
-  triggerCheckinAll: () => request("/api/checkin/trigger", {
+  triggerCheckinAll: () => requestJson("/api/checkin/trigger", {
     method: "POST",
+    body: {},
   }),
   triggerCheckin: (id: number) =>
-    request(`/api/checkin/trigger/${id}`, {
+    requestJson(`/api/checkin/trigger/${id}`, {
       method: "POST",
+      body: {},
     }),
   getCheckinLogs: (params?: string) =>
     request(`/api/checkin/logs${params ? "?" + params : ""}`),
@@ -1678,9 +1681,9 @@ export const api = {
       body: graph,
     }),
   publishRouteGraphDraft: () =>
-    request("/api/route-graph/draft/publish", { method: "POST" }),
+    requestJson("/api/route-graph/draft/publish", { method: "POST", body: {} }),
   rebaseRouteGraphDraft: () =>
-    request("/api/route-graph/draft/rebase", { method: "POST" }),
+    requestJson("/api/route-graph/draft/rebase", { method: "POST", body: {} }),
   discardRouteGraphDraft: () =>
     request("/api/route-graph/draft", { method: "DELETE" }),
   getRouteGroupPage: (options: {
@@ -1973,7 +1976,7 @@ export const api = {
       `/api/stats/proxy-debug/traces/${id}`,
     ) as Promise<ProxyDebugTraceDetail>,
   checkModels: (accountId: number) =>
-    request(`/api/models/check/${accountId}`, { method: "POST" }),
+    requestJson(`/api/models/check/${accountId}`, { method: "POST", body: {} }),
   getSiteDistribution: () => request("/api/stats/site-distribution"),
   getSiteTrend: (days = 7) => request(`/api/stats/site-trend?days=${days}`),
   getSiteSnapshot: async (days = 7, options?: { refresh?: boolean }) => {
@@ -2040,8 +2043,9 @@ export const api = {
       `/api/oauth/connections${buildQueryString(params)}`,
     ) as Promise<OAuthConnectionsResponse>,
   refreshOAuthConnectionQuota: (accountId: number) =>
-    request(`/api/oauth/connections/${accountId}/quota/refresh`, {
+    requestJson(`/api/oauth/connections/${accountId}/quota/refresh`, {
       method: "POST",
+      body: {},
     }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
   refreshOAuthConnectionQuotaBatch: (accountIds: number[]) =>
     requestJson("/api/oauth/connections/quota/refresh-batch", {
@@ -2095,7 +2099,7 @@ export const api = {
       count: number;
     }>,
   markEventRead: (id: number) =>
-    request(`/api/events/${id}/read`, { method: "POST" }) as Promise<{
+    requestJson(`/api/events/${id}/read`, { method: "POST", body: {} }) as Promise<{
       success: true;
     }>,
   applyEventAction: (id: number, data: InboxActionRequest) =>
@@ -2104,8 +2108,9 @@ export const api = {
       body: data,
     }) as Promise<{ success: true; item: InboxItem }>,
   markAllEventsRead: (params?: string) =>
-    request(`/api/events/read-all${params ? "?" + params : ""}`, {
+    requestJson(`/api/events/read-all${params ? "?" + params : ""}`, {
       method: "POST",
+      body: {},
     }) as Promise<{ success: true }>,
   clearEvents: (params?: string) =>
     request(`/api/events${params ? "?" + params : ""}`, {
@@ -2114,9 +2119,9 @@ export const api = {
   getSiteAnnouncements: (params?: string) =>
     request(`/api/site-announcements${params ? "?" + params : ""}`),
   markSiteAnnouncementRead: (id: number) =>
-    request(`/api/site-announcements/${id}/read`, { method: "POST" }),
+    requestJson(`/api/site-announcements/${id}/read`, { method: "POST", body: {} }),
   markAllSiteAnnouncementsRead: () =>
-    request("/api/site-announcements/read-all", { method: "POST" }),
+    requestJson("/api/site-announcements/read-all", { method: "POST", body: {} }),
   clearSiteAnnouncements: () =>
     request("/api/site-announcements", { method: "DELETE" }),
   syncSiteAnnouncements: (payload?: { siteId?: number }) =>
@@ -2144,7 +2149,7 @@ export const api = {
     activeRuntime: { present: boolean; ageMs: number | null; artifactId: string | null; loadInFlight: boolean };
     lastInvalidation: { reason: string; at: string } | null;
   }>,
-  refreshRouteRuntimeCache: () => request("/api/route-runtime/cache/refresh", { method: "POST" }),
+  refreshRouteRuntimeCache: () => requestJson("/api/route-runtime/cache/refresh", { method: "POST", body: {} }),
   getBrandList: () => request("/api/settings/brand-list"),
   updateRuntimeSettings: (data: RuntimeSettingsPayload) =>
     requestJson("/api/settings/runtime", {
@@ -2158,8 +2163,9 @@ export const api = {
       body: data,
     }),
   checkUpdateCenter: () =>
-    request("/api/update-center/check", {
+    requestJson("/api/update-center/check", {
       method: "POST",
+      body: {},
     }),
   deployUpdateCenter: (data: {
     source: "github-release" | "docker-hub-tag";
@@ -2256,8 +2262,9 @@ export const api = {
       body: data,
     }),
   resetDownstreamApiKeyUsage: (id: number) =>
-    request(`/api/downstream-keys/${id}/reset-usage`, {
+    requestJson(`/api/downstream-keys/${id}/reset-usage`, {
       method: "POST",
+      body: {},
     }),
   getDownstreamApiKeysSummary: (params?: {
     range?: "24h" | "7d" | "all";
@@ -2302,18 +2309,19 @@ export const api = {
       timeoutMs: 60_000,
     }),
   importBackupFromWebdav: () =>
-    request("/api/settings/backup/webdav/import", {
+    requestJson("/api/settings/backup/webdav/import", {
       method: "POST",
+      body: {},
       timeoutMs: 60_000,
     }),
   clearRuntimeCache: () =>
-    request("/api/settings/maintenance/clear-cache", { method: "POST" }),
+    requestJson("/api/settings/maintenance/clear-cache", { method: "POST", body: {} }),
   clearUsageData: () =>
-    request("/api/settings/maintenance/clear-usage", { method: "POST" }),
+    requestJson("/api/settings/maintenance/clear-usage", { method: "POST", body: {} }),
   factoryReset: () =>
-    request("/api/settings/maintenance/factory-reset", { method: "POST" }),
+    requestJson("/api/settings/maintenance/factory-reset", { method: "POST", body: {} }),
   testNotification: () =>
-    request("/api/settings/notify/test", { method: "POST" }),
+    requestJson("/api/settings/notify/test", { method: "POST", body: {} }),
 
   // Monitor embed
   getMonitorConfig: () => request("/api/monitor/config"),
@@ -2322,7 +2330,7 @@ export const api = {
       method: "PUT",
       body: data,
     }),
-  initMonitorSession: () => request("/api/monitor/session", { method: "POST" }),
+  initMonitorSession: () => requestJson("/api/monitor/session", { method: "POST", body: {} }),
 
   // Models marketplace
   getModelsMarketplace: (options: {
@@ -2454,10 +2462,11 @@ export const api = {
       },
     ),
   syncPricingReferenceCatalog: () =>
-    request<PricingReferenceCatalogImportResult | { skipped: true }>(
+    requestJson<PricingReferenceCatalogImportResult | { skipped: true }>(
       "/api/pricing/reference-catalog/sync",
       {
         method: "POST",
+        body: {},
       },
     ),
   getPlatformPricingConfig: () =>
@@ -2468,10 +2477,11 @@ export const api = {
       body: data,
     }),
   refreshProviderPricingCatalog: () =>
-    request<ProviderPricingCatalogRefreshTask>(
+    requestJson<ProviderPricingCatalogRefreshTask>(
       "/api/pricing/provider-catalog/refresh",
       {
         method: "POST",
+        body: {},
       },
     ),
   listWalletAcquisitionProfiles: (params?: {

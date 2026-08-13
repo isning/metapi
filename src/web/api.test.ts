@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import ts from "typescript";
 import { api, type ProxyTestRequestEnvelope } from "./api.js";
 import { getAuthToken, persistAuthSession } from "./authSession.js";
 
@@ -46,7 +49,7 @@ describe("api proxy test timeout handling", () => {
     persistAuthSession(globalThis.localStorage as Storage, "token-1");
   });
 
-  it("does not declare JSON content for a bodyless POST command", async () => {
+  it("sends an explicit JSON command body for a parameterless POST", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, queued: true }), {
         status: 202,
@@ -59,11 +62,11 @@ describe("api proxy test timeout handling", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init).toMatchObject({ method: "POST" });
-    expect(init.body).toBeUndefined();
-    expect(new Headers(init.headers).has("content-type")).toBe(false);
+    expect(init.body).toBe("{}");
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
-  it("does not declare JSON content when syncing account tokens without a body", async () => {
+  it("sends an explicit JSON command body when syncing account tokens", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -76,8 +79,8 @@ describe("api proxy test timeout handling", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init).toMatchObject({ method: "POST" });
-    expect(init.body).toBeUndefined();
-    expect(new Headers(init.headers).has("content-type")).toBe(false);
+    expect(init.body).toBe("{}");
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
   it("serializes explicit JSON bodies and declares their content type", async () => {
@@ -104,6 +107,40 @@ describe("api proxy test timeout handling", () => {
       jsonBody: { model: "test" },
     }));
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+  });
+
+  it("keeps management write calls on the explicit JSON request variant", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/web/api.ts"), "utf8");
+    const sourceFile = ts.createSourceFile("api.ts", source, ts.ScriptTarget.Latest, true);
+    const directRequestWrites: number[] = [];
+
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node)
+        && ts.isIdentifier(node.expression)
+        && node.expression.text === "request"
+      ) {
+        const options = node.arguments[1];
+        if (options && ts.isObjectLiteralExpression(options)) {
+          const method = options.properties.find((property): property is ts.PropertyAssignment =>
+            ts.isPropertyAssignment(property)
+            && ts.isIdentifier(property.name)
+            && property.name.text === "method",
+          );
+          if (
+            method
+            && ts.isStringLiteral(method.initializer)
+            && ["POST", "PUT", "PATCH"].includes(method.initializer.text)
+          ) {
+            directRequestWrites.push(node.getStart(sourceFile));
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+
+    expect(directRequestWrites).toEqual([]);
   });
 
   afterEach(() => {
