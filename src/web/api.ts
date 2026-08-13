@@ -80,13 +80,11 @@ type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
-const ADMIN_AUTH_FAILURE_HEADER = "x-metapi-auth-failure";
+type JsonRequestOptions = Omit<RequestOptions, "body"> & {
+  body: unknown;
+};
 
-function isJsonRequestBody(body: BodyInit | null | undefined): body is string {
-  if (typeof body !== "string") return false;
-  const trimmed = body.trim();
-  return trimmed.startsWith("{") || trimmed.startsWith("[");
-}
+const ADMIN_AUTH_FAILURE_HEADER = "x-metapi-auth-failure";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -230,12 +228,6 @@ async function fetchAuthenticatedResponse(
   const token = requireAuthToken();
   const headers = new Headers(fetchOptions.headers ?? {});
   headers.set("Authorization", `Bearer ${token}`);
-  const method = String(fetchOptions.method || "GET").toUpperCase();
-  const isJsonWrite = isJsonRequestBody(fetchOptions.body);
-  if ((isJsonWrite || ["POST", "PUT", "PATCH"].includes(method))
-    && (!headers.has("Content-Type") || isJsonWrite)) {
-    headers.set("Content-Type", "application/json");
-  }
 
   try {
     const res = await fetch(url, {
@@ -285,6 +277,38 @@ async function request<T = any>(
     throw await buildApiRequestError(res);
   }
   return res.json() as Promise<T>;
+}
+
+function withJsonBody(options: JsonRequestOptions): RequestOptions {
+  const { body, ...requestOptions } = options;
+  if (body === undefined) {
+    throw new TypeError("requestJson requires a defined body");
+  }
+  const serializedBody = JSON.stringify(body);
+  if (serializedBody === undefined) {
+    throw new TypeError("requestJson body must be JSON serializable");
+  }
+  const headers = new Headers(requestOptions.headers ?? {});
+  headers.set("Content-Type", "application/json");
+  return {
+    ...requestOptions,
+    headers,
+    body: serializedBody,
+  };
+}
+
+function requestJson<T = any>(
+  url: string,
+  options: JsonRequestOptions,
+): Promise<T> {
+  return request<T>(url, withJsonBody(options));
+}
+
+function fetchAuthenticatedJsonResponse(
+  url: string,
+  options: JsonRequestOptions,
+): Promise<Response> {
+  return fetchAuthenticatedResponse(url, withJsonBody(options));
 }
 
 async function streamSse(
@@ -486,9 +510,9 @@ function resolveProxyTestTimeoutMs(data: ProxyTestRequestEnvelope) {
 }
 
 function proxyTestRequest(data: ProxyTestRequestEnvelope) {
-  return request("/api/test/proxy", {
+  return requestJson("/api/test/proxy", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: data,
     timeoutMs: resolveProxyTestTimeoutMs(data),
   });
 }
@@ -501,10 +525,10 @@ async function proxyTestStreamRequest(
   data: ProxyTestRequestEnvelope,
   signal?: AbortSignal,
 ) {
-  return fetchAuthenticatedResponse("/api/test/proxy/stream", {
+  return fetchAuthenticatedJsonResponse("/api/test/proxy/stream", {
     method: "POST",
     signal,
-    body: JSON.stringify(data),
+    body: data,
     timeoutMs: resolveProxyTestTimeoutMs(data),
   });
 }
@@ -1295,14 +1319,14 @@ export type DownstreamApiKeyTrendResponse = {
 
 export const api = {
   validateDispatchPolicy: (policy: DispatchPolicyDefinitionPayload) =>
-    request("/api/dispatch-policies/validate", {
+    requestJson("/api/dispatch-policies/validate", {
       method: "POST",
-      body: JSON.stringify({ policy }),
+      body: { policy },
     }) as Promise<{ success: boolean; errors: string[] }>,
   simulateDispatchPolicy: (input: DispatchPolicySimulationCommand) =>
-    request("/api/dispatch-policies/simulate", {
+    requestJson("/api/dispatch-policies/simulate", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: input,
     }) as Promise<{
       success: boolean;
       scopes?: DispatchPolicySimulationScopeSummary[];
@@ -1312,23 +1336,23 @@ export const api = {
   // Sites
   getSites: () => request("/api/sites"),
   addSite: (data: any) =>
-    request("/api/sites", { method: "POST", body: JSON.stringify(data) }),
+    requestJson("/api/sites", { method: "POST", body: data }),
   updateSite: (id: number, data: any) =>
-    request(`/api/sites/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    requestJson(`/api/sites/${id}`, { method: "PUT", body: data }),
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: "DELETE" }),
   batchUpdateSites: (data: any) =>
-    request("/api/sites/batch", { method: "POST", body: JSON.stringify(data) }),
+    requestJson("/api/sites/batch", { method: "POST", body: data }),
   detectSite: (url: string) =>
-    request("/api/sites/detect", {
+    requestJson("/api/sites/detect", {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: { url },
     }),
   getSiteDisabledModels: (siteId: number) =>
     request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) =>
-    request(`/api/sites/${siteId}/disabled-models`, {
+    requestJson(`/api/sites/${siteId}/disabled-models`, {
       method: "PUT",
-      body: JSON.stringify({ models }),
+      body: { models },
     }),
   getSiteEndpointBindings: (siteId: number) =>
     request<CredentialEndpointMatrix>(`/api/sites/${siteId}/endpoint-bindings`),
@@ -1346,11 +1370,11 @@ export const api = {
       priority?: number;
     }>,
   ) =>
-    request<CredentialEndpointMatrix>(
+    requestJson<CredentialEndpointMatrix>(
       `/api/sites/${siteId}/endpoint-profiles`,
       {
         method: "PUT",
-        body: JSON.stringify({ profiles }),
+        body: { profiles },
       },
     ),
   updateSiteEndpointBindings: (
@@ -1363,11 +1387,11 @@ export const api = {
       priority?: number;
     }>,
   ) =>
-    request<CredentialEndpointMatrix>(
+    requestJson<CredentialEndpointMatrix>(
       `/api/sites/${siteId}/endpoint-bindings/${encodeURIComponent(credentialKey)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ bindings }),
+        body: { bindings },
       },
     ),
   getSiteAvailableModels: (siteId: number) =>
@@ -1380,9 +1404,9 @@ export const api = {
       latencyThresholdMs?: number;
     },
   ) =>
-    request(`/api/sites/${siteId}/probe-now`, {
+    requestJson(`/api/sites/${siteId}/probe-now`, {
       method: "POST",
-      body: JSON.stringify(options || {}),
+      body: options || {},
       timeoutMs: options?.scope === "all" ? 120_000 : 30_000,
     }),
 
@@ -1402,15 +1426,15 @@ export const api = {
       sites: any[];
     }>,
   addAccount: (data: any) =>
-    request("/api/accounts", { method: "POST", body: JSON.stringify(data) }),
+    requestJson("/api/accounts", { method: "POST", body: data }),
   loginAccount: (data: {
     siteId: number;
     username: string;
     password: string;
   }) =>
-    request("/api/accounts/login", {
+    requestJson("/api/accounts/login", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   verifyToken: (data: {
     siteId: number;
@@ -1418,9 +1442,9 @@ export const api = {
     platformUserId?: number;
     credentialMode?: "auto" | "session" | "apikey";
   }) =>
-    request("/api/accounts/verify-token", {
+    requestJson("/api/accounts/verify-token", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   rebindAccountSession: (
     id: number,
@@ -1431,34 +1455,34 @@ export const api = {
       tokenExpiresAt?: number;
     },
   ) =>
-    request(`/api/accounts/${id}/rebind-session`, {
+    requestJson(`/api/accounts/${id}/rebind-session`, {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateAccount: (id: number, data: any) =>
-    request(`/api/accounts/${id}`, {
+    requestJson(`/api/accounts/${id}`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteAccount: (id: number) =>
     request(`/api/accounts/${id}`, { method: "DELETE" }),
   batchUpdateAccounts: (data: any) =>
-    request("/api/accounts/batch", {
+    requestJson("/api/accounts/batch", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   refreshBalance: (id: number) =>
     request(`/api/accounts/${id}/balance`, { method: "POST" }),
   getAccountModels: (id: number) => request(`/api/accounts/${id}/models`),
   addAccountAvailableModels: (accountId: number, models: string[]) =>
-    request(`/api/accounts/${accountId}/models/manual`, {
+    requestJson(`/api/accounts/${accountId}/models/manual`, {
       method: "POST",
-      body: JSON.stringify({ models }),
+      body: { models },
     }),
   refreshAccountHealth: (data?: { accountId?: number; wait?: boolean }) =>
-    request("/api/accounts/health/refresh", {
+    requestJson("/api/accounts/health/refresh", {
       method: "POST",
-      body: JSON.stringify(data || {}),
+      body: data || {},
       timeoutMs: data?.wait ? 150_000 : 30_000,
     }),
 
@@ -1466,21 +1490,21 @@ export const api = {
   getAccountTokens: (accountId?: number) =>
     request(`/api/account-tokens${accountId ? `?accountId=${accountId}` : ""}`),
   addAccountToken: (data: any) =>
-    request("/api/account-tokens", {
+    requestJson("/api/account-tokens", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateAccountToken: (id: number, data: any) =>
-    request(`/api/account-tokens/${id}`, {
+    requestJson(`/api/account-tokens/${id}`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteAccountToken: (id: number) =>
     request(`/api/account-tokens/${id}`, { method: "DELETE" }),
   batchUpdateAccountTokens: (data: any) =>
-    request("/api/account-tokens/batch", {
+    requestJson("/api/account-tokens/batch", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   getAccountTokenGroups: (accountId: number) =>
     request(`/api/account-tokens/groups/${accountId}`),
@@ -1494,28 +1518,26 @@ export const api = {
       timeoutMs: 45_000,
     }),
   syncAllAccountTokens: (wait = false) =>
-    request("/api/account-tokens/sync-all", {
+    requestJson("/api/account-tokens/sync-all", {
       method: "POST",
-      body: JSON.stringify(wait ? { wait: true } : {}),
+      body: wait ? { wait: true } : {},
       timeoutMs: wait ? 150_000 : 30_000,
     }),
 
   // Check-in
   triggerCheckinAll: () => request("/api/checkin/trigger", {
     method: "POST",
-    body: JSON.stringify({}),
   }),
   triggerCheckin: (id: number) =>
     request(`/api/checkin/trigger/${id}`, {
       method: "POST",
-      body: JSON.stringify({}),
     }),
   getCheckinLogs: (params?: string) =>
     request(`/api/checkin/logs${params ? "?" + params : ""}`),
   updateCheckinSchedule: (cron: string) =>
-    request("/api/checkin/schedule", {
+    requestJson("/api/checkin/schedule", {
       method: "PUT",
-      body: JSON.stringify({ cron }),
+      body: { cron },
     }),
 
   // Routes
@@ -1582,78 +1604,78 @@ export const api = {
   queryRouteGraphWorkspaceConnectionTargets: (
     options: RouteGraphWorkspaceConnectionTargetFilters & { revision: string; operations: RouteGraphWorkspaceOperationsCommand['operations'] },
     transport: Pick<RequestOptions, "signal"> = {},
-  ) => request<RouteGraphWorkspaceConnectionTargetPage>(
+  ) => requestJson<RouteGraphWorkspaceConnectionTargetPage>(
     `/api/route-graph/workspace/connection-targets/query${buildQueryString({ cursor: options.cursor, limit: options.limit, q: options.query })}`,
     {
       ...transport,
       method: "POST",
-      body: JSON.stringify({ revision: options.revision, operations: options.operations, source: options.source, replacingEdgeId: options.replacingEdgeId }),
+      body: { revision: options.revision, operations: options.operations, source: options.source, replacingEdgeId: options.replacingEdgeId },
     },
   ),
   createRouteGraphWorkspaceConnection: (payload: RouteGraphWorkspaceConnectionCreateCommand) =>
-    request<RouteGraphWorkspaceConnectionCreateResponse>("/api/route-graph/workspace/connections", {
+    requestJson<RouteGraphWorkspaceConnectionCreateResponse>("/api/route-graph/workspace/connections", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   draftRouteGraphWorkspaceConnection: (payload: RouteGraphWorkspaceConnectionDraftCommand) =>
-    request<RouteGraphWorkspaceConnectionDraftResponse>("/api/route-graph/workspace/connections/draft", {
+    requestJson<RouteGraphWorkspaceConnectionDraftResponse>("/api/route-graph/workspace/connections/draft", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   getRouteGraphWorkspaceRemovalImpact: (payload: RouteGraphWorkspaceRemovalImpactCommand) =>
-    request<RouteGraphWorkspaceRemovalImpactResponse>(
+    requestJson<RouteGraphWorkspaceRemovalImpactResponse>(
       "/api/route-graph/workspace/removal-impact",
       {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: payload,
       },
     ),
   applyRouteGraphWorkspaceOperations: (payload: RouteGraphWorkspaceOperationsCommand) =>
-    request<RouteGraphWorkspaceMutationResponse>("/api/route-graph/workspace/operations", {
+    requestJson<RouteGraphWorkspaceMutationResponse>("/api/route-graph/workspace/operations", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   getRouteGraphWorkspaceOperationBatches: (options: { limit?: number } = {}) =>
     request<RouteGraphWorkspaceOperationBatch[]>(
       `/api/route-graph/workspace/operation-batches${buildQueryString(options)}`,
     ),
   createRouteGraphWorkspaceNode: (payload: RouteGraphWorkspaceNodeCreateCommand) =>
-    request<RouteGraphWorkspaceNodeCreateResponse>("/api/route-graph/workspace/nodes", {
+    requestJson<RouteGraphWorkspaceNodeCreateResponse>("/api/route-graph/workspace/nodes", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   reserveRouteGraphWorkspaceNode: (payload: RouteGraphWorkspaceNodeReservationCommand) =>
-    request<RouteGraphWorkspaceNodeReservationResponse>("/api/route-graph/workspace/nodes/reserve", {
+    requestJson<RouteGraphWorkspaceNodeReservationResponse>("/api/route-graph/workspace/nodes/reserve", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   createRouteGraphWorkspaceMacro: (payload: RouteGraphWorkspaceMacroCreateCommand) =>
-    request<RouteGraphWorkspaceMacroCreateResponse>("/api/route-graph/workspace/macros", {
+    requestJson<RouteGraphWorkspaceMacroCreateResponse>("/api/route-graph/workspace/macros", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   replayRouteGraphWorkspaceOperationBatch: (
     id: number,
     payload: RouteGraphWorkspaceOperationBatchReplayCommand,
   ) =>
-    request<RouteGraphWorkspaceMutationResponse>(`/api/route-graph/workspace/operation-batches/${id}/replay`, {
+    requestJson<RouteGraphWorkspaceMutationResponse>(`/api/route-graph/workspace/operation-batches/${id}/replay`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   validateRouteGraphWorkspace: (payload: RouteGraphWorkspaceOperationsCommand) =>
-    request<RouteGraphWorkspaceValidationResponse>("/api/route-graph/workspace/validate", {
+    requestJson<RouteGraphWorkspaceValidationResponse>("/api/route-graph/workspace/validate", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
   validateRouteGraph: (graph: RouteGraphAuthoringCommand) =>
-    request<RouteGraphValidationResponse>("/api/route-graph/validate", {
+    requestJson<RouteGraphValidationResponse>("/api/route-graph/validate", {
       method: "POST",
-      body: JSON.stringify(graph),
+      body: graph,
     }),
   saveRouteGraphDraft: (graph: RouteGraphAuthoringCommand) =>
-    request<RouteGraphDraftSaveResponse>("/api/route-graph/draft", {
+    requestJson<RouteGraphDraftSaveResponse>("/api/route-graph/draft", {
       method: "PUT",
-      body: JSON.stringify(graph),
+      body: graph,
     }),
   publishRouteGraphDraft: () =>
     request("/api/route-graph/draft/publish", { method: "POST" }),
@@ -1729,19 +1751,19 @@ export const api = {
     sourceRefs: string[],
     stageId?: string,
   ) =>
-    request(`${routeGroupResourcePath(routeGroupId)}/candidates/batch`, {
+    requestJson(`${routeGroupResourcePath(routeGroupId)}/candidates/batch`, {
       method: "POST",
-      body: JSON.stringify({ sourceRefs, ...(stageId ? { stageId } : {}) }),
+      body: { sourceRefs, ...(stageId ? { stageId } : {}) },
     }),
   addRouteGroup: (data: RouteGroupCreateCommand) =>
-    request("/api/route-groups", {
+    requestJson("/api/route-groups", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateRouteGroup: (id: string, data: RouteGroupUpdateCommand) =>
-    request(routeGroupResourcePath(id), {
+    requestJson(routeGroupResourcePath(id), {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteRouteGroup: (id: string) =>
     request(routeGroupResourcePath(id), { method: "DELETE" }),
@@ -1756,28 +1778,28 @@ export const api = {
     ids: string[];
     action: "enable" | "disable" | "set_internal" | "set_public";
   }) =>
-    request("/api/route-groups/batch", {
+    requestJson("/api/route-groups/batch", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   addRouteGroupCandidate: (
     routeGroupId: string,
     data: RouteGroupCandidateCreateCommand,
   ) =>
-    request(`${routeGroupResourcePath(routeGroupId)}/candidates`, {
+    requestJson(`${routeGroupResourcePath(routeGroupId)}/candidates`, {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateRouteGroupMember: (
     routeGroupId: string,
     candidateId: string,
     data: RouteGroupCandidateUpdateCommand,
   ) =>
-    request(
+    requestJson(
       `${routeGroupResourcePath(routeGroupId)}/candidates/${encodeURIComponent(candidateId)}`,
       {
         method: "PUT",
-        body: JSON.stringify(data),
+        body: data,
       },
     ),
   moveRouteGroupCandidatesToFallbackStages: (
@@ -1785,13 +1807,13 @@ export const api = {
     updates: Array<{ id: string; stageId: string; sortOrder?: number }>,
     manuallyAdjustedCandidateIds: string[],
   ) =>
-    request<{
+    requestJson<{
       success: true;
       candidates: RouteGroupManagementFallbackStage["candidates"];
       stages: RouteGroupManagementFallbackStage[];
     }>(`${routeGroupResourcePath(routeGroupId)}/candidates/stages`, {
       method: "PUT",
-      body: JSON.stringify({ updates, manuallyAdjustedCandidateIds }),
+      body: { updates, manuallyAdjustedCandidateIds },
     }),
   restoreAutomaticRouteGroupCandidate: (
     routeGroupId: string,
@@ -1822,30 +1844,30 @@ export const api = {
       placement?: { afterStageId: string; candidateId: string };
     },
   ) =>
-    request<{
+    requestJson<{
       success: true;
       stage: RouteGroupManagementFallbackStage;
       stages: RouteGroupManagementFallbackStage[];
     }>(`${routeGroupResourcePath(routeGroupId)}/stages`, {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateRouteGroupFallbackStage: (
     routeGroupId: string,
     stageId: string,
     data: unknown,
   ) =>
-    request(
+    requestJson(
       `${routeGroupResourcePath(routeGroupId)}/stages/${encodeURIComponent(stageId)}`,
       {
         method: "PUT",
-        body: JSON.stringify(data),
+        body: data,
       },
     ),
   reorderRouteGroupFallbackStages: (routeGroupId: string, stageIds: string[]) =>
-    request(`${routeGroupResourcePath(routeGroupId)}/stages/order`, {
+    requestJson(`${routeGroupResourcePath(routeGroupId)}/stages/order`, {
       method: "PUT",
-      body: JSON.stringify({ stageIds }),
+      body: { stageIds },
     }),
   deleteRouteGroupFallbackStage: (routeGroupId: string, stageId: string) =>
     request(
@@ -1858,9 +1880,9 @@ export const api = {
       { method: "DELETE" },
     ),
   rebuildRoutes: (refreshModels = true, wait = false) =>
-    request("/api/route-groups/rebuild", {
+    requestJson("/api/route-groups/rebuild", {
       method: "POST",
-      body: JSON.stringify({ refreshModels, ...(wait ? { wait: true } : {}) }),
+      body: { refreshModels, ...(wait ? { wait: true } : {}) },
       timeoutMs: wait ? 150_000 : 30_000,
     }),
   getRouteGraphEndpointPage: (options: {
@@ -1980,9 +2002,9 @@ export const api = {
 
   // Search
   search: (query: string) =>
-    request("/api/search", {
+    requestJson("/api/search", {
       method: "POST",
-      body: JSON.stringify({ query, limit: 20 }),
+      body: { query, limit: 20 },
     }),
 
   // OAuth
@@ -1997,20 +2019,20 @@ export const api = {
       useSystemProxy?: boolean;
     },
   ) =>
-    request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
+    requestJson(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
       method: "POST",
-      body: JSON.stringify(data || {}),
+      body: data || {},
     }) as Promise<OAuthStartResponse>,
   getOAuthSession: (state: string) =>
     request(
       `/api/oauth/sessions/${encodeURIComponent(state)}`,
     ) as Promise<OAuthSessionInfo>,
   submitOAuthManualCallback: (state: string, callbackUrl: string) =>
-    request(
+    requestJson(
       `/api/oauth/sessions/${encodeURIComponent(state)}/manual-callback`,
       {
         method: "POST",
-        body: JSON.stringify({ callbackUrl }),
+        body: { callbackUrl },
       },
     ) as Promise<{ success: true }>,
   getOAuthConnections: (params?: { limit?: number; offset?: number }) =>
@@ -2020,46 +2042,45 @@ export const api = {
   refreshOAuthConnectionQuota: (accountId: number) =>
     request(`/api/oauth/connections/${accountId}/quota/refresh`, {
       method: "POST",
-      body: JSON.stringify({}),
     }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
   refreshOAuthConnectionQuotaBatch: (accountIds: number[]) =>
-    request("/api/oauth/connections/quota/refresh-batch", {
+    requestJson("/api/oauth/connections/quota/refresh-batch", {
       method: "POST",
-      body: JSON.stringify({ accountIds }),
+      body: { accountIds },
     }) as Promise<OAuthQuotaBatchRefreshResponse>,
   updateOAuthConnectionProxy: (
     accountId: number,
     data: { proxyUrl?: string | null; useSystemProxy?: boolean },
   ) =>
-    request(`/api/oauth/connections/${accountId}/proxy`, {
+    requestJson(`/api/oauth/connections/${accountId}/proxy`, {
       method: "PATCH",
-      body: JSON.stringify(data || {}),
+      body: data || {},
     }) as Promise<{ success: true }>,
   rebindOAuthConnection: (
     accountId: number,
     data?: { proxyUrl?: string | null; useSystemProxy?: boolean },
   ) =>
-    request(`/api/oauth/connections/${accountId}/rebind`, {
+    requestJson(`/api/oauth/connections/${accountId}/rebind`, {
       method: "POST",
-      body: JSON.stringify(data || {}),
+      body: data || {},
     }) as Promise<OAuthStartResponse>,
   deleteOAuthConnection: (accountId: number) =>
     request(`/api/oauth/connections/${accountId}`, {
       method: "DELETE",
     }) as Promise<{ success: true }>,
   importOAuthConnections: (data: Record<string, unknown>) =>
-    request("/api/oauth/import", {
+    requestJson("/api/oauth/import", {
       method: "POST",
-      body: JSON.stringify(Array.isArray(data.items) ? data : { data }),
+      body: Array.isArray(data.items) ? data : { data },
     }) as Promise<OAuthImportResponse>,
   createOAuthRouteUnit: (data: {
     accountIds: number[];
     name: string;
     strategy: OAuthRouteUnitStrategy;
   }) =>
-    request("/api/oauth/route-units", {
+    requestJson("/api/oauth/route-units", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }) as Promise<OAuthRouteUnitMutationResponse>,
   deleteOAuthRouteUnit: (routeUnitId: number) =>
     request(`/api/oauth/route-units/${routeUnitId}`, {
@@ -2078,9 +2099,9 @@ export const api = {
       success: true;
     }>,
   applyEventAction: (id: number, data: InboxActionRequest) =>
-    request(`/api/events/${id}/action`, {
+    requestJson(`/api/events/${id}/action`, {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }) as Promise<{ success: true; item: InboxItem }>,
   markAllEventsRead: (params?: string) =>
     request(`/api/events/read-all${params ? "?" + params : ""}`, {
@@ -2099,9 +2120,9 @@ export const api = {
   clearSiteAnnouncements: () =>
     request("/api/site-announcements", { method: "DELETE" }),
   syncSiteAnnouncements: (payload?: { siteId?: number }) =>
-    request("/api/site-announcements/sync", {
+    requestJson("/api/site-announcements/sync", {
       method: "POST",
-      body: JSON.stringify(payload || {}),
+      body: payload || {},
     }),
   getTasks: (limit = 50) =>
     request(
@@ -2112,9 +2133,9 @@ export const api = {
   // Auth management
   getAuthInfo: () => request("/api/settings/auth/info"),
   changeAuthToken: (oldToken: string, newToken: string) =>
-    request("/api/settings/auth/change", {
+    requestJson("/api/settings/auth/change", {
       method: "POST",
-      body: JSON.stringify({ oldToken, newToken }),
+      body: { oldToken, newToken },
     }),
   getRuntimeSettings: () => request("/api/settings/runtime"),
   getRouteRuntimeCacheStatus: () => request("/api/route-runtime/cache") as Promise<{
@@ -2126,34 +2147,33 @@ export const api = {
   refreshRouteRuntimeCache: () => request("/api/route-runtime/cache/refresh", { method: "POST" }),
   getBrandList: () => request("/api/settings/brand-list"),
   updateRuntimeSettings: (data: RuntimeSettingsPayload) =>
-    request("/api/settings/runtime", {
+    requestJson("/api/settings/runtime", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   getUpdateCenterStatus: () => request("/api/update-center/status"),
   saveUpdateCenterConfig: (data: any) =>
-    request("/api/update-center/config", {
+    requestJson("/api/update-center/config", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   checkUpdateCenter: () =>
     request("/api/update-center/check", {
       method: "POST",
-      body: JSON.stringify({}),
     }),
   deployUpdateCenter: (data: {
     source: "github-release" | "docker-hub-tag";
     targetTag: string;
     targetDigest?: string | null;
   }) =>
-    request("/api/update-center/deploy", {
+    requestJson("/api/update-center/deploy", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   rollbackUpdateCenter: (data: { targetRevision: string }) =>
-    request("/api/update-center/rollback", {
+    requestJson("/api/update-center/rollback", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   streamUpdateCenterTaskLogs: (
     taskId: string,
@@ -2168,9 +2188,9 @@ export const api = {
       handlers,
     ),
   testSystemProxy: (data: SystemProxyTestRequest) =>
-    request("/api/settings/system-proxy/test", {
+    requestJson("/api/settings/system-proxy/test", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
       timeoutMs: 20_000,
     }),
   getRuntimeDatabaseConfig: () => request("/api/settings/database/runtime"),
@@ -2179,18 +2199,18 @@ export const api = {
     connectionString: string;
     ssl?: boolean;
   }) =>
-    request("/api/settings/database/runtime", {
+    requestJson("/api/settings/database/runtime", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   testExternalDatabaseConnection: (data: {
     dialect: "sqlite" | "mysql" | "postgres";
     connectionString: string;
     ssl?: boolean;
   }) =>
-    request("/api/settings/database/test-connection", {
+    requestJson("/api/settings/database/test-connection", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   migrateExternalDatabase: (data: {
     dialect: "sqlite" | "mysql" | "postgres";
@@ -2198,9 +2218,9 @@ export const api = {
     overwrite?: boolean;
     ssl?: boolean;
   }) =>
-    request("/api/settings/database/migrate", {
+    requestJson("/api/settings/database/migrate", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
       timeoutMs: 120_000,
     }),
   getDownstreamApiKeys: () => request("/api/downstream-keys"),
@@ -2210,14 +2230,14 @@ export const api = {
       items: Array<{ id: string; modelName: string }>;
     }>("/api/downstream-keys/compiled-plans"),
   createDownstreamApiKey: (data: any) =>
-    request("/api/downstream-keys", {
+    requestJson("/api/downstream-keys", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateDownstreamApiKey: (id: number, data: any) =>
-    request(`/api/downstream-keys/${id}`, {
+    requestJson(`/api/downstream-keys/${id}`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteDownstreamApiKey: (id: number) =>
     request(`/api/downstream-keys/${id}`, {
@@ -2231,9 +2251,9 @@ export const api = {
     tagOperation?: "keep" | "append";
     tags?: string[];
   }) =>
-    request("/api/downstream-keys/batch", {
+    requestJson("/api/downstream-keys/batch", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   resetDownstreamApiKeyUsage: (id: number) =>
     request(`/api/downstream-keys/${id}/reset-usage`, {
@@ -2256,9 +2276,9 @@ export const api = {
   exportBackup: (type: "all" | "accounts" | "preferences" = "all") =>
     request(`/api/settings/backup/export?type=${encodeURIComponent(type)}`),
   importBackup: (data: any) =>
-    request("/api/settings/backup/import", {
+    requestJson("/api/settings/backup/import", {
       method: "POST",
-      body: JSON.stringify({ data }),
+      body: { data },
     }),
   getBackupWebdavConfig: () => request("/api/settings/backup/webdav"),
   saveBackupWebdavConfig: (data: {
@@ -2271,20 +2291,19 @@ export const api = {
     autoSyncEnabled: boolean;
     autoSyncCron: string;
   }) =>
-    request("/api/settings/backup/webdav", {
+    requestJson("/api/settings/backup/webdav", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   exportBackupToWebdav: (type?: "all" | "accounts" | "preferences") =>
-    request("/api/settings/backup/webdav/export", {
+    requestJson("/api/settings/backup/webdav/export", {
       method: "POST",
-      body: JSON.stringify(type ? { type } : {}),
+      body: type ? { type } : {},
       timeoutMs: 60_000,
     }),
   importBackupFromWebdav: () =>
     request("/api/settings/backup/webdav/import", {
       method: "POST",
-      body: JSON.stringify({}),
       timeoutMs: 60_000,
     }),
   clearRuntimeCache: () =>
@@ -2299,9 +2318,9 @@ export const api = {
   // Monitor embed
   getMonitorConfig: () => request("/api/monitor/config"),
   updateMonitorConfig: (data: { ldohCookie?: string | null }) =>
-    request("/api/monitor/config", {
+    requestJson("/api/monitor/config", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   initMonitorSession: () => request("/api/monitor/session", { method: "POST" }),
 
@@ -2353,16 +2372,16 @@ export const api = {
     }
     const suffix = query.toString();
     if (options.request || options.pricingUsage) {
-      return request(
+      return requestJson(
         `/api/models/${encodeURIComponent(model)}/route-flow${suffix ? `?${suffix}` : ""}`,
         {
           method: "POST",
-          body: JSON.stringify({
+          body: {
             ...(options.request ? { request: options.request } : {}),
             ...(options.pricingUsage
               ? { pricingUsage: options.pricingUsage }
               : {}),
-          }),
+          },
           timeoutMs: 45_000,
         },
       );
@@ -2415,23 +2434,23 @@ export const api = {
   getPricingReferenceConfig: () =>
     request<PricingReferenceConfig>("/api/pricing/reference-config"),
   updatePricingReferenceConfig: (data: PricingReferenceConfig) =>
-    request<PricingReferenceConfig>("/api/pricing/reference-config", {
+    requestJson<PricingReferenceConfig>("/api/pricing/reference-config", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   getPricingReferenceCatalog: () =>
     request<PricingReferenceCatalog>("/api/pricing/reference-catalog"),
   updatePricingReferenceCatalog: (data: PricingReferenceCatalogPayload) =>
-    request<PricingReferenceCatalog>("/api/pricing/reference-catalog", {
+    requestJson<PricingReferenceCatalog>("/api/pricing/reference-catalog", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   importPricingReferenceCatalog: (data: unknown, replace = false) =>
-    request<PricingReferenceCatalogImportResult>(
+    requestJson<PricingReferenceCatalogImportResult>(
       "/api/pricing/reference-catalog/import",
       {
         method: "POST",
-        body: JSON.stringify({ data, replace }),
+        body: { data, replace },
       },
     ),
   syncPricingReferenceCatalog: () =>
@@ -2439,22 +2458,20 @@ export const api = {
       "/api/pricing/reference-catalog/sync",
       {
         method: "POST",
-        body: JSON.stringify({}),
       },
     ),
   getPlatformPricingConfig: () =>
     request<PlatformPricingConfig>("/api/pricing/platform-config"),
   updatePlatformPricingConfig: (data: PlatformPricingConfig) =>
-    request<PlatformPricingConfig>("/api/pricing/platform-config", {
+    requestJson<PlatformPricingConfig>("/api/pricing/platform-config", {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: data,
     }),
   refreshProviderPricingCatalog: () =>
     request<ProviderPricingCatalogRefreshTask>(
       "/api/pricing/provider-catalog/refresh",
       {
         method: "POST",
-        body: JSON.stringify({}),
       },
     ),
   listWalletAcquisitionProfiles: (params?: {
@@ -2467,17 +2484,17 @@ export const api = {
       `/api/pricing/wallet-acquisition${buildQueryString(params)}`,
     ),
   createWalletAcquisitionProfile: (data: WalletAcquisitionProfilePayload) =>
-    request<WalletAcquisitionProfile>("/api/pricing/wallet-acquisition", {
+    requestJson<WalletAcquisitionProfile>("/api/pricing/wallet-acquisition", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateWalletAcquisitionProfile: (
     id: number,
     data: Partial<WalletAcquisitionProfilePayload>,
   ) =>
-    request<WalletAcquisitionProfile>(`/api/pricing/wallet-acquisition/${id}`, {
+    requestJson<WalletAcquisitionProfile>(`/api/pricing/wallet-acquisition/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteWalletAcquisitionProfile: (id: number) =>
     request<{ success: boolean }>(`/api/pricing/wallet-acquisition/${id}`, {
@@ -2491,14 +2508,14 @@ export const api = {
       `/api/pricing/fx-rates${buildQueryString(params)}`,
     ),
   createFxRateSnapshot: (data: FxRateSnapshotPayload) =>
-    request<FxRateSnapshot>("/api/pricing/fx-rates", {
+    requestJson<FxRateSnapshot>("/api/pricing/fx-rates", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateFxRateSnapshot: (id: number, data: Partial<FxRateSnapshotPayload>) =>
-    request<FxRateSnapshot>(`/api/pricing/fx-rates/${id}`, {
+    requestJson<FxRateSnapshot>(`/api/pricing/fx-rates/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteFxRateSnapshot: (id: number) =>
     request<{ success: boolean }>(`/api/pricing/fx-rates/${id}`, {
@@ -2515,17 +2532,17 @@ export const api = {
       `/api/pricing/upstream-cost${buildQueryString(params)}`,
     ),
   createUpstreamCostPricing: (data: UpstreamCostPricingPayload) =>
-    request<UpstreamCostPricingRecord>("/api/pricing/upstream-cost", {
+    requestJson<UpstreamCostPricingRecord>("/api/pricing/upstream-cost", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
   updateUpstreamCostPricing: (
     id: number,
     data: Partial<UpstreamCostPricingPayload>,
   ) =>
-    request<UpstreamCostPricingRecord>(`/api/pricing/upstream-cost/${id}`, {
+    requestJson<UpstreamCostPricingRecord>(`/api/pricing/upstream-cost/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(data),
+      body: data,
     }),
   deleteUpstreamCostPricing: (id: number) =>
     request<{ success: boolean }>(`/api/pricing/upstream-cost/${id}`, {
@@ -2552,20 +2569,20 @@ export const api = {
     usage?: Record<string, unknown>;
     context?: Record<string, unknown>;
   }) =>
-    request<{
+    requestJson<{
       pricing: UpstreamCostPricingRecord | null;
       matchedScope?: UpstreamCostMatchedScope;
       priority?: number;
       evaluation?: Record<string, unknown> | null;
     }>("/api/pricing/upstream-cost/preview", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
     }),
 
   startProxyTestJob: (data: ProxyTestRequestEnvelope) =>
-    request<ModelTesterProxyJobCreated>("/api/test/proxy/jobs", {
+    requestJson<ModelTesterProxyJobCreated>("/api/test/proxy/jobs", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: data,
       timeoutMs: resolveProxyTestTimeoutMs(data),
     }),
   getProxyTestJob: (jobId: string) =>

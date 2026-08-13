@@ -46,7 +46,7 @@ describe("api proxy test timeout handling", () => {
     persistAuthSession(globalThis.localStorage as Storage, "token-1");
   });
 
-  it("sends a JSON body when triggering all check-ins", async () => {
+  it("does not declare JSON content for a bodyless POST command", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, queued: true }), {
         status: 202,
@@ -58,11 +58,12 @@ describe("api proxy test timeout handling", () => {
     await api.triggerCheckinAll();
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init).toMatchObject({ method: "POST", body: "{}" });
-    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(init).toMatchObject({ method: "POST" });
+    expect(init.body).toBeUndefined();
+    expect(new Headers(init.headers).has("content-type")).toBe(false);
   });
 
-  it("uses JSON content type for POST commands without a body", async () => {
+  it("does not declare JSON content when syncing account tokens without a body", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -71,15 +72,15 @@ describe("api proxy test timeout handling", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.refreshBalance(42);
+    await api.syncAccountTokens(42);
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init).toMatchObject({ method: "POST" });
     expect(init.body).toBeUndefined();
-    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(new Headers(init.headers).has("content-type")).toBe(false);
   });
 
-  it("normalizes an invalid explicit content type for JSON request bodies", async () => {
+  it("serializes explicit JSON bodies and declares their content type", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -96,6 +97,12 @@ describe("api proxy test timeout handling", () => {
     });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(JSON.stringify({
+      method: "POST",
+      path: "/v1/chat/completions",
+      requestKind: "json",
+      jsonBody: { model: "test" },
+    }));
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 

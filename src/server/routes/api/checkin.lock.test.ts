@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const checkinAllMock = vi.fn();
@@ -108,5 +109,38 @@ describe('POST /api/checkin/trigger background task dedupe', () => {
       intervalHours: undefined,
     });
     await app.close();
+  });
+
+  it('accepts bodyless commands and JSON requests over an actual HTTP connection', async () => {
+    const { checkinRoutes } = await import('./checkin.js');
+    const schedulerModule = await import('../../services/checkinScheduler.js');
+    const app = Fastify();
+    await app.register(checkinRoutes);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+
+    try {
+      const address = app.server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      checkinAllMock.mockResolvedValue([]);
+
+      const commandResponse = await fetch(`${baseUrl}/api/checkin/trigger`, {
+        method: 'POST',
+      });
+      expect(commandResponse.status).toBe(202);
+
+      const jsonResponse = await fetch(`${baseUrl}/api/checkin/schedule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cron: '0 9 * * *' }),
+      });
+      expect(jsonResponse.status).toBe(200);
+      expect((schedulerModule as any).updateCheckinSchedule).toHaveBeenCalledWith({
+        mode: 'cron',
+        cronExpr: '0 9 * * *',
+        intervalHours: undefined,
+      });
+    } finally {
+      await app.close();
+    }
   });
 });
