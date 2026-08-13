@@ -9,6 +9,15 @@ describe('buildConfig', () => {
     expect(config.listenHost).toBe('0.0.0.0');
     expect(config.port).toBe(4000);
     expect(config.dataDir).toBe('./data');
+    expect(config.responsesUpstreamTransportMode).toBe('auto');
+  });
+
+  it('allows Responses upstream transport to follow the downstream request', () => {
+    const config = buildConfig({
+      RESPONSES_UPSTREAM_TRANSPORT_MODE: 'follow_downstream',
+    });
+
+    expect(config.responsesUpstreamTransportMode).toBe('follow_downstream');
   });
 
   it('aligns desktop deployments with server deployments for listen host', () => {

@@ -57,6 +57,7 @@ describe('Settings proxy transport', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       codexUpstreamWebsocketEnabled: false,
+      responsesUpstreamTransportMode: 'auto',
       responsesCompactFallbackToResponsesEnabled: false,
       proxySessionTargetConcurrencyLimit: 4,
       proxySessionTargetQueueWaitMs: 3200,
@@ -74,6 +75,7 @@ describe('Settings proxy transport', () => {
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
       codexUpstreamWebsocketEnabled: true,
+      responsesUpstreamTransportMode: 'follow_downstream',
       responsesCompactFallbackToResponsesEnabled: true,
       proxySessionTargetConcurrencyLimit: 6,
       proxySessionTargetQueueWaitMs: 4200,
@@ -117,6 +119,10 @@ describe('Settings proxy transport', () => {
         && (typeof node.props.onClick === 'function' || typeof node.props.onCheckedChange === 'function')
       ));
       expect(compactFallbackToggle.props['aria-checked'] ?? compactFallbackToggle.props.checked).toBe(false);
+      const transportSelect = root.root.find((node) => (
+        node.props.value === 'auto'
+        && typeof node.props.onChange === 'function'
+      ));
 
       const concurrencyInput = root.root.find((node) => (
         node.type === 'input'
@@ -134,6 +140,7 @@ describe('Settings proxy transport', () => {
         else websocketToggle.props.onCheckedChange(true);
         if (typeof compactFallbackToggle.props.onClick === 'function') compactFallbackToggle.props.onClick();
         else compactFallbackToggle.props.onCheckedChange(true);
+        transportSelect.props.onChange('follow_downstream');
         concurrencyInput.props.onChange({ target: { value: '6' } });
         queueWaitInput.props.onChange({ target: { value: '4200' } });
       });
@@ -153,6 +160,7 @@ describe('Settings proxy transport', () => {
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
         codexUpstreamWebsocketEnabled: true,
+        responsesUpstreamTransportMode: 'follow_downstream',
         responsesCompactFallbackToResponsesEnabled: true,
         proxySessionTargetConcurrencyLimit: 6,
         proxySessionTargetQueueWaitMs: 4200,

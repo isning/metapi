@@ -539,6 +539,7 @@ export type RuntimeSettingsPayload = {
   systemProxyUrl?: string;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
+  responsesUpstreamTransportMode?: "auto" | "follow_downstream";
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionTargetConcurrencyLimit?: number;

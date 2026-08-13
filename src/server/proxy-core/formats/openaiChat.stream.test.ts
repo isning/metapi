@@ -2209,7 +2209,7 @@ describe('chat proxy stream behavior', () => {
           content: [{ type: 'input_text', text: 'hello' }],
         },
       ],
-      stream: false,
+      stream: true,
     });
   });
 

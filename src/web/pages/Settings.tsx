@@ -62,6 +62,7 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
 const SETTINGS_NAV_SECTION_IDS = ['settings-runtime', 'settings-routing', 'settings-access', 'settings-maintenance'] as const;
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
+type ResponsesUpstreamTransportMode = 'auto' | 'follow_downstream';
 type SettingsNavSectionId = typeof SETTINGS_NAV_SECTION_IDS[number];
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
 
@@ -76,6 +77,7 @@ type RuntimeSettings = {
   logCleanupRetentionDays: number;
   modelAvailabilityProbeEnabled: boolean;
   codexUpstreamWebsocketEnabled: boolean;
+  responsesUpstreamTransportMode: ResponsesUpstreamTransportMode;
   responsesCompactFallbackToResponsesEnabled: boolean;
   disableCrossProtocolFallback: boolean;
   proxySessionTargetConcurrencyLimit: number;
@@ -235,6 +237,7 @@ export default function Settings() {
     logCleanupRetentionDays: 30,
     modelAvailabilityProbeEnabled: false,
     codexUpstreamWebsocketEnabled: false,
+    responsesUpstreamTransportMode: 'auto',
     responsesCompactFallbackToResponsesEnabled: false,
     disableCrossProtocolFallback: false,
     proxySessionTargetConcurrencyLimit: 2,
@@ -388,6 +391,9 @@ export default function Settings() {
           : 30,
         modelAvailabilityProbeEnabled: !!runtimeInfo.modelAvailabilityProbeEnabled,
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
+        responsesUpstreamTransportMode: runtimeInfo.responsesUpstreamTransportMode === 'follow_downstream'
+          ? 'follow_downstream'
+          : 'auto',
         responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
         proxySessionTargetConcurrencyLimit: Number(runtimeInfo.proxySessionTargetConcurrencyLimit) >= 0
@@ -623,6 +629,7 @@ export default function Settings() {
     try {
       const res = await api.updateRuntimeSettings({
         codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
+        responsesUpstreamTransportMode: runtime.responsesUpstreamTransportMode,
         responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
         proxySessionTargetConcurrencyLimit: runtime.proxySessionTargetConcurrencyLimit,
         proxySessionTargetQueueWaitMs: runtime.proxySessionTargetQueueWaitMs,
@@ -632,6 +639,11 @@ export default function Settings() {
         codexUpstreamWebsocketEnabled: typeof res?.codexUpstreamWebsocketEnabled === 'boolean'
           ? res.codexUpstreamWebsocketEnabled
           : prev.codexUpstreamWebsocketEnabled,
+        responsesUpstreamTransportMode: res?.responsesUpstreamTransportMode === 'follow_downstream'
+          ? 'follow_downstream'
+          : res?.responsesUpstreamTransportMode === 'auto'
+            ? 'auto'
+            : prev.responsesUpstreamTransportMode,
         responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
           ? res.responsesCompactFallbackToResponsesEnabled
           : prev.responsesCompactFallbackToResponsesEnabled,
@@ -1330,6 +1342,23 @@ export default function Settings() {
             checked={runtime.codexUpstreamWebsocketEnabled}
             onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: checked }))}
           />
+          <SettingsField
+            label={tr('pages.settings.responsesUpstreamTransportMode')}
+            hint={tr('pages.settings.responsesUpstreamTransportModeDescription')}
+          >
+            <ModernSelect
+              value={runtime.responsesUpstreamTransportMode}
+              onChange={(value) => setRuntime((prev) => ({
+                ...prev,
+                responsesUpstreamTransportMode: value as ResponsesUpstreamTransportMode,
+              }))}
+              options={[
+                { value: 'auto', label: tr('pages.settings.responsesUpstreamTransportAuto') },
+                { value: 'follow_downstream', label: tr('pages.settings.responsesUpstreamTransportFollowDownstream') },
+              ]}
+              placeholder={tr('pages.settings.responsesUpstreamTransportMode')}
+            />
+          </SettingsField>
           <SettingsToggleRow
             title={tr('pages.settings.compactUnsupportedResponses')}
             description={tr('pages.settings.compactUnsupportedFallbackDescription')}

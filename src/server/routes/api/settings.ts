@@ -61,6 +61,7 @@ interface RuntimeSettingsBody {
   systemProxyUrl?: string;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
+  responsesUpstreamTransportMode?: 'auto' | 'follow_downstream';
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionTargetConcurrencyLimit?: number;
@@ -677,6 +678,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.codexUpstreamWebsocketEnabled = value;
       return;
     }
+    case 'responses_upstream_transport_mode': {
+      if (value !== 'auto' && value !== 'follow_downstream') return;
+      config.responsesUpstreamTransportMode = value;
+      return;
+    }
     case 'responses_compact_fallback_to_responses_enabled': {
       if (typeof value !== 'boolean') return;
       config.responsesCompactFallbackToResponsesEnabled = value;
@@ -954,6 +960,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     modelAvailabilityProbeEnabled: config.modelAvailabilityProbeEnabled,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    responsesUpstreamTransportMode: config.responsesUpstreamTransportMode,
     responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionTargetConcurrencyLimit: config.proxySessionTargetConcurrencyLimit,
@@ -1407,6 +1414,18 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.codexUpstreamWebsocketEnabled = nextValue;
       upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
+    }
+
+    if (body.responsesUpstreamTransportMode !== undefined) {
+      const nextMode = body.responsesUpstreamTransportMode;
+      if (nextMode !== 'auto' && nextMode !== 'follow_downstream') {
+        return reply.code(400).send({ success: false, message: 'Responses 上游传输模式无效' });
+      }
+      if (nextMode !== config.responsesUpstreamTransportMode) {
+        changedLabels.push('Responses 上游传输模式');
+      }
+      config.responsesUpstreamTransportMode = nextMode;
+      upsertSetting('responses_upstream_transport_mode', nextMode);
     }
 
     if (body.responsesCompactFallbackToResponsesEnabled !== undefined) {

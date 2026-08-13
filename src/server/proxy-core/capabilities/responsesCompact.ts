@@ -11,15 +11,6 @@ function shouldForceCompactResponsesJsonAccept(sitePlatform?: string): boolean {
   return shouldStripCompactResponsesStore(sitePlatform);
 }
 
-export function shouldForceResponsesUpstreamStream(input: {
-  sitePlatform?: string;
-  isCompactRequest?: boolean;
-}): boolean {
-  if (input.isCompactRequest) return false;
-  const sitePlatform = asTrimmedString(input.sitePlatform).toLowerCase();
-  return sitePlatform === 'codex' || sitePlatform === 'sub2api';
-}
-
 export function sanitizeCompactResponsesRequestBody(
   body: Record<string, unknown>,
   options?: {

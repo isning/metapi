@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ensureCompactResponsesJsonAcceptHeader,
   sanitizeCompactResponsesRequestBody,
-  shouldForceResponsesUpstreamStream,
 } from './responsesCompact.js';
 
 describe('sanitizeCompactResponsesRequestBody', () => {
@@ -45,30 +44,6 @@ describe('sanitizeCompactResponsesRequestBody', () => {
       store: false,
       input: 'hello',
     });
-  });
-});
-
-describe('shouldForceResponsesUpstreamStream', () => {
-  it('forces non-compact responses streaming for codex and sub2api', () => {
-    expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'codex',
-      isCompactRequest: false,
-    })).toBe(true);
-    expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'sub2api',
-      isCompactRequest: false,
-    })).toBe(true);
-  });
-
-  it('does not force compact or unrelated platforms', () => {
-    expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'codex',
-      isCompactRequest: true,
-    })).toBe(false);
-    expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'openai',
-      isCompactRequest: false,
-    })).toBe(false);
   });
 });
 

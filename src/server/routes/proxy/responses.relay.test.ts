@@ -16,25 +16,32 @@ vi.mock('undici', async () => {
 
 describe('/v1/responses relay with scenario upstreams', () => {
   let harness: ProxyRelayHarness;
+  let runtimeConfig: typeof import('../../config.js').config;
+  let originalResponsesUpstreamTransportMode: typeof runtimeConfig.responsesUpstreamTransportMode;
   let cacheAffinity: typeof import('../../services/cacheAffinityObservationService.js');
   let downstreamContext: typeof import('../../proxy-core/downstreamClientContext.js');
 
   beforeAll(async () => {
     harness = await createProxyRelayHarness('metapi-responses-relay-');
+    runtimeConfig = (await import('../../config.js')).config;
+    originalResponsesUpstreamTransportMode = runtimeConfig.responsesUpstreamTransportMode;
     cacheAffinity = await import('../../services/cacheAffinityObservationService.js');
     downstreamContext = await import('../../proxy-core/downstreamClientContext.js');
   });
 
   beforeEach(async () => {
+    runtimeConfig.responsesUpstreamTransportMode = 'auto';
     cacheAffinity.resetCacheAffinityObservationsForTest();
     await harness.resetData();
   });
 
   afterAll(async () => {
+    runtimeConfig.responsesUpstreamTransportMode = originalResponsesUpstreamTransportMode;
     await harness?.close();
   });
 
-  it('relays non-stream responses requests to upstream /v1/responses and records usage', async () => {
+  it('follows the downstream non-stream mode when configured and records usage', async () => {
+    runtimeConfig.responsesUpstreamTransportMode = 'follow_downstream';
     const { managedKey } = await harness.seedRoute({ model: 'responses-relay-model' });
     harness.upstream.add({
       method: 'POST',
@@ -109,6 +116,7 @@ describe('/v1/responses relay with scenario upstreams', () => {
       instructions: 'Be concise.',
       stream: false,
     });
+    expect(upstreamCall?.headers.get('accept')).not.toBe('text/event-stream');
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
     expect(logs).toEqual([
@@ -276,6 +284,12 @@ describe('/v1/responses relay with scenario upstreams', () => {
           ],
         }),
       ],
+    });
+    const upstreamCall = harness.upstream.calls.find((call) => call.url.pathname === '/v1/responses');
+    expect(upstreamCall?.headers.get('accept')).toBe('text/event-stream');
+    expect(upstreamCall?.json).toMatchObject({
+      model: 'responses-sse-model',
+      stream: true,
     });
   });
 

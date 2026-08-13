@@ -63,6 +63,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
   }
 
+  const responsesUpstreamTransportMode = parseSettingFromMap<string>(settingsMap, 'responses_upstream_transport_mode');
+  if (responsesUpstreamTransportMode === 'auto' || responsesUpstreamTransportMode === 'follow_downstream') {
+    config.responsesUpstreamTransportMode = responsesUpstreamTransportMode;
+  }
+
   const responsesCompactFallbackToResponsesEnabled = parseSettingFromMap<boolean>(settingsMap, 'responses_compact_fallback_to_responses_enabled');
   if (typeof responsesCompactFallbackToResponsesEnabled === 'boolean') {
     config.responsesCompactFallbackToResponsesEnabled = responsesCompactFallbackToResponsesEnabled;

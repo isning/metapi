@@ -35,11 +35,11 @@ import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import { buildUpstreamUrl, type UpstreamEndpoint } from './upstreamRequest.js';
 import {
-  shouldForceResponsesUpstreamStream,
   sanitizeCompactResponsesRequestBody,
   ensureCompactResponsesJsonAcceptHeader,
   shouldFallbackCompactResponsesToResponses,
 } from '../capabilities/responsesCompact.js';
+import { shouldForceResponsesUpstreamStream } from '../capabilities/responsesTransport.js';
 import {
   looksLikeResponsesSseText,
   collectResponsesFinalPayloadFromSseText,
@@ -529,6 +529,7 @@ export async function handleGenericSurfaceRequest(
       const isCompactRequest = downstreamPath.endsWith('/compact');
       const forceResponsesUpstreamStream = shouldForceResponsesUpstreamStream({
         sitePlatform: selected.site.platform,
+        transportMode: config.responsesUpstreamTransportMode,
         isCompactRequest,
       });
 
@@ -919,6 +920,7 @@ export async function handleGenericSurfaceRequest(
             const normalizedSitePlatform = String(selected.site.platform || '').trim().toLowerCase();
             const recoveredUpstreamStream = shouldForceResponsesUpstreamStream({
               sitePlatform: selected.site.platform,
+              transportMode: config.responsesUpstreamTransportMode,
               isCompactRequest: false,
             });
             const recoveredHeaders = { ...ctx.request.headers } as Record<string, string>;
@@ -961,7 +963,11 @@ export async function handleGenericSurfaceRequest(
         return executeEndpointFlow({
           siteUrl: siteApiBaseUrl,
           disableCrossProtocolFallback: endpointFallbackDisabled,
-          firstByteTimeoutMs: Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000)),
+          firstByteTimeoutMs: (upstreamRequest) => (
+            isStream || (forceResponsesUpstreamStream && upstreamRequest.endpoint === 'responses')
+              ? Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000))
+              : 0
+          ),
           endpointCandidates: plannedCandidates,
           apiAttempts: plannedAttempts,
           buildRequest: (endpoint, _endpointIndex, apiAttempt) => buildEndpointRequest(endpoint as CompatibilityEndpoint, apiAttempt),

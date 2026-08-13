@@ -134,6 +134,7 @@ describe('settings and auth events', () => {
       url: '/api/settings/runtime',
       payload: {
         codexUpstreamWebsocketEnabled: true,
+        responsesUpstreamTransportMode: 'follow_downstream',
         proxySessionTargetConcurrencyLimit: 6,
         proxySessionTargetQueueWaitMs: 4200,
       },
@@ -142,20 +143,25 @@ describe('settings and auth events', () => {
     expect(updateResponse.statusCode).toBe(200);
     const updated = updateResponse.json() as {
       codexUpstreamWebsocketEnabled?: boolean;
+      responsesUpstreamTransportMode?: string;
       proxySessionTargetConcurrencyLimit?: number;
       proxySessionTargetQueueWaitMs?: number;
     };
     expect(updated.codexUpstreamWebsocketEnabled).toBe(true);
+    expect(updated.responsesUpstreamTransportMode).toBe('follow_downstream');
     expect(updated.proxySessionTargetConcurrencyLimit).toBe(6);
     expect(updated.proxySessionTargetQueueWaitMs).toBe(4200);
     expect(config.codexUpstreamWebsocketEnabled).toBe(true);
+    expect(config.responsesUpstreamTransportMode).toBe('follow_downstream');
     expect(config.proxySessionTargetConcurrencyLimit).toBe(6);
     expect(config.proxySessionTargetQueueWaitMs).toBe(4200);
 
     const savedWebsocket = await db.select().from(schema.settings).where(eq(schema.settings.key, 'codex_upstream_websocket_enabled')).get();
+    const savedResponsesTransport = await db.select().from(schema.settings).where(eq(schema.settings.key, 'responses_upstream_transport_mode')).get();
     const savedConcurrency = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_target_concurrency_limit')).get();
     const savedQueueWait = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_target_queue_wait_ms')).get();
     expect(savedWebsocket?.value).toBe(JSON.stringify(true));
+    expect(savedResponsesTransport?.value).toBe(JSON.stringify('follow_downstream'));
     expect(savedConcurrency?.value).toBe(JSON.stringify(6));
     expect(savedQueueWait?.value).toBe(JSON.stringify(4200));
   });

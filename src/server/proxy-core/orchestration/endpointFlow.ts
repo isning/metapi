@@ -79,7 +79,7 @@ export type ExecuteEndpointFlowInput = {
     targetUrl: string,
     signal?: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof fetch>>>;
-  firstByteTimeoutMs?: number;
+  firstByteTimeoutMs?: number | ((request: BuiltEndpointRequest) => number);
   tryRecover?: (ctx: EndpointAttemptContext) => Promise<EndpointRecoverResult>;
   shouldDowngrade?: (ctx: EndpointAttemptContext) => boolean;
   shouldAbortRemainingEndpoints?: (ctx: EndpointAttemptContext & { errText: string }) => boolean;
@@ -151,6 +151,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         : defaultTarget);
 
     const attemptStartedAtMs = Date.now();
+    const firstByteTimeoutMs = typeof input.firstByteTimeoutMs === 'function'
+      ? input.firstByteTimeoutMs(request)
+      : input.firstByteTimeoutMs;
     let response: Awaited<ReturnType<typeof fetch>>;
     try {
       response = await fetchWithObservedFirstByte(
@@ -165,7 +168,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
             }))
         ),
         {
-          firstByteTimeoutMs: input.firstByteTimeoutMs,
+          firstByteTimeoutMs,
           startedAtMs: attemptStartedAtMs,
         },
       );

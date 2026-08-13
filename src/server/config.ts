@@ -159,6 +159,9 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxySessionTargetLeaseTtlMs: Math.max(5_000, Math.trunc(parseNumber(preferredEnv(env, 'PROXY_SESSION_TARGET_LEASE_TTL_MS', 'PROXY_SESSION_CHANNEL_LEASE_TTL_MS'), 90_000))),
     proxySessionTargetLeaseKeepaliveMs: Math.max(1_000, Math.trunc(parseNumber(preferredEnv(env, 'PROXY_SESSION_TARGET_LEASE_KEEPALIVE_MS', 'PROXY_SESSION_CHANNEL_LEASE_KEEPALIVE_MS'), 15_000))),
     codexUpstreamWebsocketEnabled: parseBoolean(env.CODEX_UPSTREAM_WEBSOCKET_ENABLED, false),
+    responsesUpstreamTransportMode: env.RESPONSES_UPSTREAM_TRANSPORT_MODE === 'follow_downstream'
+      ? 'follow_downstream' as const
+      : 'auto' as const,
     responsesCompactFallbackToResponsesEnabled: parseBoolean(env.RESPONSES_COMPACT_FALLBACK_TO_RESPONSES_ENABLED, false),
     disableCrossProtocolFallback: parseBoolean(env.DISABLE_CROSS_PROTOCOL_FALLBACK, false),
     proxyDebugTraceEnabled: parseBoolean(env.PROXY_DEBUG_TRACE_ENABLED, false),

@@ -116,4 +116,36 @@ describe('executeEndpointFlow first-byte timeout', () => {
     }
     expect(attemptedPaths).toEqual(['/v1/responses']);
   });
+
+  it('resolves first-byte timeout per built endpoint request', async () => {
+    const { executeEndpointFlow } = await import('./endpointFlow.js');
+    const resolvedPaths: string[] = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      buildRequest: (endpoint: 'responses' | 'chat') => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      dispatchRequest: async (
+        request: BuiltEndpointRequest,
+        _targetUrl?: string,
+        signal?: AbortSignal,
+      ) => (
+        request.endpoint === 'responses'
+          ? buildDelayedResponse(JSON.stringify({ ok: false }), 60, 200, signal)
+          : buildDelayedResponse(JSON.stringify({ ok: true }), 25, 200, signal)
+      ) as unknown as Awaited<ReturnType<typeof import('undici').fetch>>,
+      firstByteTimeoutMs: (request) => {
+        resolvedPaths.push(request.path);
+        return request.endpoint === 'responses' ? 10 : 0;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.upstreamPath).toBe('/v1/chat/completions');
+      expect(await result.upstream.json()).toEqual({ ok: true });
+    }
+    expect(resolvedPaths).toEqual(['/v1/responses', '/v1/chat/completions']);
+  });
 });

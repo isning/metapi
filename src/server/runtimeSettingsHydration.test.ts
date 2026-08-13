@@ -12,6 +12,7 @@ afterEach(() => {
 describe('applyRuntimeSettings', () => {
   it('hydrates persisted runtime settings that should survive restarts', () => {
     config.disableCrossProtocolFallback = false;
+    config.responsesUpstreamTransportMode = 'auto';
     config.responsesCompactFallbackToResponsesEnabled = false;
     config.webhookEnabled = true;
     config.barkEnabled = true;
@@ -20,6 +21,7 @@ describe('applyRuntimeSettings', () => {
 
     applyRuntimeSettings(new Map([
       ['disable_cross_protocol_fallback', JSON.stringify(true)],
+      ['responses_upstream_transport_mode', JSON.stringify('follow_downstream')],
       ['responses_compact_fallback_to_responses_enabled', JSON.stringify(true)],
       ['webhook_enabled', JSON.stringify(false)],
       ['bark_enabled', JSON.stringify(false)],
@@ -28,6 +30,7 @@ describe('applyRuntimeSettings', () => {
     ]));
 
     expect(config.disableCrossProtocolFallback).toBe(true);
+    expect(config.responsesUpstreamTransportMode).toBe('follow_downstream');
     expect(config.responsesCompactFallbackToResponsesEnabled).toBe(true);
     expect(config.webhookEnabled).toBe(false);
     expect(config.barkEnabled).toBe(false);

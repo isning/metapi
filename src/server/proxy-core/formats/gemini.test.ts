@@ -1127,7 +1127,7 @@ describe('gemini native proxy routes', () => {
     );
     expect(JSON.parse(String(requestInit.body))).toEqual({
       model: 'gpt-4.1',
-      stream: false,
+      stream: true,
       input: [
         {
           type: 'message',
@@ -1296,7 +1296,7 @@ describe('gemini native proxy routes', () => {
     const forwardedBody = JSON.parse(String(requestInit.body));
     expect(forwardedBody).toMatchObject({
       model: 'gpt-4.1',
-      stream: false,
+      stream: true,
     });
     expect(Array.isArray(forwardedBody.input)).toBe(true);
     expect(JSON.stringify(forwardedBody.input)).toContain('hello');

@@ -1844,6 +1844,10 @@ export const pagesResources = {
     "pages.settings.commonPresets": "常用预设",
     "pages.settings.compactUnsupportedResponses":
       "Compact 明确不支持时回退到普通 Responses",
+    "pages.settings.responsesUpstreamTransportMode": "Responses 上游传输",
+    "pages.settings.responsesUpstreamTransportModeDescription": "自动模式会让非流式 Responses 请求在上游使用 SSE，并在 Metapi 聚合后返回 JSON。",
+    "pages.settings.responsesUpstreamTransportAuto": "自动聚合 SSE（推荐）",
+    "pages.settings.responsesUpstreamTransportFollowDownstream": "跟随下游请求",
     "pages.settings.configuration":
       "检测到待生效数据库配置，请重启容器使其生效。",
     "pages.settings.systemProxyDescription":
@@ -5824,6 +5828,10 @@ export const pagesResources = {
     "pages.settings.commonPresets": "Common presets",
     "pages.settings.compactUnsupportedResponses":
       "Compact Unsupported Responses",
+    "pages.settings.responsesUpstreamTransportMode": "Responses upstream transport",
+    "pages.settings.responsesUpstreamTransportModeDescription": "Auto uses upstream SSE for non-stream Responses requests and aggregates the result into JSON in Metapi.",
+    "pages.settings.responsesUpstreamTransportAuto": "Auto SSE aggregation (recommended)",
+    "pages.settings.responsesUpstreamTransportFollowDownstream": "Follow downstream request",
     "pages.settings.configuration":
       "A pending database configuration was detected. Restart the container to apply it.",
     "pages.settings.systemProxyDescription":
