@@ -162,6 +162,56 @@ function previewCurrency(preview: Record<string, unknown> | null): unknown {
   return preview?.currency;
 }
 
+function previewDisplayName(preview: Record<string, unknown> | null): string | null {
+  const displayName = preview?.pricingDisplayName;
+  return typeof displayName === 'string' && displayName.trim() ? displayName.trim() : null;
+}
+
+type PreviewComponent = {
+  componentId: string;
+  kind: string;
+  scale: number;
+  currency: string;
+  unitPrice: number;
+  cost: number;
+  tierId?: string;
+  quantityPricingMode?: string;
+};
+
+function previewComponents(preview: Record<string, unknown> | null): PreviewComponent[] {
+  const components = preview?.components;
+  if (!Array.isArray(components)) return [];
+  return components.filter((component): component is PreviewComponent => (
+    typeof component === 'object'
+    && component !== null
+    && typeof (component as PreviewComponent).kind === 'string'
+    && Number.isFinite((component as PreviewComponent).unitPrice)
+  ));
+}
+
+function previewComponentLabel(kind: string): string {
+  if (kind === 'input_tokens') return tr('components.modelRouteFlow.input');
+  if (kind === 'output_tokens') return tr('components.modelRouteFlow.output');
+  if (kind === 'cache_read_tokens') return tr('components.modelRouteFlow.cacheRead');
+  if (kind === 'cache_write_tokens') return tr('components.modelRouteFlow.cacheWrite');
+  if (kind === 'reasoning_tokens') return tr('components.modelRouteFlow.reasoning');
+  if (kind === 'request') return tr('components.modelRouteFlow.requestFee');
+  return kind;
+}
+
+function quantityPricingModeLabel(mode: string | undefined): string | null {
+  if (!mode || mode === 'flat') return null;
+  if (mode === 'tiered') return tr('upstreamCostPricing.pricingMode.tiered');
+  if (mode === 'graduated') return tr('upstreamCostPricing.pricingMode.graduated');
+  return mode;
+}
+
+function componentUnitLabel(component: PreviewComponent): string {
+  if (component.kind === 'request') return tr('upstreamCostPricing.perRequest');
+  const scale = Number.isFinite(component.scale) && component.scale > 0 ? component.scale : 1;
+  return `${scale.toLocaleString()} ${tr('upstreamCostPricing.tokens')}`;
+}
+
 function recordToForm(record: UpstreamCostPricingRecord | null, fallback: Partial<SimplePricingForm> = {}): SimplePricingForm {
   if (!record) return { ...EMPTY_FORM, ...fallback };
   return {
@@ -262,6 +312,10 @@ export function UpstreamCostPricingEditor({
     initialScope && allowedScopes.includes(initialScope) ? initialScope : allowedScopes[0]
   ), [allowedScopes, initialScope]);
   const availableTokens = useMemo(() => tokens.filter((token) => token.enabled !== false), [tokens]);
+  const pricingContextToken = useMemo(
+    () => availableTokens.find((token) => token.id === fixedTokenId) || pickInitialToken(availableTokens),
+    [availableTokens, fixedTokenId],
+  );
   const [records, setRecords] = useState<UpstreamCostPricingRecord[]>([]);
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null);
   const [form, setForm] = useState<SimplePricingForm>(() => {
@@ -275,8 +329,10 @@ export function UpstreamCostPricingEditor({
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState<any>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [activePreview, setActivePreview] = useState<Record<string, unknown> | null>(null);
+  const [activePreviewLoading, setActivePreviewLoading] = useState(false);
+  const [draftPreview, setDraftPreview] = useState<Record<string, unknown> | null>(null);
+  const [draftPreviewLoading, setDraftPreviewLoading] = useState(false);
   const [providerRefreshLoading, setProviderRefreshLoading] = useState(false);
   const previewRequestVersion = useRef(0);
 
@@ -294,7 +350,7 @@ export function UpstreamCostPricingEditor({
       tokenId: token ? String(token.id) : '',
       tokenGroup: token?.tokenGroup || '',
     });
-    setPreview(null);
+    setDraftPreview(null);
   }, [availableTokens, defaultScope]);
 
   const loadRecords = useCallback(async () => {
@@ -304,7 +360,6 @@ export function UpstreamCostPricingEditor({
       const next = await api.listUpstreamCostPricings({
         siteId,
         accountId: accountId ?? undefined,
-        tokenId: fixedTokenId ?? undefined,
         modelName,
         includeSiteScope: false,
       });
@@ -327,7 +382,7 @@ export function UpstreamCostPricingEditor({
     } finally {
       setLoading(false);
     }
-  }, [accountId, allowedScopes, fixedTokenId, modelName, open, ownerScope, resetToNew, siteId, toast]);
+  }, [accountId, allowedScopes, modelName, open, ownerScope, resetToNew, siteId, toast]);
 
   useEffect(() => {
     void loadRecords();
@@ -336,26 +391,25 @@ export function UpstreamCostPricingEditor({
   const refreshPreview = useCallback(async () => {
     if (!open || !siteId || !modelName || (ownerScope === 'account' && !accountId)) return;
     const requestVersion = ++previewRequestVersion.current;
-    const token = pickInitialToken(availableTokens);
-    setPreviewLoading(true);
+    setActivePreviewLoading(true);
     try {
       const result = await api.previewUpstreamCostPricing({
         siteId,
         accountId: accountId ?? undefined,
-        tokenId: ownerScope === 'account' ? token?.id : undefined,
-        tokenGroup: ownerScope === 'account' ? token?.tokenGroup || undefined : undefined,
+        tokenId: ownerScope === 'account' ? pricingContextToken?.id : undefined,
+        tokenGroup: ownerScope === 'account' ? pricingContextToken?.tokenGroup || undefined : undefined,
         modelName,
         usage: PREVIEW_USAGE,
       });
       if (previewRequestVersion.current === requestVersion) {
-        setPreview(normalizePreviewResult(result));
+        setActivePreview(normalizePreviewResult(result));
       }
     } catch {
-      if (previewRequestVersion.current === requestVersion) setPreview(null);
+      if (previewRequestVersion.current === requestVersion) setActivePreview(null);
     } finally {
-      if (previewRequestVersion.current === requestVersion) setPreviewLoading(false);
+      if (previewRequestVersion.current === requestVersion) setActivePreviewLoading(false);
     }
-  }, [accountId, availableTokens, modelName, open, ownerScope, siteId]);
+  }, [accountId, modelName, open, ownerScope, pricingContextToken, siteId]);
 
   useEffect(() => {
     void refreshPreview();
@@ -400,11 +454,11 @@ export function UpstreamCostPricingEditor({
       }
       return next;
     });
-    setPreview(null);
+    setDraftPreview(null);
   };
 
   const handlePreview = async () => {
-    setPreviewLoading(true);
+    setDraftPreviewLoading(true);
     try {
       const payload = buildPayload({ form, siteId, accountId: accountId ?? null, modelName, ownerScope, allowedScopes });
       const savedLike = selectedRecord && isSameScope(selectedRecord, form, accountId ?? null, ownerScope);
@@ -417,13 +471,13 @@ export function UpstreamCostPricingEditor({
           modelName,
           usage: PREVIEW_USAGE,
         });
-        setPreview(normalizePreviewResult(result));
+        setDraftPreview(normalizePreviewResult(result));
       } else {
         const localTotal =
           (parseOptionalNumber(form.inputPerMillion) || 0)
           + (parseOptionalNumber(form.outputPerMillion) || 0)
           + (parseOptionalNumber(form.requestCost) || 0);
-        setPreview({
+        setDraftPreview({
           totalCost: localTotal,
           source: 'local_form',
           estimateLevel: 'request_estimate',
@@ -432,7 +486,7 @@ export function UpstreamCostPricingEditor({
     } catch (error: any) {
       toast?.error?.(error?.message || tr('upstreamCostPricing.errors.previewFailed'));
     } finally {
-      setPreviewLoading(false);
+      setDraftPreviewLoading(false);
     }
   };
 
@@ -450,7 +504,7 @@ export function UpstreamCostPricingEditor({
       toast?.success?.(tr('upstreamCostPricing.saved'));
       setSelectedRecordId(saved.id);
       setForm(recordToForm(saved));
-      await loadRecords();
+      await Promise.all([loadRecords(), refreshPreview()]);
       onSaved?.();
     } catch (error: any) {
       toast?.error?.(error?.message || tr('upstreamCostPricing.errors.saveFailed'));
@@ -465,7 +519,7 @@ export function UpstreamCostPricingEditor({
     try {
       await api.deleteUpstreamCostPricing(selectedRecord.id);
       toast?.success?.(tr('upstreamCostPricing.deleted'));
-      await loadRecords();
+      await Promise.all([loadRecords(), refreshPreview()]);
       resetToNew();
       onSaved?.();
     } catch (error: any) {
@@ -477,12 +531,15 @@ export function UpstreamCostPricingEditor({
 
   const canUseTokenScope = ownerScope === 'account' && availableTokens.length > 0;
   const selectedToken = availableTokens.find((token) => String(token.id) === form.tokenId) || null;
-  const previewScope = preview?.matchedScope as UpstreamCostMatchedScope | null | undefined;
-  const previewSourceType = typeof preview?.pricingSourceType === 'string'
-    ? preview.pricingSourceType
+  const activePreviewScope = activePreview?.matchedScope as UpstreamCostMatchedScope | null | undefined;
+  const activePreviewSourceType = typeof activePreview?.pricingSourceType === 'string'
+    ? activePreview.pricingSourceType
     : null;
-  const showPreviewSourceType = previewSourceType
-    && sourceTypeLabel(previewSourceType) !== (previewScope ? scopeLabel(previewScope) : '');
+  const showDraftPreviewSourceType = typeof draftPreview?.pricingSourceType === 'string'
+    && sourceTypeLabel(draftPreview.pricingSourceType) !== (draftPreview?.matchedScope ? scopeLabel(draftPreview.matchedScope as UpstreamCostMatchedScope) : '');
+  const activePreviewSource = activePreviewSourceType
+    || (activePreviewScope === 'provider_catalog' || activePreviewScope === 'system_default' ? activePreviewScope : null);
+  const activePreviewComponents = previewComponents(activePreview);
 
   if (!open) return null;
 
@@ -521,13 +578,14 @@ export function UpstreamCostPricingEditor({
         </Button>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(200px,260px)_1fr]">
-        <Card>
+      <div className="grid gap-3 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
+        <div className="grid min-w-0 content-start gap-3">
+          <Card>
           <CardHeader>
-            <CardTitle>{tr('upstreamCostPricing.configured')}</CardTitle>
-            <CardDescription>{tr('upstreamCostPricing.configuredDescription')}</CardDescription>
+            <CardTitle>{tr('upstreamCostPricing.manualConfigurations')}</CardTitle>
+            <CardDescription>{tr('upstreamCostPricing.manualConfigurationsDescription')}</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-2">
+          <CardContent className="grid min-w-0 gap-2">
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" />
@@ -539,21 +597,21 @@ export function UpstreamCostPricingEditor({
                   key={record.id}
                   type="button"
                   variant="ghost"
-                  className="grid gap-1 rounded-md border bg-background p-2 text-left text-sm hover:bg-accent data-[state=selected]:bg-accent"
+                  className="h-auto min-w-0 whitespace-normal grid gap-1 rounded-md border bg-background p-2 text-left text-sm hover:bg-accent data-[state=selected]:bg-accent"
                   data-state={record.id === selectedRecordId ? 'selected' : undefined}
                   onClick={() => {
                     setSelectedRecordId(record.id);
                     setForm(recordToForm(record));
-                    setPreview(null);
+                    setDraftPreview(null);
                   }}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{scopeLabel(record.scope)}</span>
-                    <ToneBadge tone={record.enabled ? '-success' : '-muted'}>{record.enabled ? tr('common.enabled') : tr('common.disabled')}</ToneBadge>
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="min-w-0 break-words font-medium">{scopeLabel(record.scope)}</span>
+                    <ToneBadge className="shrink-0" tone={record.enabled ? '-success' : '-muted'}>{record.enabled ? tr('common.enabled') : tr('common.disabled')}</ToneBadge>
                   </div>
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{recordScopeDetail(record)}</span>
-                    <ToneBadge tone={record.sourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(record.sourceType)}</ToneBadge>
+                    <span className="min-w-0 break-all">{recordScopeDetail(record)}</span>
+                    <ToneBadge className="shrink-0" tone={record.sourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(record.sourceType)}</ToneBadge>
                   </div>
                 </Button>
               ))
@@ -566,7 +624,60 @@ export function UpstreamCostPricingEditor({
               </Empty>
             )}
           </CardContent>
-        </Card>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{tr('upstreamCostPricing.activeCost')}</CardTitle>
+              <CardDescription>{tr('upstreamCostPricing.activeCostDescription')}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid min-w-0 gap-2">
+              {activePreviewLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <LoaderCircle className="size-4 animate-spin" />
+                  {tr('common.loading')}
+                </div>
+              ) : activePreview && activePreviewSource ? (
+                <div className="grid min-w-0 gap-2 rounded-md border bg-muted/25 p-2.5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <ToneBadge tone={activePreviewSource === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(activePreviewSource)}</ToneBadge>
+                    {activePreviewScope && scopeLabel(activePreviewScope) !== sourceTypeLabel(activePreviewSource) ? <ToneBadge tone="-muted">{scopeLabel(activePreviewScope)}</ToneBadge> : null}
+                  </div>
+                  <div className="min-w-0 break-words text-sm font-medium">
+                    {previewDisplayName(activePreview) || modelName}
+                  </div>
+                  <div className="font-mono text-xs text-muted-foreground">
+                    {formatMoney(previewTotal(activePreview), previewCurrency(activePreview))}
+                  </div>
+                  {activePreviewComponents.length > 0 ? (
+                    <div className="grid gap-1.5 border-t pt-2">
+                      {activePreviewComponents.map((component) => (
+                        <div key={`${component.componentId}:${component.tierId || ''}`} className="grid min-w-0 gap-1 text-xs">
+                          <div className="flex min-w-0 items-center justify-between gap-2">
+                            <span className="min-w-0 break-words text-muted-foreground">{previewComponentLabel(component.kind)}</span>
+                            <span className="shrink-0 font-mono">{formatMoney(component.unitPrice, component.currency)} / {componentUnitLabel(component)}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {quantityPricingModeLabel(component.quantityPricingMode) ? <ToneBadge tone="-muted">{quantityPricingModeLabel(component.quantityPricingMode)}</ToneBadge> : null}
+                            {component.tierId ? <ToneBadge tone="-muted">{tr('upstreamCostPricing.tier')}: {component.tierId}</ToneBadge> : null}
+                            <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewComponentCost')}: {formatMoney(component.cost, component.currency)}</ToneBadge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <Empty className="p-2">
+                  <EmptyHeader>
+                    <EmptyTitle>{tr('upstreamCostPricing.activeCostUnavailable')}</EmptyTitle>
+                    <EmptyDescription>{tr('upstreamCostPricing.activeCostUnavailableDescription')}</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         <Card>
           <CardHeader>
@@ -648,13 +759,13 @@ export function UpstreamCostPricingEditor({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewSummary')}</ToneBadge>
-                {previewScope ? <ToneBadge tone={previewScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(previewScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
-                {showPreviewSourceType ? <ToneBadge tone={previewSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(previewSourceType)}</ToneBadge> : null}
-                {preview ? <ToneBadge tone="-info">{formatMoney(previewTotal(preview), previewCurrency(preview))}</ToneBadge> : null}
+                {draftPreview?.matchedScope ? <ToneBadge tone={draftPreview.matchedScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(draftPreview.matchedScope as UpstreamCostMatchedScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
+                {showDraftPreviewSourceType ? <ToneBadge tone={draftPreview?.pricingSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(String(draftPreview?.pricingSourceType))}</ToneBadge> : null}
+                {draftPreview ? <ToneBadge tone="-info">{formatMoney(previewTotal(draftPreview), previewCurrency(draftPreview))}</ToneBadge> : null}
               </div>
               <ButtonGroup>
-                <Button type="button" variant="outline" size="sm" onClick={() => void handlePreview()} disabled={previewLoading || saving}>
-                  {previewLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Calculator className="size-4" />}
+                <Button type="button" variant="outline" size="sm" onClick={() => void handlePreview()} disabled={draftPreviewLoading || saving}>
+                  {draftPreviewLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Calculator className="size-4" />}
                   {tr('upstreamCostPricing.preview')}
                 </Button>
                 <Button type="button" variant="default" size="sm" onClick={() => void handleSave()} disabled={saving}>
