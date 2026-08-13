@@ -178,4 +178,68 @@ describe('modelPricingService', () => {
     expect(cost).toBe(0.00372);
   });
 
+  it('uses the selected group price card before applying its multiplier', () => {
+    const model: PricingModel = {
+      modelName: 'sub2api-model',
+      quotaType: 0,
+      modelRatio: 1,
+      completionRatio: 1,
+      modelPrice: { input: 2, output: 8, cacheRead: 1, cacheWrite: 3 },
+      groupPrices: {
+        standard: { input: 2, output: 8, cacheRead: 1, cacheWrite: 3 },
+        premium: { input: 1, output: 4, cacheRead: 0.5, cacheWrite: 1.5 },
+      },
+      enableGroups: ['standard', 'premium'],
+    };
+
+    const detail = calculateModelUsageBreakdown(
+      model,
+      {
+        promptTokens: 1_000_000,
+        completionTokens: 1_000_000,
+        totalTokens: 2_000_000,
+        cacheReadTokens: 200_000,
+        cacheCreationTokens: 100_000,
+        promptTokensIncludeCache: true,
+      },
+      { standard: 1, premium: 1.25 },
+      'premium',
+    );
+
+    expect(detail).toMatchObject({
+      usage: { billablePromptTokens: 700_000 },
+      pricing: { groupRatio: 1.25 },
+      breakdown: {
+        inputPerMillion: 1.25,
+        outputPerMillion: 5,
+        cacheReadPerMillion: 0.625,
+        cacheCreationPerMillion: 1.875,
+        inputCost: 0.875,
+        outputCost: 5,
+        cacheReadCost: 0.125,
+        cacheCreationCost: 0.1875,
+        totalCost: 6.1875,
+      },
+    });
+  });
+
+  it('uses the selected group price for per-request models', () => {
+    const model: PricingModel = {
+      modelName: 'sub2api-image-model',
+      quotaType: 1,
+      modelRatio: 1,
+      completionRatio: 1,
+      modelPrice: 0.04,
+      groupPrices: { standard: 0.04, premium: 0.025 },
+      enableGroups: ['standard', 'premium'],
+    };
+
+    expect(calculateModelUsageCost(
+      model,
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      { standard: 1, premium: 2 },
+      'premium',
+    )).toBe(0.05);
+  });
+
 });

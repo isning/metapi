@@ -319,6 +319,59 @@ describe('modelPricingService upstream cost integration', () => {
     });
   });
 
+  it('keeps Sub2API group prices separate in model pricing catalogs', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Sub2API Group Catalog Cost',
+      url: 'https://sub2api-group-catalog.example.com',
+      platform: 'sub2api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'sub2api-group-catalog',
+      accessToken: 'access-token',
+    }).returning().get();
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['sub2api-model', {
+        modelName: 'sub2api-model',
+        quotaType: 0,
+        modelRatio: 1,
+        completionRatio: 1,
+        modelPrice: { input: 2, output: 8, cacheRead: 1, cacheWrite: 3 },
+        groupPrices: {
+          standard: { input: 2, output: 8, cacheRead: 1, cacheWrite: 3 },
+          premium: { input: 1, output: 4, cacheRead: 0.5, cacheWrite: 1.5 },
+        },
+        enableGroups: ['standard', 'premium'],
+      }]]),
+      groupRatio: { standard: 1, premium: 1.25 },
+    });
+
+    const catalog = await pricing.refreshModelPricingCatalog({
+      site,
+      account,
+      upstreamGroup: 'premium',
+      modelName: 'sub2api-model',
+    });
+
+    expect(catalog?.models[0]).toMatchObject({
+      enableGroups: ['standard', 'premium'],
+      groupPricing: {
+        standard: {
+          inputPerMillion: 2,
+          outputPerMillion: 8,
+          cacheReadPerMillion: 1,
+          cacheCreationPerMillion: 3,
+        },
+        premium: {
+          inputPerMillion: 1.25,
+          outputPerMillion: 5,
+          cacheReadPerMillion: 0.625,
+          cacheCreationPerMillion: 1.875,
+        },
+      },
+    });
+  });
+
   it('omits cache prices in model pricing catalogs when provider catalog omits cache pricing', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Missing Cache Catalog Cost',

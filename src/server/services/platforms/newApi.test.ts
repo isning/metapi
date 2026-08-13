@@ -841,6 +841,61 @@ describe('NewApiAdapter', () => {
     expect(receivedHeaders['neo-api-user']).toBe('42');
   });
 
+  it('uses the session-compatible user-id headers for group and cache-aware pricing', async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+    const receivedHeaders: Record<string, string> = {};
+    server = createServer((req, res) => {
+      for (const name of ['new-api-user', 'veloera-user', 'user-id', 'x-user-id', 'rix-api-user', 'neo-api-user']) {
+        const value = req.headers[name];
+        if (value) receivedHeaders[name] = String(value);
+      }
+      if (req.url === '/api/pricing') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          data: [{
+            model_name: 'gpt-4o-mini',
+            quota_type: 0,
+            model_ratio: 1.5,
+            completion_ratio: 2,
+            cache_ratio: 0.1,
+            create_cache_ratio: 1.25,
+            enable_groups: ['premium'],
+          }],
+          group_ratio: { premium: 1.25 },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const adapter = new NewApiAdapter();
+    const catalog = await adapter.getPricingCatalog(baseUrl, {
+      token: 'session=session-token',
+      tokenKind: 'access_token',
+      platformUserId: 42,
+    });
+
+    expect(receivedHeaders).toMatchObject({
+      'new-api-user': '42',
+      'veloera-user': '42',
+      'user-id': '42',
+      'x-user-id': '42',
+      'rix-api-user': '42',
+      'neo-api-user': '42',
+    });
+    expect(catalog?.groupRatio).toEqual({ default: 1, premium: 1.25 });
+    expect(catalog?.models.get('gpt-4o-mini')).toMatchObject({
+      cacheRatio: 0.1,
+      cacheCreationRatio: 1.25,
+      enableGroups: ['premium'],
+    });
+  });
+
   it('normalizes the global site notice from /api/notice', async () => {
     const adapter = new NewApiAdapter();
     const rows = await adapter.getSiteAnnouncements(baseUrl, 'session-token');

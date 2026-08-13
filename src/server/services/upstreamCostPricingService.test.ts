@@ -415,6 +415,41 @@ describe('upstreamCostPricingService', () => {
     expect(result?.evaluation.totalCost).toBe(2.28);
   });
 
+  it('uses the selected group\'s direct catalog price before applying its multiplier', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['sub2api-model', {
+        modelName: 'sub2api-model',
+        quotaType: 0,
+        modelRatio: 1,
+        completionRatio: 1,
+        modelPrice: { input: 2, output: 8 },
+        groupPrices: {
+          standard: { input: 2, output: 8 },
+          premium: { input: 1, output: 4 },
+        },
+        enableGroups: ['standard', 'premium'],
+      }]]),
+      groupRatio: { standard: 1, premium: 1.25 },
+    });
+
+    const result = await service.evaluateUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'premium',
+      modelName: 'sub2api-model',
+      providerCatalogMode: 'refresh',
+      usage: { inputTokens: 1_000_000, outputTokens: 1_000_000 },
+    });
+
+    expect(result?.pricing.tokenGroup).toBe('premium');
+    expect(result?.evaluation.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 1.25, cost: 1.25 }),
+      expect.objectContaining({ kind: 'output_tokens', unitPrice: 5, cost: 5 }),
+    ]));
+  });
+
   it('uses upstream catalog fallback as default platform pricing source', async () => {
     const { site, account, token } = await seedSupply(db, schema);
     await db.insert(schema.settings).values({

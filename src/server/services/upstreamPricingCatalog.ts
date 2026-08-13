@@ -8,6 +8,8 @@ export interface UpstreamPricingModel {
   cacheRatio?: number;
   cacheCreationRatio?: number;
   modelPrice: number | UpstreamDirectModelPrice | null;
+  /** Optional group-specific price cards. Prices use the same units as modelPrice. */
+  groupPrices?: Record<string, number | UpstreamDirectModelPrice>;
   enableGroups: string[];
   modelDescription?: string | null;
   tags?: string[];
@@ -25,6 +27,42 @@ export interface UpstreamDirectModelPrice {
 export interface UpstreamPricingCatalog {
   models: Map<string, UpstreamPricingModel>;
   groupRatio: Record<string, number>;
+}
+
+export interface ResolvedUpstreamPricingModelGroup {
+  group: string;
+  multiplier: number;
+  model: UpstreamPricingModel;
+}
+
+/** Resolves a group's base price card; consumers apply multiplier exactly once. */
+export function resolveUpstreamPricingModelGroup(input: {
+  model: UpstreamPricingModel;
+  groupRatio: Record<string, number>;
+  preferredGroup?: string | null;
+}): ResolvedUpstreamPricingModelGroup {
+  const allowedGroups = Array.from(new Set(
+    (input.model.enableGroups || []).map((group) => String(group || '').trim()).filter(Boolean),
+  ));
+  const preferred = typeof input.preferredGroup === 'string' ? input.preferredGroup.trim() : '';
+  const isUsable = (group: string) => (
+    allowedGroups.includes(group)
+    && Number.isFinite(input.groupRatio[group])
+    && input.groupRatio[group] > 0
+  );
+  const group = (preferred && isUsable(preferred) ? preferred : undefined)
+    ?? (isUsable(DEFAULT_PRICING_GROUP) ? DEFAULT_PRICING_GROUP : undefined)
+    ?? allowedGroups.find(isUsable)
+    ?? allowedGroups[0]
+    ?? DEFAULT_PRICING_GROUP;
+  const multiplier = isUsable(group) ? input.groupRatio[group] : 1;
+  const groupPrice = input.model.groupPrices?.[group];
+
+  return {
+    group,
+    multiplier,
+    model: groupPrice === undefined ? input.model : { ...input.model, modelPrice: groupPrice },
+  };
 }
 
 export interface UpstreamPricingCredential {

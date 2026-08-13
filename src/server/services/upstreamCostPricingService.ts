@@ -10,7 +10,11 @@ import {
   type PricingEvaluation,
   type PricingPlan,
 } from '../pricing-core/index.js';
-import { DEFAULT_PRICING_GROUP, type UpstreamPricingCatalog, type UpstreamPricingModel } from './upstreamPricingCatalog.js';
+import {
+  resolveUpstreamPricingModelGroup,
+  type UpstreamPricingCatalog,
+  type UpstreamPricingModel,
+} from './upstreamPricingCatalog.js';
 import {
   getCachedProviderPricingCatalog,
   getProviderPricingCatalogCacheRecord,
@@ -448,13 +452,12 @@ async function resolveProviderCatalogCostPricing(
   const model = findCatalogModel(catalog, normalizedModelName);
   if (!model) return null;
 
-  const group = selectCatalogGroup({
-    catalog,
+  const resolvedGroup = resolveUpstreamPricingModelGroup({
     model,
+    groupRatio: catalog.groupRatio,
     preferredGroup: input.tokenGroup || context.tokenGroup,
   });
-  const multiplier = catalog.groupRatio[group] || catalog.groupRatio[DEFAULT_PRICING_GROUP] || 1;
-  const plan = buildProviderCatalogPricingPlan(model, multiplier);
+  const plan = buildProviderCatalogPricingPlan(resolvedGroup);
   if (!plan) return null;
 
   const pricing: UpstreamCostPricingRecord = {
@@ -465,13 +468,13 @@ async function resolveProviderCatalogCostPricing(
       `site:${input.siteId}`,
       `account:${input.accountId ?? '-'}`,
       `token:${input.tokenId ?? '-'}`,
-      `group:${group}`,
+      `group:${resolvedGroup.group}`,
       `model:${normalizedModelName}`,
     ].join('|'),
     siteId: input.siteId,
     accountId: input.accountId ?? null,
     tokenId: input.tokenId ?? null,
-    tokenGroup: group === DEFAULT_PRICING_GROUP ? null : group,
+    tokenGroup: resolvedGroup.group === 'default' ? null : resolvedGroup.group,
     modelName: model.modelName,
     normalizedModelName,
     displayName: model.modelName,
@@ -482,7 +485,7 @@ async function resolveProviderCatalogCostPricing(
     metadata: {
       source: 'provider_catalog',
       catalogModelName: model.modelName,
-      group,
+      group: resolvedGroup.group,
       ownerBy: model.ownerBy ?? null,
       quotaType: model.quotaType,
       cacheId: resolvedCatalogRecord.id,
@@ -626,29 +629,17 @@ function findCatalogModel(catalog: UpstreamPricingCatalog, normalizedModelName: 
   return null;
 }
 
-function selectCatalogGroup(input: {
-  catalog: UpstreamPricingCatalog;
-  model: UpstreamPricingModel;
-  preferredGroup?: string | null;
-}): string {
-  const allowed = new Set([...(input.model.enableGroups || []), DEFAULT_PRICING_GROUP]);
-  const preferred = normalizeOptionalText(input.preferredGroup, 128);
-  if (preferred && allowed.has(preferred) && input.catalog.groupRatio[preferred] != null) return preferred;
-  if (allowed.has(DEFAULT_PRICING_GROUP)) return DEFAULT_PRICING_GROUP;
-  return [...allowed][0] || DEFAULT_PRICING_GROUP;
-}
-
 function buildProviderCatalogPricingPlan(
-  model: UpstreamPricingModel,
-  multiplier: number,
+  resolved: ReturnType<typeof resolveUpstreamPricingModelGroup>,
 ): PricingPlan | null {
-  if (model.quotaType === 1) {
-    const requestCost = providerCatalogPerCallPrice(model, multiplier);
+  const { model: modelForGroup, multiplier } = resolved;
+  if (modelForGroup.quotaType === 1) {
+    const requestCost = providerCatalogPerCallPrice(modelForGroup, multiplier);
     if (requestCost == null) return null;
     return createSimpleTokenPricingPlan({ requestCost });
   }
 
-  const direct = providerCatalogDirectTokenPrices(model, multiplier);
+  const direct = providerCatalogDirectTokenPrices(modelForGroup, multiplier);
   return createSimpleTokenPricingPlan({
     inputPerMillion: direct.inputPerMillion,
     outputPerMillion: direct.outputPerMillion,

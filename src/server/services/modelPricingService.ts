@@ -17,17 +17,12 @@ import type {
   UpstreamPricingCatalog as PricingData,
   UpstreamPricingModel as PricingModel,
 } from './upstreamPricingCatalog.js';
+import { resolveUpstreamPricingModelGroup } from './upstreamPricingCatalog.js';
 
 const PRICE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PRICE_CACHE_FAILURE_TTL_MS = 60 * 1000;
 const DEFAULT_GROUP = 'default';
 const ONE_HUB_PER_CALL_RATIO = 0.002;
-const MIN_ROUTING_REFERENCE_COST = 1e-6;
-const ROUTING_REFERENCE_USAGE = {
-  promptTokens: 500_000,
-  completionTokens: 500_000,
-  totalTokens: 1_000_000,
-};
 
 export type { PricingModel };
 
@@ -43,12 +38,6 @@ interface PricingCacheEntry {
   fetchedAt: number;
   ttlMs: number;
   data: PricingData | null;
-}
-
-interface RoutingReferenceCostCacheEntry {
-  fetchedAt: number;
-  ttlMs: number;
-  costs: Map<string, number>;
 }
 
 export interface EstimateProxyCostInput {
@@ -105,7 +94,6 @@ interface ModelPricingCatalog {
 }
 
 const pricingCache = new Map<string, PricingCacheEntry>();
-const routingReferenceCostCache = new Map<string, RoutingReferenceCostCacheEntry>();
 
 function toNumber(value: unknown, fallback = 0): number {
   const n = typeof value === 'number' ? value : Number(value);
@@ -131,38 +119,6 @@ function getCacheKey(input: EstimateProxyCostInput): string {
   return `${input.site.id}:${input.account.id}`;
 }
 
-function normalizeModelKey(modelName: string): string {
-  return modelName.trim().toLowerCase();
-}
-
-function buildRoutingReferenceCostMap(data: PricingData): Map<string, number> {
-  const costs = new Map<string, number>();
-  for (const model of data.models.values()) {
-    const cost = calculateModelUsageCost(model, ROUTING_REFERENCE_USAGE, data.groupRatio);
-    if (!Number.isFinite(cost)) continue;
-    costs.set(normalizeModelKey(model.modelName), Math.max(cost, MIN_ROUTING_REFERENCE_COST));
-  }
-  return costs;
-}
-
-function syncRoutingReferenceCostCache(
-  key: string,
-  fetchedAt: number,
-  ttlMs: number,
-  data: PricingData | null,
-): void {
-  if (!data) {
-    routingReferenceCostCache.delete(key);
-    return;
-  }
-
-  routingReferenceCostCache.set(key, {
-    fetchedAt,
-    ttlMs,
-    costs: buildRoutingReferenceCostMap(data),
-  });
-}
-
 async function fetchPricingData(input: EstimateProxyCostInput): Promise<PricingData | null> {
   return fetchUpstreamPricingCatalog(input);
 }
@@ -172,9 +128,6 @@ async function getPricingDataCached(input: EstimateProxyCostInput): Promise<Pric
   const now = Date.now();
   const cached = pricingCache.get(key);
   if (cached && now - cached.fetchedAt < cached.ttlMs) {
-    if (cached.data && !routingReferenceCostCache.has(key)) {
-      syncRoutingReferenceCostCache(key, cached.fetchedAt, cached.ttlMs, cached.data);
-    }
     return cached.data;
   }
 
@@ -185,7 +138,6 @@ async function getPricingDataCached(input: EstimateProxyCostInput): Promise<Pric
     ttlMs,
     data,
   });
-  syncRoutingReferenceCostCache(key, now, ttlMs, data);
   return data;
 }
 
@@ -199,29 +151,7 @@ async function refreshPricingDataCache(input: EstimateProxyCostInput): Promise<P
     ttlMs,
     data,
   });
-  syncRoutingReferenceCostCache(key, now, ttlMs, data);
   return data;
-}
-
-export function getCachedModelRoutingReferenceCost(input: {
-  siteId: number;
-  accountId: number;
-  modelName: string;
-}): number | null {
-  const key = `${input.siteId}:${input.accountId}`;
-  const cached = routingReferenceCostCache.get(key);
-  if (!cached) return null;
-
-  if (Date.now() - cached.fetchedAt >= cached.ttlMs) {
-    return null;
-  }
-
-  const cost = cached.costs.get(normalizeModelKey(input.modelName));
-  if (typeof cost !== 'number' || !Number.isFinite(cost) || cost <= 0) {
-    return null;
-  }
-
-  return cost;
 }
 
 function resolveModel(modelName: string, data: PricingData): PricingModel | null {
@@ -234,19 +164,6 @@ function resolveModel(modelName: string, data: PricingData): PricingModel | null
   }
 
   return null;
-}
-
-function resolveGroupMultiplier(model: PricingModel, groupRatio: Record<string, number>): number {
-  if (model.enableGroups.includes(DEFAULT_GROUP) && groupRatio[DEFAULT_GROUP]) {
-    return groupRatio[DEFAULT_GROUP];
-  }
-
-  for (const group of model.enableGroups) {
-    if (groupRatio[group]) return groupRatio[group];
-  }
-
-  const first = Object.values(groupRatio).find((ratio) => ratio > 0);
-  return first || 1;
 }
 
 function calculatePerCallCost(
@@ -391,16 +308,19 @@ export function calculateModelUsageBreakdown(
     promptTokensIncludeCache?: boolean | null;
   },
   groupRatio: Record<string, number>,
+  preferredGroup?: string | null,
 ): ProxyBillingBreakdown | null {
   if (model.quotaType === 1) {
     return null;
   }
 
-  const multiplier = resolveGroupMultiplier(model, groupRatio);
+  const resolvedGroup = resolveUpstreamPricingModelGroup({ model, groupRatio, preferredGroup });
+  const modelForGroup = resolvedGroup.model;
+  const multiplier = resolvedGroup.multiplier;
   const normalizedUsage = normalizeUsageBreakdownInput(usage);
-  const cacheRatio = model.cacheRatio ?? 0;
-  const cacheCreationRatio = model.cacheCreationRatio ?? 0;
-  const rates = resolveTokenRateCard(model, multiplier);
+  const cacheRatio = modelForGroup.cacheRatio ?? 0;
+  const cacheCreationRatio = modelForGroup.cacheCreationRatio ?? 0;
+  const rates = resolveTokenRateCard(modelForGroup, multiplier);
   const inputCost = costFromRate(normalizedUsage.billablePromptTokens, rates.inputPerMillion);
   const outputCost = costFromRate(normalizedUsage.completionTokens, rates.outputPerMillion);
   const cacheReadCost = costFromRate(normalizedUsage.cacheReadTokens, rates.cacheReadPerMillion);
@@ -411,8 +331,8 @@ export function calculateModelUsageBreakdown(
     quotaType: model.quotaType,
     usage: normalizedUsage,
     pricing: {
-      modelRatio: model.modelRatio,
-      completionRatio: model.completionRatio,
+      modelRatio: modelForGroup.modelRatio,
+      completionRatio: modelForGroup.completionRatio,
       cacheRatio,
       cacheCreationRatio,
       groupRatio: multiplier,
@@ -442,14 +362,15 @@ export function calculateModelUsageCost(
     promptTokensIncludeCache?: boolean | null;
   },
   groupRatio: Record<string, number>,
+  preferredGroup?: string | null,
 ): number {
-  const multiplier = resolveGroupMultiplier(model, groupRatio);
+  const resolvedGroup = resolveUpstreamPricingModelGroup({ model, groupRatio, preferredGroup });
 
   if (model.quotaType === 1) {
-    return roundCost(calculatePerCallCost(model.modelPrice, multiplier));
+    return roundCost(calculatePerCallCost(resolvedGroup.model.modelPrice, resolvedGroup.multiplier));
   }
 
-  return calculateModelUsageBreakdown(model, usage, groupRatio)?.breakdown.totalCost ?? 0;
+  return calculateModelUsageBreakdown(model, usage, groupRatio, preferredGroup)?.breakdown.totalCost ?? 0;
 }
 
 async function evaluateEffectiveEndpointCost(
@@ -543,19 +464,20 @@ function pricingEvaluationToProxyBillingDetails(
 }
 
 function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricingCatalog {
-  const groups = Array.from(new Set([DEFAULT_GROUP, ...Object.keys(pricingData.groupRatio)]));
-  const defaultMultiplier = pricingData.groupRatio[DEFAULT_GROUP] || 1;
+  const groups = Object.keys(pricingData.groupRatio);
 
   const models: ModelPricingCatalogEntry[] = Array.from(pricingData.models.values())
     .map((model) => {
-      const allowedGroups = Array.from(new Set([...(model.enableGroups || []), DEFAULT_GROUP]));
-      const modelGroups = groups.filter((group) => allowedGroups.includes(group));
-      const effectiveGroups = modelGroups.length > 0 ? modelGroups : [DEFAULT_GROUP];
+      const effectiveGroups = groups.filter((group) => model.enableGroups.includes(group));
 
       const groupPricing = effectiveGroups.reduce<Record<string, ModelGroupPricing>>((acc, group) => {
-        const multiplier = pricingData.groupRatio[group] || defaultMultiplier;
-        if (model.quotaType === 1) {
-          const perCall = calculatePerCallPricing(model.modelPrice, multiplier);
+        const resolvedGroup = resolveUpstreamPricingModelGroup({
+          model,
+          groupRatio: pricingData.groupRatio,
+          preferredGroup: group,
+        });
+        if (resolvedGroup.model.quotaType === 1) {
+          const perCall = calculatePerCallPricing(resolvedGroup.model.modelPrice, resolvedGroup.multiplier);
           acc[group] = {
             quotaType: 1,
             perCallInput: perCall.input,
@@ -565,7 +487,7 @@ function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricin
           return acc;
         }
 
-        const rates = resolveTokenRateCard(model, multiplier);
+        const rates = resolveTokenRateCard(resolvedGroup.model, resolvedGroup.multiplier);
         acc[group] = {
           quotaType: 0,
           inputPerMillion: rates.inputPerMillion,
@@ -609,7 +531,6 @@ export async function refreshModelPricingCatalog(input: EstimateProxyCostInput):
 
 export function clearModelPricingCaches(): void {
   pricingCache.clear();
-  routingReferenceCostCache.clear();
 }
 
 export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<number | null> {

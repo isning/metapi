@@ -590,6 +590,93 @@ describe('Sub2ApiAdapter', () => {
     expect(groups).toEqual(['5', '6']);
   });
 
+  it('builds a group-aware upstream pricing catalog from the user APIs', async () => {
+    await startServer((req, res) => {
+      if (req.headers.authorization !== 'Bearer jwt-token') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 401, message: 'unauthorized' }));
+        return;
+      }
+      const responses: Record<string, unknown> = {
+        '/api/v1/groups/available': {
+          code: 0,
+          data: [
+            { id: 10, name: 'standard', rate_multiplier: 1 },
+            { id: 20, name: 'premium', rate_multiplier: 1.5 },
+          ],
+        },
+        '/api/v1/groups/rates': { code: 0, data: { '20': 1.2 } },
+        '/api/v1/channels/available': {
+          code: 0,
+          data: [{
+            name: 'OpenAI',
+            platforms: [{
+              groups: [{ id: 10 }, { id: 20 }],
+              supported_models: [{
+                name: 'gpt-4o',
+                pricing: {
+                  billing_mode: 'token',
+                  input_price: 0.0000025,
+                  output_price: 0.00001,
+                  cache_read_price: 0.00000125,
+                  cache_write_price: 0.00000375,
+                },
+              }],
+            }],
+          }],
+        },
+      };
+      const body = responses[req.url || ''];
+      if (!body) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    });
+
+    const catalog = await adapter.getPricingCatalog(baseUrl, {
+      token: 'Bearer jwt-token',
+      tokenKind: 'access_token',
+    });
+
+    expect(catalog?.groupRatio).toEqual({ default: 1, '10': 1, '20': 1.2 });
+    expect(catalog?.models.get('gpt-4o')).toMatchObject({
+      enableGroups: ['10', '20'],
+      groupPrices: {
+        '10': { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 3.75 },
+        '20': { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 3.75 },
+      },
+    });
+  });
+
+  it('preserves Sub2API per-request pricing in the upstream catalog', async () => {
+    await startServer((req, res) => {
+      const responses: Record<string, unknown> = {
+        '/api/v1/groups/available': { code: 0, data: [{ id: 10, rate_multiplier: 2 }] },
+        '/api/v1/groups/rates': { code: 0, data: {} },
+        '/api/v1/channels/available': { code: 0, data: [{ platforms: [{
+          groups: [{ id: 10 }],
+          supported_models: [{
+            name: 'image-model',
+            pricing: { billing_mode: 'per_request', per_request_price: 0.04 },
+          }],
+        }] }] },
+      };
+      const body = responses[req.url || ''];
+      if (!body) return void res.writeHead(404).end();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    });
+
+    const catalog = await adapter.getPricingCatalog(baseUrl, { token: 'jwt-token', tokenKind: 'access_token' });
+    expect(catalog?.models.get('image-model')).toMatchObject({
+      quotaType: 1,
+      modelPrice: 0.04,
+      groupPrices: { '10': 0.04 },
+    });
+  });
+
   it('falls back to infer groups from /api/v1/keys when group endpoint is unavailable', async () => {
     await startServer((req, res) => {
       if (req.url === '/api/v1/groups?page=1&page_size=100') {

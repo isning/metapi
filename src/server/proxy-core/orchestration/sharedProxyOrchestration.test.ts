@@ -1015,6 +1015,98 @@ describe('selectSurfaceExecutionAttempt', () => {
     });
   });
 
+  it('persists the selected token group and cache-priced billing detail without recomputing it', async () => {
+    const billingDetails = {
+      quote: {
+        amount: 0.0168,
+        unit: 'currency',
+        currency: 'USD',
+        source: 'provider_catalog',
+        sourceId: null,
+        matchedScope: 'provider_catalog',
+        estimateLevel: 'exact',
+        planFingerprint: 'sub2api-premium',
+      },
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 100,
+        billablePromptTokens: 600,
+        promptTokensIncludeCache: true,
+      },
+      breakdown: {
+        inputCost: 0.006,
+        outputCost: 0.01,
+        cacheReadCost: 0.0003,
+        cacheCreationCost: 0.0005,
+        totalCost: 0.0168,
+      },
+    };
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'upstream',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({ estimatedCost: 0.0168, billingDetails });
+    const logSuccess = vi.fn().mockResolvedValue(undefined);
+    const recordDownstreamBilling = vi.fn().mockResolvedValue(undefined);
+
+    const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
+    await recordSurfaceSuccess({
+      selected: {
+        target: { id: 11 },
+        account: { id: 33 },
+        site: { id: 44, url: 'https://sub2api.example.com', platform: 'sub2api' },
+        token: { id: 55, tokenGroup: 'premium' },
+        tokenValue: 'sk-token',
+        actualModel: 'gpt-4o',
+        ...runtimeIdentity,
+      },
+      requestedModel: 'gpt-4o',
+      modelName: 'gpt-4o',
+      parsedUsage: {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 100,
+        promptTokensIncludeCache: true,
+      },
+      requestStartedAtMs: 1000,
+      isStream: false,
+      latencyMs: 250,
+      retryCount: 0,
+      upstreamPath: '/v1/chat/completions',
+      logSuccess,
+      recordDownstreamBilling,
+    });
+
+    expect(resolveProxyLogBillingMock).toHaveBeenCalledWith(expect.objectContaining({
+      tokenId: 55,
+      upstreamGroup: 'premium',
+      parsedUsage: expect.objectContaining({
+        cacheReadTokens: 300,
+        cacheCreationTokens: 100,
+        promptTokensIncludeCache: true,
+      }),
+    }));
+    expect(recordDownstreamBilling).toHaveBeenCalledWith({
+      billingDetails,
+      siteId: 44,
+      accountId: 33,
+    });
+    expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      estimatedCost: 0.0168,
+      billingDetails,
+    }));
+  });
+
   it('records explicit upstream cache evidence under the actual endpoint identity', async () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
       promptTokens: 100,

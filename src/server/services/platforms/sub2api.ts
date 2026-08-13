@@ -9,6 +9,12 @@ import {
   type SiteAnnouncement,
   UserInfo,
 } from './base.js';
+import type {
+  UpstreamDirectModelPrice,
+  UpstreamPricingCatalog,
+  UpstreamPricingCredential,
+  UpstreamPricingModel,
+} from '../upstreamPricingCatalog.js';
 import { stripTrailingSlashes } from '../urlNormalization.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -58,6 +64,112 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
       }
     }
     return undefined;
+  }
+
+  private parseFiniteNumber(raw: unknown): number | undefined {
+    const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : Number.NaN;
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  private parseSub2ApiTokenPrice(raw: unknown): UpstreamDirectModelPrice | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const value = raw as Record<string, unknown>;
+    // Sub2API exposes USD/token. Metapi's catalog contract uses USD/1M tokens.
+    const perMillion = (keys: string[]) => {
+      for (const key of keys) {
+        const parsed = this.parseFiniteNumber(value[key]);
+        if (parsed !== undefined && parsed >= 0) return parsed * 1_000_000;
+      }
+      return undefined;
+    };
+    const input = perMillion(['input_price', 'inputPrice']);
+    const output = perMillion(['output_price', 'outputPrice']);
+    const cacheRead = perMillion(['cache_read_price', 'cacheReadPrice']);
+    const cacheWrite = perMillion(['cache_write_price', 'cacheWritePrice']);
+    if (input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined) return null;
+    return {
+      ...(input === undefined ? {} : { input }),
+      ...(output === undefined ? {} : { output }),
+      ...(cacheRead === undefined ? {} : { cacheRead }),
+      ...(cacheWrite === undefined ? {} : { cacheWrite }),
+    };
+  }
+
+  private parseSub2ApiModelPricing(raw: unknown): {
+    quotaType: number;
+    modelPrice: number | UpstreamDirectModelPrice;
+  } | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const value = raw as Record<string, unknown>;
+    const billingMode = typeof value.billing_mode === 'string' ? value.billing_mode.trim().toLowerCase() : 'token';
+    if (billingMode === 'per_request') {
+      const requestPrice = this.parseFiniteNumber(value.per_request_price ?? value.perRequestPrice);
+      return requestPrice === undefined || requestPrice < 0
+        ? null
+        : { quotaType: 1, modelPrice: requestPrice };
+    }
+    const modelPrice = this.parseSub2ApiTokenPrice(raw);
+    return modelPrice ? { quotaType: 0, modelPrice } : null;
+  }
+
+  private parseSub2ApiCatalog(
+    channelsPayload: unknown,
+    groupsPayload: unknown,
+    ratesPayload: unknown,
+  ): UpstreamPricingCatalog | null {
+    const channels = this.parseSub2ApiEnvelope<any>(channelsPayload, '/api/v1/channels/available');
+    const groups = this.parseSub2ApiEnvelope<any>(groupsPayload, '/api/v1/groups/available');
+    const rates = this.parseSub2ApiEnvelope<any>(ratesPayload, '/api/v1/groups/rates');
+    const groupRatio: Record<string, number> = { default: 1 };
+    const groupItems = Array.isArray(groups) ? groups : [];
+    const rateOverrides = rates && typeof rates === 'object' && !Array.isArray(rates)
+      ? rates as Record<string, unknown>
+      : {};
+    for (const group of groupItems) {
+      const id = this.parsePositiveInteger(group?.id);
+      if (!id) continue;
+      const key = String(id);
+      const ratio = this.parseFiniteNumber(rateOverrides[key])
+        ?? this.parseFiniteNumber(group?.rate_multiplier)
+        ?? 1;
+      if (ratio > 0) groupRatio[key] = ratio;
+    }
+
+    const models = new Map<string, UpstreamPricingModel>();
+    const channelItems = Array.isArray(channels) ? channels : [];
+    for (const channel of channelItems) {
+      const sections = Array.isArray(channel?.platforms) ? channel.platforms : [];
+      for (const section of sections) {
+        const sectionGroups = Array.isArray(section?.groups) ? section.groups : [];
+        const groupKeys = sectionGroups
+          .map((group: any) => this.parsePositiveInteger(group?.id))
+          .filter((id: number | undefined): id is number => id !== undefined)
+          .map(String);
+        const supportedModels = Array.isArray(section?.supported_models) ? section.supported_models : [];
+        for (const rawModel of supportedModels) {
+          const modelName = typeof rawModel?.name === 'string' ? rawModel.name.trim() : '';
+          const pricing = this.parseSub2ApiModelPricing(rawModel?.pricing);
+          if (!modelName || !pricing || groupKeys.length === 0) continue;
+          const existing = models.get(modelName);
+          const groupPrices = { ...(existing?.groupPrices || {}) };
+          for (const groupKey of groupKeys) groupPrices[groupKey] = pricing.modelPrice;
+          models.set(modelName, {
+            modelName,
+            quotaType: pricing.quotaType,
+            modelRatio: 1,
+            completionRatio: 1,
+            modelPrice: existing?.modelPrice ?? pricing.modelPrice,
+            groupPrices,
+            enableGroups: Array.from(new Set([...(existing?.enableGroups || []), ...groupKeys])),
+            modelDescription: typeof channel?.description === 'string' ? channel.description : null,
+          });
+        }
+      }
+    }
+    if (models.size === 0) {
+      throw new Error('Sub2API returned no priced models from /api/v1/channels/available; enable available_channels_enabled upstream.');
+    }
+    return { models, groupRatio };
   }
 
   private parseDateTime(raw: unknown): string | undefined {
@@ -741,6 +853,22 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
       return [];
     }
     return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+  }
+
+  override async getPricingCatalog(
+    baseUrl: string,
+    credential: UpstreamPricingCredential,
+  ): Promise<UpstreamPricingCatalog | null> {
+    const token = this.normalizeTokenKeyForCompare(credential.token);
+    if (!token) return null;
+    const managementBase = this.resolveManagementBaseUrl(baseUrl);
+    const headers = this.buildAuthHeader(token);
+    const [channels, groups, rates] = await Promise.all([
+      this.fetchJson<unknown>(`${managementBase}/api/v1/channels/available`, { headers }),
+      this.fetchJson<unknown>(`${managementBase}/api/v1/groups/available`, { headers }),
+      this.fetchJson<unknown>(`${managementBase}/api/v1/groups/rates`, { headers }),
+    ]);
+    return this.parseSub2ApiCatalog(channels, groups, rates);
   }
 
   override async getSiteAnnouncements(baseUrl: string, accessToken: string): Promise<SiteAnnouncement[]> {

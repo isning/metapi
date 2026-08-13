@@ -96,9 +96,11 @@ describe('modelPricingService anyrouter pricing', () => {
             quota_type: 0,
             model_ratio: 1.5,
             completion_ratio: 2,
-            enable_groups: ['default'],
+            cache_ratio: 0.1,
+            create_cache_ratio: 1.25,
+            enable_groups: ['premium'],
           }],
-          group_ratio: { default: 1 },
+          group_ratio: { premium: 1.25 },
         }), {
           status: 200,
           headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -120,10 +122,18 @@ describe('modelPricingService anyrouter pricing', () => {
       totalTokens: 0,
     });
 
-    expect(catalog?.models[0]?.groupPricing?.default).toMatchObject({
-      inputPerMillion: 3,
-      outputPerMillion: 6,
+    expect(catalog?.models[0]).toMatchObject({
+      enableGroups: ['premium'],
+      groupPricing: {
+        premium: {
+          inputPerMillion: 3.75,
+          outputPerMillion: 7.5,
+          cacheReadPerMillion: 0.375,
+          cacheCreationPerMillion: 4.6875,
+        },
+      },
     });
+    expect(catalog?.models[0]?.groupPricing).not.toHaveProperty('default');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1]?.headers?.['New-API-User']).toBe('42');
     expect(fetchMock.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer session-token');

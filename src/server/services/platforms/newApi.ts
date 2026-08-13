@@ -1266,8 +1266,10 @@ export class NewApiAdapter extends BasePlatformAdapter {
   ): Promise<UpstreamPricingCatalog | null> {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
-        const headers: Record<string, string> = { Cookie: cookie };
-        if (platformUserId) headers['New-Api-User'] = String(platformUserId);
+        const headers: Record<string, string> = {
+          Cookie: cookie,
+          ...this.userIdHeaders(platformUserId),
+        };
         const payload = await this.fetchJsonRaw<any>(`${baseUrl}/api/pricing`, { headers });
         const catalog = normalizeCommonPricingPayload(payload);
         if (catalog) return catalog;
