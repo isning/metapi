@@ -180,6 +180,7 @@ beforeEach(() => {
       name: 'token-a',
       tokenGroup: 'group-a',
       enabled: true,
+      isDefault: true,
       valueStatus: 'ready',
       account: {
         id: 101,

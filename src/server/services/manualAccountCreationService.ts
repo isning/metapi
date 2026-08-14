@@ -20,7 +20,7 @@ type AccountInitializationParams = {
   adapter: NonNullable<ReturnType<typeof getAdapter>>;
   tokenType: 'session' | 'apikey' | 'unknown';
   accessToken: string;
-  apiToken: string;
+  preferredModelApiToken: string;
   platformUserId?: number;
   skipModelFetch?: boolean;
 };
@@ -38,7 +38,7 @@ export type CreateManualAccountResult = {
   account: typeof schema.accounts.$inferSelect;
   tokenType: 'session' | 'apikey' | 'unknown';
   modelCount: number;
-  apiTokenFound: boolean;
+  discoveredModelTokenCount: number;
   usernameDetected: boolean;
   queued: boolean;
   jobId?: string;
@@ -96,7 +96,7 @@ async function initializeAccountInBackground({
   adapter,
   tokenType,
   accessToken,
-  apiToken,
+  preferredModelApiToken,
   platformUserId,
   skipModelFetch,
 }: AccountInitializationParams) {
@@ -119,7 +119,7 @@ async function initializeAccountInBackground({
 
   const convergence = await convergeAccountMutation({
     accountId,
-    preferredApiToken: tokenType === 'session' ? apiToken : null,
+    preferredApiToken: tokenType === 'session' ? preferredModelApiToken : null,
     defaultTokenSource: 'manual',
     ensurePreferredTokenBeforeSync: tokenType === 'session',
     upstreamTokens: fetchedUpstreamTokens,
@@ -163,7 +163,7 @@ export async function createManualAccount({
     ? usernameOverride.trim()
     : (body.username || '').trim();
   let accessToken = rawAccessToken;
-  let apiToken = (body.apiToken || '').trim();
+  let preferredModelApiToken = credentialMode === 'apikey' ? rawAccessToken.trim() : '';
   let tokenType: 'session' | 'apikey' | 'unknown' = 'unknown';
   let verifiedModels: string[] = [];
 
@@ -171,7 +171,7 @@ export async function createManualAccount({
     if (body.skipModelFetch === true) {
       tokenType = 'apikey';
       accessToken = '';
-      if (!apiToken) apiToken = rawAccessToken;
+      if (!preferredModelApiToken) preferredModelApiToken = rawAccessToken;
     } else {
       const models = await getModelsWithSiteApiEndpointPool(
         site,
@@ -190,7 +190,7 @@ export async function createManualAccount({
 
       tokenType = 'apikey';
       accessToken = '';
-      if (!apiToken) apiToken = rawAccessToken;
+      if (!preferredModelApiToken) preferredModelApiToken = rawAccessToken;
     }
   } else {
     const verifyResult = await withTimeout(
@@ -211,10 +211,12 @@ export async function createManualAccount({
 
     if (tokenType === 'session') {
       if (!username && verifyResult.userInfo?.username) username = String(verifyResult.userInfo.username).trim();
-      if (!apiToken && verifyResult.apiToken) apiToken = String(verifyResult.apiToken).trim();
+      if (verifyResult.discoveredModelToken) {
+        preferredModelApiToken = String(verifyResult.discoveredModelToken).trim();
+      }
     } else if (tokenType === 'apikey') {
       accessToken = '';
-      if (!apiToken) apiToken = rawAccessToken;
+      if (!preferredModelApiToken) preferredModelApiToken = rawAccessToken;
       verifiedModels = Array.isArray(verifyResult.models)
         ? verifyResult.models.filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
         : [];
@@ -224,7 +226,7 @@ export async function createManualAccount({
   const resolvedPlatformUserId =
     body.platformUserId || guessPlatformUserIdFromUsername(username) || undefined;
   const resolvedCredentialMode: AccountCredentialMode = tokenType === 'apikey' ? 'apikey' : 'session';
-  const extraConfigPatch: Record<string, unknown> = { credentialMode: resolvedCredentialMode };
+  const extraConfigPatch: Record<string, unknown> = {};
   if (resolvedPlatformUserId) {
     extraConfigPatch.platformUserId = resolvedPlatformUserId;
   }
@@ -241,21 +243,41 @@ export async function createManualAccount({
   }
   const extraConfig = mergeAccountExtraConfig(undefined, extraConfigPatch);
 
-  const result = await insertAndGetById<typeof schema.accounts.$inferSelect>({
-    table: schema.accounts,
-    idColumn: schema.accounts.id,
-    values: {
-      siteId: body.siteId,
-      username: username || undefined,
-      accessToken,
-      apiToken: apiToken || undefined,
-      checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
-      extraConfig,
-      isPinned: false,
-      sortOrder: await getNextAccountSortOrder(),
-    },
-    insertErrorMessage: '创建账号失败',
-    loadErrorMessage: '创建账号失败',
+  const sortOrder = await getNextAccountSortOrder();
+  const result = await db.transaction(async (tx) => {
+    const created = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+      txDb: tx,
+      table: schema.accounts,
+      idColumn: schema.accounts.id,
+      values: {
+        siteId: body.siteId,
+        username: username || undefined,
+        credential: tokenType === 'session' ? accessToken : '',
+        credentialMode: resolvedCredentialMode,
+        credentialKind: tokenType === 'session'
+          ? (body.credentialKind || 'adapter_default')
+          : 'none',
+        checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
+        extraConfig,
+        isPinned: false,
+        sortOrder,
+      },
+      insertErrorMessage: '创建账号失败',
+      loadErrorMessage: '创建账号失败',
+    });
+    if (tokenType === 'apikey') {
+      await tx.insert(schema.accountTokens).values({
+        accountId: created.id,
+        name: 'default',
+        token: preferredModelApiToken,
+        tokenGroup: 'default',
+        valueStatus: 'ready',
+        source: 'manual',
+        enabled: true,
+        isDefault: true,
+      }).run();
+    }
+    return created;
   });
 
   const shouldQueueInitialization = tokenType === 'session' || body.skipModelFetch !== true;
@@ -278,7 +300,7 @@ export async function createManualAccount({
         adapter,
         tokenType,
         accessToken,
-        apiToken,
+        preferredModelApiToken,
         platformUserId: resolvedPlatformUserId,
         skipModelFetch: body.skipModelFetch,
       }),
@@ -296,7 +318,7 @@ export async function createManualAccount({
     account,
     tokenType,
     modelCount: verifiedModels.length,
-    apiTokenFound: !!apiToken,
+    discoveredModelTokenCount: tokenType === 'session' && preferredModelApiToken ? 1 : 0,
     usernameDetected: !!(!body.username && username),
     queued: !!queuedTaskId,
     jobId: queuedTaskId,

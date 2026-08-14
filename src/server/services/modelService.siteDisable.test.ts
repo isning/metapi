@@ -64,14 +64,18 @@ describe('rebuildManagedRouteGroupsFromAvailability with site disabled models', 
         const account = await db.insert(schema.accounts).values({
             siteId: site.id,
             username: 'user-a',
-            accessToken: '',
-            apiToken: 'sk-test-disabled',
+            credential: '',
+            credentialMode: 'apikey',
+            credentialKind: 'none',
             status: 'active',
-            extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
         }).returning().get();
 
-        await db.insert(schema.modelAvailability).values({
-            accountId: account.id,
+        const token = await db.insert(schema.accountTokens).values({
+            accountId: account.id, name: 'default', token: 'sk-test-disabled', enabled: true, isDefault: true,
+        }).returning().get();
+
+        await db.insert(schema.tokenModelAvailability).values({
+            tokenId: token.id,
             modelName: 'gpt-4o',
             available: true,
             latencyMs: 500,
@@ -109,25 +113,26 @@ describe('rebuildManagedRouteGroupsFromAvailability with site disabled models', 
         const accountA = await db.insert(schema.accounts).values({
             siteId: siteA.id,
             username: 'user-a',
-            accessToken: '',
-            apiToken: 'sk-site-a',
+            credential: '', credentialMode: 'apikey', credentialKind: 'none',
             status: 'active',
-            extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
         }).returning().get();
 
         const accountB = await db.insert(schema.accounts).values({
             siteId: siteB.id,
             username: 'user-b',
-            accessToken: '',
-            apiToken: 'sk-site-b',
+            credential: '', credentialMode: 'apikey', credentialKind: 'none',
             status: 'active',
-            extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
         }).returning().get();
 
+        const [tokenA, tokenB] = await db.insert(schema.accountTokens).values([
+            { accountId: accountA.id, name: 'default', token: 'sk-site-a', enabled: true, isDefault: true },
+            { accountId: accountB.id, name: 'default', token: 'sk-site-b', enabled: true, isDefault: true },
+        ]).returning().all();
+
         // Both sites have the same model
-        await db.insert(schema.modelAvailability).values([
-            { accountId: accountA.id, modelName: 'claude-sonnet-4-5-20250929', available: true, latencyMs: 300 },
-            { accountId: accountB.id, modelName: 'claude-sonnet-4-5-20250929', available: true, latencyMs: 400 },
+        await db.insert(schema.tokenModelAvailability).values([
+            { tokenId: tokenA!.id, modelName: 'claude-sonnet-4-5-20250929', available: true, latencyMs: 300 },
+            { tokenId: tokenB!.id, modelName: 'claude-sonnet-4-5-20250929', available: true, latencyMs: 400 },
         ]).run();
 
         // Disable the model only on site A
@@ -164,14 +169,16 @@ describe('rebuildManagedRouteGroupsFromAvailability with site disabled models', 
         const account = await db.insert(schema.accounts).values({
             siteId: site.id,
             username: 'normal-user',
-            accessToken: '',
-            apiToken: 'sk-normal',
+            credential: '', credentialMode: 'apikey', credentialKind: 'none',
             status: 'active',
-            extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
         }).returning().get();
 
-        await db.insert(schema.modelAvailability).values({
-            accountId: account.id,
+        const token = await db.insert(schema.accountTokens).values({
+            accountId: account.id, name: 'default', token: 'sk-normal', enabled: true, isDefault: true,
+        }).returning().get();
+
+        await db.insert(schema.tokenModelAvailability).values({
+            tokenId: token.id,
             modelName: 'gpt-5',
             available: true,
             latencyMs: 200,

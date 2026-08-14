@@ -675,7 +675,8 @@ describe('NewApiAdapter', () => {
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('cookie-user');
-    expect(result.apiToken).toBe('cookie-api-key');
+    expect(result.managementApiToken).toBeUndefined();
+    expect(result.apiToken).toBeUndefined();
     expect(
       requests.some((r) => r.url === '/api/user/self' && typeof r.headers.cookie === 'string' && r.headers.cookie.includes(`session=${COOKIE_SESSION_TOKEN}`)),
     ).toBe(true);
@@ -687,7 +688,8 @@ describe('NewApiAdapter', () => {
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('cookie-user-id-required');
-    expect(result.apiToken).toBe('cookie-user-key');
+    expect(result.managementApiToken).toBeUndefined();
+    expect(result.apiToken).toBeUndefined();
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '8899'),
     ).toBe(true);
@@ -699,13 +701,14 @@ describe('NewApiAdapter', () => {
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('x-user-id-cookie-user');
-    expect(result.apiToken).toBe('cookie-x-user-id-key');
+    expect(result.managementApiToken).toBeUndefined();
+    expect(result.apiToken).toBeUndefined();
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['x-user-id'] === '448'),
     ).toBe(true);
     expect(
       requests.some((r) => r.url?.startsWith('/api/token/') && r.headers['x-user-id'] === '448'),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('solves anyrouter acw challenge and probes user id from session payload', async () => {
@@ -714,7 +717,8 @@ describe('NewApiAdapter', () => {
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('linuxdo_131936');
-    expect(typeof result.apiToken === 'string' && result.apiToken.length > 0).toBe(true);
+    expect(result.managementApiToken).toBeUndefined();
+    expect(result.apiToken).toBeUndefined();
     expect(
       requests.some(
         (r) =>
@@ -922,6 +926,14 @@ describe('NewApiAdapter', () => {
       cacheCreationRatio: 1.25,
       enableGroups: ['premium'],
     });
+  });
+
+  it('does not echo a Bearer management credential as a discovered model key', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.verifyToken(baseUrl, 'session-token');
+
+    expect(result.tokenType).toBe('session');
+    expect(result.discoveredModelToken).toBeUndefined();
   });
 
   it('normalizes the global site notice from /api/notice', async () => {

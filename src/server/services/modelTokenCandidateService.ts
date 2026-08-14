@@ -78,7 +78,18 @@ export async function buildModelTokenCandidatesPayload(): Promise<ModelTokenCand
   );
 
   const rows = await db
-    .select()
+    .select({
+      token_model_availability: schema.tokenModelAvailability,
+      account_tokens: {
+        id: schema.accountTokens.id,
+        name: schema.accountTokens.name,
+        tokenGroup: schema.accountTokens.tokenGroup,
+        isDefault: schema.accountTokens.isDefault,
+      },
+      accounts: schema.accounts,
+      sites: schema.sites,
+      token_disabled_models: { id: schema.tokenDisabledModels.id },
+    })
     .from(schema.tokenModelAvailability)
     .innerJoin(
       schema.accountTokens,
@@ -111,8 +122,8 @@ export async function buildModelTokenCandidatesPayload(): Promise<ModelTokenCand
       username: schema.accounts.username,
       siteId: schema.sites.id,
       siteName: schema.sites.name,
-      accessToken: schema.accounts.accessToken,
-      apiToken: schema.accounts.apiToken,
+      credential: schema.accounts.credential,
+      credentialMode: schema.accounts.credentialMode,
       extraConfig: schema.accounts.extraConfig,
     })
     .from(schema.modelAvailability)
@@ -226,8 +237,7 @@ export async function buildModelTokenCandidatesPayload(): Promise<ModelTokenCand
               account: {
                 id: row.accounts.id,
                 username: row.accounts.username,
-                accessToken: row.accounts.accessToken,
-                apiToken: row.accounts.apiToken,
+                credential: row.accounts.credential,
                 extraConfig: row.accounts.extraConfig,
               },
               modelName: "__metadata__",

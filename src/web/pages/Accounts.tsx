@@ -55,6 +55,10 @@ import { shouldIgnoreRowSelectionClick } from "./helpers/rowSelection.js";
 import { SITE_DOCS_URL } from "../docsLink.js";
 import { getSiteInitializationPreset } from "../../shared/siteInitializationPresets.js";
 import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
+import {
+  getPlatformCredentialCapabilities,
+  supportsInteractiveCredentialMode,
+} from "../../shared/platformCredentialCapabilities.js";
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
 import {
@@ -124,7 +128,7 @@ function createTokenForm(credentialMode: "session" | "apikey" = "session") {
   return {
     siteId: 0,
     username: "",
-    accessToken: "",
+    cred: "",
     platformUserId: "",
     refreshToken: "",
     tokenExpiresAt: "",
@@ -135,11 +139,26 @@ function createTokenForm(credentialMode: "session" | "apikey" = "session") {
 
 function createRebindForm(platformUserId = "") {
   return {
-    accessToken: "",
+    cred: "",
     platformUserId,
     refreshToken: "",
     tokenExpiresAt: "",
   };
+}
+
+function sessionCredentialPlaceholderForPlatform(platform?: string | null): string {
+  const kind = getPlatformCredentialCapabilities(platform).sessionCredentialKind;
+  if (kind === "session_cookie_or_api_token") {
+    return "粘贴 Session Cookie 或 API Token";
+  }
+  if (kind === "session_cookie") return "粘贴 Session Cookie";
+  if (kind === "access_token") return "粘贴 Access Token";
+  return "粘贴连接凭据";
+}
+
+function usesNewApiApiTokenCredential(platform?: string | null): boolean {
+  const normalized = String(platform || "").trim().toLowerCase();
+  return normalized === "new-api" || normalized === "anyrouter";
 }
 
 function resolveConnectionsSegment(search: string): ConnectionsSegment {
@@ -379,10 +398,10 @@ export default function Accounts() {
   const [editForm, setEditForm] = useState({
     username: "",
     status: "active",
+    credentialMode: "session" as "session" | "apikey" | "oauth",
     checkinEnabled: true,
     unitCost: "",
-    accessToken: "",
-    apiToken: "",
+    cred: "",
     isPinned: false,
     refreshToken: "",
     tokenExpiresAt: "",
@@ -484,25 +503,33 @@ export default function Accounts() {
   const parsedApiKeys = useMemo(
     () =>
       activeSegment === "apikey"
-        ? parseBatchApiKeys(tokenForm.accessToken)
+        ? parseBatchApiKeys(tokenForm.cred)
         : [],
-    [activeSegment, tokenForm.accessToken],
+    [activeSegment, tokenForm.cred],
   );
   const isBatchApiKeyInput =
     activeSegment === "apikey" && parsedApiKeys.length > 1;
   const siteSelectOptions = useMemo(
     () => [
       { value: "0", label: tr('pages.accounts.selectSite') },
-      ...sites.map((site: any) => ({
+      ...sites.filter((site: any) => supportsInteractiveCredentialMode(
+        site.platform,
+        activeSegment === "apikey" ? "apikey" : "session",
+      )).map((site: any) => ({
         value: String(site.id),
         label: `${site.name} (${site.platform})`,
         description: site.url || undefined,
       })),
     ],
-    [sites],
+    [activeSegment, sites],
   );
   const isSub2ApiSelected =
     (selectedTokenSite?.platform || "").toLowerCase() === "sub2api";
+  const usesNewApiApiToken = usesNewApiApiTokenCredential(selectedTokenSite?.platform);
+  const sessionCredentialPlaceholder = useMemo(
+    () => sessionCredentialPlaceholderForPlatform(selectedTokenSite?.platform),
+    [selectedTokenSite?.platform],
+  );
   const activeAddCredentialMode =
     activeSegment === "apikey" ? "apikey" : "session";
   const createIntentPreset = useMemo(
@@ -695,7 +722,7 @@ export default function Accounts() {
   };
 
   const handleVerifyToken = async () => {
-    if (!tokenForm.siteId || !tokenForm.accessToken) return;
+    if (!tokenForm.siteId || !tokenForm.cred) return;
     if (isBatchApiKeyInput) {
       toast.info(
         `检测到 ${parsedApiKeys.length} 个 API Key，批量模式会在添加时逐条校验`,
@@ -708,7 +735,8 @@ export default function Accounts() {
     try {
       const result = await api.verifyToken({
         siteId: tokenForm.siteId,
-        accessToken: tokenForm.accessToken,
+        cred: activeSegment === "session" ? tokenForm.cred : "",
+        apiKey: activeSegment === "apikey" ? tokenForm.cred : undefined,
         platformUserId: tokenForm.platformUserId
           ? parseInt(tokenForm.platformUserId)
           : undefined,
@@ -739,7 +767,7 @@ export default function Accounts() {
   };
 
   const handleTokenAdd = async () => {
-    if (!tokenForm.siteId || !tokenForm.accessToken) return;
+    if (!tokenForm.siteId || !tokenForm.cred) return;
     if (
       !isBatchApiKeyInput &&
       !verifyResult?.success &&
@@ -755,8 +783,8 @@ export default function Accounts() {
       const result = await api.addAccount({
         siteId: tokenForm.siteId,
         username: tokenForm.username.trim() || undefined,
-        accessToken: tokenForm.accessToken,
-        accessTokens: isBatchApiKeyInput ? parsedApiKeys : undefined,
+        cred: activeSegment === "session" ? tokenForm.cred : undefined,
+        apiKey: activeSegment === "apikey" ? tokenForm.cred : undefined,
         platformUserId: tokenForm.platformUserId
           ? parseInt(tokenForm.platformUserId)
           : undefined,
@@ -1113,8 +1141,9 @@ export default function Accounts() {
       };
     }
     const hasSession =
-      typeof account?.accessToken === "string" &&
-      account.accessToken.trim().length > 0;
+      account?.credentialMode !== "apikey" &&
+      typeof account?.credential === "string" &&
+      account.credential.trim().length > 0;
     return {
       canCheckin: hasSession,
       canRefreshBalance: hasSession,
@@ -1248,20 +1277,25 @@ export default function Accounts() {
 
   const openEditPanel = (account: any) => {
     const managedAuth = extractManagedSub2ApiAuth(account);
-    const proxyUrl = parseAccountExtraConfig(account)?.proxyUrl || "";
+    const accountExtraConfig = parseAccountExtraConfig(account);
+    const proxyUrl = accountExtraConfig.proxyUrl || "";
+    const rawCredentialMode = String(account?.credentialMode || "").trim().toLowerCase();
+    const credentialMode = rawCredentialMode === "apikey" || rawCredentialMode === "oauth"
+      ? rawCredentialMode
+      : "session";
     closeAddPanel();
     setRebindTarget(null);
     setEditingAccount(account);
     setEditForm({
       username: account?.username || "",
       status: account?.status || "active",
+      credentialMode,
       checkinEnabled: account?.checkinEnabled !== false,
       unitCost:
         account?.unitCost === null || account?.unitCost === undefined
           ? ""
           : String(account.unitCost),
-      accessToken: account?.accessToken || "",
-      apiToken: account?.apiToken || "",
+      cred: account?.credential || "",
       isPinned: !!account?.isPinned,
       refreshToken: managedAuth.refreshToken,
       tokenExpiresAt: managedAuth.tokenExpiresAt,
@@ -1285,8 +1319,15 @@ export default function Accounts() {
         unitCost: editForm.unitCost.trim()
           ? Number(editForm.unitCost.trim())
           : null,
-        accessToken: editForm.accessToken.trim(),
-        apiToken: editForm.apiToken.trim() || null,
+        credential:
+          editForm.credentialMode !== "apikey"
+            ? editForm.cred.trim()
+            : undefined,
+        credentialKind: editForm.credentialMode === "oauth"
+          ? "oauth_access_token"
+          : editForm.credentialMode === "session"
+            ? editingAccount?.credentialKind || "adapter_default"
+            : undefined,
         isPinned: editForm.isPinned,
         refreshToken: editForm.refreshToken.trim() || null,
         tokenExpiresAt: editForm.tokenExpiresAt.trim()
@@ -1433,13 +1474,13 @@ export default function Accounts() {
   };
 
   const handleVerifyRebindToken = async () => {
-    if (!rebindTarget || !rebindForm.accessToken.trim()) return;
+    if (!rebindTarget || !rebindForm.cred.trim()) return;
     setRebindVerifying(true);
     setRebindVerifyResult(null);
     try {
       const result = await api.verifyToken({
         siteId: rebindTarget.siteId,
-        accessToken: rebindForm.accessToken.trim(),
+        cred: rebindForm.cred.trim(),
         platformUserId: rebindForm.platformUserId
           ? Number.parseInt(rebindForm.platformUserId, 10)
           : undefined,
@@ -1464,7 +1505,7 @@ export default function Accounts() {
   };
 
   const handleSubmitRebind = async () => {
-    if (!rebindTarget || !rebindForm.accessToken.trim()) return;
+    if (!rebindTarget || !rebindForm.cred.trim()) return;
     if (
       !(
         rebindVerifyResult?.success &&
@@ -1479,7 +1520,7 @@ export default function Accounts() {
     setRebindSaving(true);
     try {
       await api.rebindAccountSession(rebindTarget.id, {
-        accessToken: rebindForm.accessToken.trim(),
+        cred: rebindForm.cred.trim(),
         platformUserId: rebindForm.platformUserId
           ? Number.parseInt(rebindForm.platformUserId, 10)
           : undefined,
@@ -1919,17 +1960,22 @@ export default function Accounts() {
                       }
                     />
                     <Textarea
-                      placeholder={tr('pages.accounts.sessionAccessTokenCookie2')}
-                      value={tokenForm.accessToken}
+                      placeholder={sessionCredentialPlaceholder}
+                      value={tokenForm.cred}
                       onChange={(e) => {
                         setTokenForm((f) => ({
                           ...f,
-                          accessToken: e.target.value.trim(),
+                          cred: e.target.value.trim(),
                         }));
                         setVerifyResult(null);
                       }}
                       className="h-[72px] resize-none font-mono"
                     />
+                    {usesNewApiApiToken ? (
+                      <div className="text-xs text-muted-foreground">
+                        Session Cookie 或站点 Access Token 均保存在这一连接凭据中。
+                      </div>
+                    ) : null}
                     <div className="grid gap-1">
                       <Input
                         placeholder={tr('pages.accounts.id')}
@@ -2027,14 +2073,6 @@ export default function Accounts() {
                                 </strong>
                               </div>
                             )}
-                            <div>
-                              API Key:{" "}
-                              <span className={verifyResult.apiToken ? "font-medium text-foreground" : "font-medium text-muted-foreground"}>
-                                {verifyResult.apiToken
-                                  ? `已找到 (${verifyResult.apiToken.substring(0, 8)}...)`
-                                  : tr('pages.accounts.notFound')}
-                              </span>
-                            </div>
                           </AlertDescription>
                         </Alert>
                       )}
@@ -2076,7 +2114,7 @@ export default function Accounts() {
                         disabled={
                           verifying ||
                           !tokenForm.siteId ||
-                          !tokenForm.accessToken
+                          !tokenForm.cred
                         }
 
 
@@ -2095,7 +2133,7 @@ export default function Accounts() {
                         disabled={
                           saving ||
                           !tokenForm.siteId ||
-                          !tokenForm.accessToken ||
+                          !tokenForm.cred ||
                           !canAddVerifiedConnection
                         }
 
@@ -2247,11 +2285,11 @@ export default function Accounts() {
                 />
                 <Textarea
                   placeholder={tr('pages.accounts.apiKey3')}
-                  value={tokenForm.accessToken}
+                  value={tokenForm.cred}
                   onChange={(e) => {
                     setTokenForm((f) => ({
                       ...f,
-                      accessToken: e.target.value,
+                      cred: e.target.value,
                       credentialMode: "apikey",
                     }));
                     setVerifyResult(null);
@@ -2369,7 +2407,7 @@ export default function Accounts() {
                     disabled={
                       verifying ||
                       !tokenForm.siteId ||
-                      !tokenForm.accessToken ||
+                      !tokenForm.cred ||
                       isBatchApiKeyInput
                     }
 
@@ -2391,7 +2429,7 @@ export default function Accounts() {
                     disabled={
                       saving ||
                       !tokenForm.siteId ||
-                      !tokenForm.accessToken ||
+                      !tokenForm.cred ||
                       !canSubmitApiKeyConnection
                     }
 
@@ -2442,11 +2480,11 @@ export default function Accounts() {
                   <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
                     <Textarea
                       placeholder={tr('pages.accounts.sessionToken2')}
-                      value={rebindForm.accessToken}
+                      value={rebindForm.cred}
                       onChange={(e) => {
                         setRebindForm((prev) => ({
                           ...prev,
-                          accessToken: e.target.value.trim(),
+                          cred: e.target.value.trim(),
                         }));
                         setRebindVerifyResult(null);
                       }}
@@ -2503,9 +2541,6 @@ export default function Accounts() {
                         <AlertDescription>
                           {tr('pages.accounts.user')}{" "}
                           {rebindVerifyResult.userInfo?.username || tr('pages.accounts.unknown2')}
-                          {rebindVerifyResult.apiToken
-                            ? `，已识别 API Key (${String(rebindVerifyResult.apiToken).slice(0, 8)}...)`
-                            : ""}
                         </AlertDescription>
                       </Alert>
                     )}
@@ -2524,7 +2559,7 @@ export default function Accounts() {
                     <Button type="button" variant="outline"
                       onClick={handleVerifyRebindToken}
                       disabled={
-                        rebindVerifying || !rebindForm.accessToken.trim()
+                        rebindVerifying || !rebindForm.cred.trim()
                       }
 
 
@@ -2578,6 +2613,7 @@ export default function Accounts() {
                 <Button type="button"
                   onClick={saveEditPanel}
                   disabled={savingEdit}
+                  data-testid="account-edit-save"
 
                 >
                   {savingEdit ? (
@@ -2593,111 +2629,115 @@ export default function Accounts() {
             }
           >
             {editingAccount ? (
-              <ResponsiveFormGrid>
-                <Input
-                  placeholder={tr('pages.accounts.accountsname')}
-                  value={editForm.username}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      username: e.target.value,
-                    }))
-                  }
-                />
-                <ModernSelect
-                  value={editForm.status}
-                  onChange={(value) =>
-                    setEditForm((prev) => ({ ...prev, status: value }))
-                  }
-                  options={[
-                    { value: "active", label: "active" },
-                    { value: "disabled", label: "disabled" },
-                    { value: "expired", label: "expired" },
-                  ]}
-                  placeholder={tr('components.notificationPanel.status')}
-                />
-                <Input
-                  placeholder={tr('pages.accounts.cost')}
-                  value={editForm.unitCost}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      unitCost: e.target.value,
-                    }))
-                  }
-                />
-                <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                  <Checkbox
-
-                    checked={editForm.checkinEnabled}
-                    onCheckedChange={(checked) => setEditForm((prev) => ({
-                        ...prev,
-                        checkinEnabled: checked === true,
-                      }))}      />
-                  {tr('pages.accounts.enabledsign')}
-                </label>
-                <Input
-                  placeholder="Access Token"
-                  value={editForm.accessToken}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      accessToken: e.target.value,
-                    }))
-                  }
-                  className="font-mono"
-                />
-                <Input
-                  placeholder={tr('pages.accounts.apiToken')}
-                  value={editForm.apiToken}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      apiToken: e.target.value,
-                    }))
-                  }
-                  className="font-mono"
-                />
-                <Input
-                  placeholder={tr('pages.accounts.proxyUrlPlaceholder')}
-                  value={editForm.proxyUrl}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      proxyUrl: e.target.value,
-                    }))
-                  }
-                />
-                <div className="-mt-1 text-xs text-muted-foreground">
-                  {tr('pages.accounts.proxyOverrideDescription')}
-                </div>
-                {(editingAccount?.site?.platform || "").toLowerCase() ===
-                  "sub2api" && (
-                  <>
+              <div className="flex flex-col gap-5">
+                <section className="grid gap-3">
+                  <h3 className="text-sm font-medium">账号设置</h3>
+                  <ResponsiveFormGrid>
                     <Input
-                      placeholder={tr('pages.accounts.sub2apiRefreshToken')}
-                      value={editForm.refreshToken}
+                      placeholder={tr('pages.accounts.accountsname')}
+                      value={editForm.username}
                       onChange={(e) =>
-                        setEditForm((prev) => ({
+                        setEditForm((prev) => ({ ...prev, username: e.target.value }))
+                      }
+                    />
+                    <ModernSelect
+                      value={editForm.status}
+                      onChange={(value) =>
+                        setEditForm((prev) => ({ ...prev, status: value }))
+                      }
+                      options={[
+                        { value: "active", label: "active" },
+                        { value: "disabled", label: "disabled" },
+                        { value: "expired", label: "expired" },
+                      ]}
+                      placeholder={tr('components.notificationPanel.status')}
+                    />
+                    <Input
+                      placeholder={tr('pages.accounts.cost')}
+                      value={editForm.unitCost}
+                      onChange={(e) =>
+                        setEditForm((prev) => ({ ...prev, unitCost: e.target.value }))
+                      }
+                    />
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={editForm.checkinEnabled}
+                        onCheckedChange={(checked) => setEditForm((prev) => ({
                           ...prev,
-                          refreshToken: e.target.value,
-                        }))
+                          checkinEnabled: checked === true,
+                        }))}
+                      />
+                      {tr('pages.accounts.enabledsign')}
+                    </label>
+                  </ResponsiveFormGrid>
+                </section>
+
+                {editForm.credentialMode !== "apikey" ? (
+                  <section className="grid gap-3 border-t pt-4">
+                    <div>
+                      <h3 className="text-sm font-medium">
+                        连接凭据
+                      </h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        此凭据用于账号管理、健康检查与令牌同步，不作为模型调用 Key。
+                      </p>
+                    </div>
+                    <Input
+                      placeholder={sessionCredentialPlaceholderForPlatform(editingAccount?.site?.platform)}
+                      value={editForm.cred}
+                      onChange={(e) =>
+                        setEditForm((prev) => ({ ...prev, cred: e.target.value }))
                       }
                       className="font-mono"
                     />
-                    <Input
-                      placeholder={tr('pages.accounts.tokenExpires')}
-                      value={editForm.tokenExpiresAt}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          tokenExpiresAt: e.target.value.replace(/\D/g, ""),
-                        }))
-                      }
-                    />
-                  </>
+                  </section>
+                ) : (
+                  <section className="border-t pt-4">
+                    <InfoNote>
+                      此账号使用 API Key 连接。模型 API Key 由「账号令牌管理」维护，不在此处编辑。
+                    </InfoNote>
+                  </section>
                 )}
-              </ResponsiveFormGrid>
+
+                {editForm.credentialMode !== "apikey" && (editingAccount?.site?.platform || "").toLowerCase() === "sub2api" ? (
+                  <section className="grid gap-3 border-t pt-4">
+                    <ResponsiveFormGrid>
+                      <Input
+                        placeholder={tr('pages.accounts.sub2apiRefreshToken')}
+                        value={editForm.refreshToken}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, refreshToken: e.target.value }))
+                        }
+                        className="font-mono"
+                      />
+                      <Input
+                        placeholder={tr('pages.accounts.tokenExpires')}
+                        value={editForm.tokenExpiresAt}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({
+                            ...prev,
+                            tokenExpiresAt: e.target.value.replace(/\D/g, ""),
+                          }))
+                        }
+                      />
+                    </ResponsiveFormGrid>
+                  </section>
+                ) : null}
+
+                <section className="grid gap-2 border-t pt-4">
+                  <h3 className="text-sm font-medium">网络</h3>
+                  <Input
+                    placeholder={tr('pages.accounts.proxyUrlPlaceholder')}
+                    value={editForm.proxyUrl}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({ ...prev, proxyUrl: e.target.value }))
+                    }
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    {tr('pages.accounts.proxyOverrideDescription')}
+                  </div>
+                </section>
+              </div>
             ) : null}
           </CenteredModal>
 

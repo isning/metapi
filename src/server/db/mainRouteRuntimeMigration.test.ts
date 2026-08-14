@@ -34,7 +34,8 @@ describe('published main route runtime migration', () => {
         );
         CREATE TABLE route_group_sources (group_route_id INTEGER NOT NULL, source_route_id INTEGER NOT NULL);
         INSERT INTO sites (id, name, url, platform) VALUES (1, 'main-site', 'https://example.test', 'openai');
-        INSERT INTO accounts (id, site_id, access_token) VALUES (1, 1, 'account-token');
+        INSERT INTO accounts (id, site_id, credential_mode, credential, credential_kind)
+          VALUES (1, 1, 'session', 'account-token', 'adapter_default');
         INSERT INTO account_tokens (id, account_id, name, token) VALUES (1, 1, 'default', 'api-token');
         INSERT INTO token_routes (id, model_pattern, display_name, enabled, routing_strategy)
           VALUES (10, 'gpt-4.1', 'GPT 4.1', 1, 'round_robin');

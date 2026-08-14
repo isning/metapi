@@ -111,7 +111,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/verify-token" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "sk-or-session-token",
+    "apiKey": "model-api-key",
     "credentialMode": "apikey"
   }'
 
@@ -121,7 +121,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "sk-or-session-token",
+    "apiKey": "model-api-key",
     "credentialMode": "apikey"
   }'
 ```
@@ -357,7 +357,9 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `siteId` | `number` | 是 | 目标站点 ID |
-| `accessToken` | `string` | 是 | Session Token / Session Cookie / API Key |
+| `credential` | `string` | Session 模式是 | 账号管理连接凭据，例如 Session Cookie 或平台 Access Token |
+| `credentialKind` | `string` | 否 | `session_cookie` / `access_token` / `adapter_default` |
+| `apiKey` | `string` | API Key 模式是 | 模型调用 Key；只写入 `account_tokens` |
 | `platformUserId` | `number` | 否 | 某些 `new-api` / `anyrouter` 站点需要手动传 |
 | `credentialMode` | `string` | 否 | `auto` / `session` / `apikey`，脚本里推荐显式传 |
 
@@ -369,7 +371,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/verify-token" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "sk-fast-verify",
+    "apiKey": "model-api-key",
     "credentialMode": "apikey"
   }'
 ```
@@ -393,7 +395,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/verify-token" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "session=xxxx",
+    "credential": "session=xxxx",
+    "credentialKind": "session_cookie",
     "credentialMode": "session"
   }'
 ```
@@ -408,7 +411,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/verify-token" \
     "username": "alice"
   },
   "balance": 12.34,
-  "apiToken": "sk-generated-by-upstream"
+  "discoveredModelTokenCount": 1
 }
 ```
 
@@ -424,9 +427,10 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/verify-token" \
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `siteId` | `number` | 是 | 目标站点 ID |
-| `accessToken` | `string` | 是 | 输入凭证；即使是 API Key 模式，也先放这里 |
+| `credential` | `string` | Session 模式是 | 账号管理连接凭据，不用于保存模型调用 Key |
+| `credentialKind` | `string` | 否 | `session_cookie` / `access_token` / `adapter_default` |
 | `username` | `string` | 否 | 用户名；Session 模式下通常可由服务端自动识别 |
-| `apiToken` | `string` | 否 | 可显式指定要保存的 API Key；留空时服务端会自动推断 |
+| `apiKey` | `string` | API Key 模式是 | 模型调用 Key；保存到 `account_tokens` |
 | `platformUserId` | `number` | 否 | 平台用户 ID，New API 系站点常用 |
 | `checkinEnabled` | `boolean` | 否 | Session 模式下是否开启签到 |
 | `credentialMode` | `string` | 否 | `auto` / `session` / `apikey` |
@@ -442,7 +446,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "sk-proxy-only",
+    "apiKey": "model-api-key",
     "credentialMode": "apikey"
   }'
 ```
@@ -461,7 +465,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
     "proxyOnly": true
   },
   "modelCount": 1,
-  "apiTokenFound": true,
+  "discoveredModelTokenCount": 0,
   "queued": true,
   "jobId": "task_xxx",
   "message": "已添加为 API Key 账号，后台正在同步模型和路由信息。"
@@ -476,7 +480,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "siteId": 1,
-    "accessToken": "session=xxxx",
+    "credential": "session=xxxx",
+    "credentialKind": "session_cookie",
     "credentialMode": "session",
     "platformUserId": 1001,
     "checkinEnabled": true
@@ -501,7 +506,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts" \
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `accessToken` | `string` | 是 | 新的 Session Token |
+| `credential` | `string` | 是 | 新的 Session Token / Session Cookie |
+| `credentialKind` | `string` | 否 | `session_cookie` / `access_token` / `adapter_default` |
 | `platformUserId` | `number` | 否 | 覆盖或补充平台用户 ID |
 | `refreshToken` | `string` | 否 | `sub2api` 会话可附带 |
 | `tokenExpiresAt` | `number \| string` | 否 | `sub2api` 会话过期时间戳 |
@@ -513,7 +519,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/1/rebind-session" \
   -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "accessToken": "session=new-token",
+    "credential": "session=new-token",
+    "credentialKind": "session_cookie",
     "platformUserId": 1001
   }'
 ```
@@ -525,7 +532,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/1/rebind-session" \
   "success": true,
   "tokenType": "session",
   "credentialMode": "session",
-  "apiTokenFound": true
+  "discoveredModelTokenCount": 1
 }
 ```
 

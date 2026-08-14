@@ -113,7 +113,7 @@ export async function probeRuntimeModel(input: {
   const oauth = getOauthInfoFromAccount(input.account);
   const tokenValue = String(
     input.tokenValue
-    || (oauth ? input.account.accessToken : input.account.apiToken)
+    || (oauth ? input.account.credential : '')
     || '',
   ).trim();
   if (!tokenValue) {

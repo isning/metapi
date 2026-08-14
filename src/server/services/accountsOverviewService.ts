@@ -1,8 +1,8 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import {
-  getCredentialModeFromExtraConfig,
   hasOauthProvider,
+  resolveStoredAccountCredentialMode,
   type AccountCredentialMode,
 } from "./accountExtraConfig.js";
 import {
@@ -57,9 +57,8 @@ function hasSessionTokenValue(value: string | null | undefined): boolean {
 function resolveStoredCredentialMode(
   account: typeof schema.accounts.$inferSelect,
 ): AccountCredentialMode {
-  const fromConfig = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (fromConfig && fromConfig !== "auto") return fromConfig;
-  return hasSessionTokenValue(account.accessToken) ? "session" : "apikey";
+  const mode = resolveStoredAccountCredentialMode(account);
+  return mode === 'oauth' ? 'session' : mode;
 }
 
 function buildCapabilitiesFromCredentialMode(
@@ -99,7 +98,7 @@ function buildCapabilitiesForAccount(
   const credentialMode = resolveStoredCredentialMode(account);
   return buildCapabilitiesFromCredentialMode(
     credentialMode,
-    hasSessionTokenValue(account.accessToken),
+    hasSessionTokenValue(account.credential),
     account,
   );
 }
@@ -205,6 +204,8 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
           accountStatus: row.accounts.status,
           siteStatus: row.sites.status,
           extraConfig: row.accounts.extraConfig,
+          credentialMode: row.accounts.credentialMode,
+          oauthProvider: row.accounts.oauthProvider,
           sessionCapable: capabilities.canRefreshBalance,
           hasDiscoveredModels: (modelCountByAccount[row.accounts.id] || 0) > 0,
         }),

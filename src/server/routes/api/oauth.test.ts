@@ -435,7 +435,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       oauthProvider: 'antigravity',
       oauthProjectId: 'antigravity-auto-project',
       username: 'antigravity-user@example.com',
-      accessToken: 'antigravity-access-token',
+      credential: 'antigravity-access-token',
     });
 
     const parsed = JSON.parse(accounts[0]?.extraConfig || '{}');
@@ -613,12 +613,13 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(accounts[0]).toMatchObject({
       siteId: sites[0]?.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
       checkinEnabled: false,
       status: 'active',
     });
     expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({
-      credentialMode: 'session',
       proxyUrl: 'http://127.0.0.1:7890',
       oauth: {
         email: 'codex-user@example.com',
@@ -654,8 +655,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-existing@example.com',
-      accessToken: 'oauth-access-token-old',
-      apiToken: null,
+      credential: 'oauth-access-token-old',
       checkinEnabled: false,
       status: 'active',
       oauthProvider: 'codex',
@@ -690,7 +690,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
 
     const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
-    expect(updated?.accessToken).toBe('oauth-access-token-new');
+    expect(updated?.credential).toBe('oauth-access-token-new');
     expect(JSON.parse(updated?.extraConfig || '{}')).toMatchObject({
       proxyUrl: 'http://127.0.0.1:7890',
       oauth: {
@@ -867,8 +867,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-clear@example.com',
-      accessToken: 'stable-access-token',
-      apiToken: null,
+      credential: 'stable-access-token',
       checkinEnabled: false,
       status: 'active',
       oauthProvider: 'codex',
@@ -940,7 +939,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     }));
 
     const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
-    expect(stored?.accessToken).toBe('rebound-access-token');
+    expect(stored?.credential).toBe('rebound-access-token');
     expect(stored?.oauthAccountKey).toBe('chatgpt-account-clear-rebound');
     expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
       proxyUrl: null,
@@ -972,8 +971,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'proxy-save@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'proxy-save-account',
@@ -1062,8 +1060,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'proxy-update@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-proxy-update',
@@ -1211,8 +1208,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-existing@example.com',
-      accessToken: 'stable-access-token',
-      apiToken: null,
+      credential: 'stable-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-existing',
@@ -1282,7 +1278,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(stored).toMatchObject({
       id: existing.id,
       username: 'codex-existing@example.com',
-      accessToken: 'stable-access-token',
+      credential: 'stable-access-token',
       oauthAccountKey: 'chatgpt-account-existing',
     });
     expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
@@ -1315,8 +1311,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-existing@example.com',
-      accessToken: 'stable-access-token',
-      apiToken: null,
+      credential: 'stable-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-existing',
@@ -1400,7 +1395,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(stored).toMatchObject({
       id: existing.id,
       status: 'active',
-      accessToken: 'rebound-access-token',
+      credential: 'rebound-access-token',
       oauthAccountKey: 'chatgpt-account-rebound',
     });
   });
@@ -1422,8 +1417,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-existing@example.com',
-      accessToken: 'stable-access-token',
-      apiToken: null,
+      credential: 'stable-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-existing',
@@ -1518,7 +1512,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect(stored).toMatchObject({
         id: existing.id,
         status: 'active',
-        accessToken: 'stable-access-token',
+        credential: 'stable-access-token',
         oauthAccountKey: 'chatgpt-account-existing',
       });
       expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
@@ -1746,7 +1740,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       oauthProvider: 'gemini-cli',
       oauthProjectId: 'first-project-id',
       username: 'gemini-user@example.com',
-      accessToken: 'gemini-access-token',
+      credential: 'gemini-access-token',
     });
 
     const parsed = JSON.parse(accounts[0]?.extraConfig || '{}');
@@ -2051,8 +2045,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-123',
@@ -2181,7 +2174,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const codexAccount = await db.insert(schema.accounts).values({
       siteId: codexSite.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-123',
@@ -2208,7 +2201,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const antigravityAccount = await db.insert(schema.accounts).values({
       siteId: antigravitySite.id,
       username: 'ag-user@example.com',
-      accessToken: 'oauth-access-token',
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'ag-account-123',
@@ -2303,7 +2296,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const firstAccount = await db.insert(schema.accounts).values({
       siteId: codexSite.id,
       username: 'codex-a@example.com',
-      accessToken: 'oauth-access-token-a',
+      credential: 'oauth-access-token-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-a',
@@ -2328,7 +2321,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const secondAccount = await db.insert(schema.accounts).values({
       siteId: codexSite.id,
       username: 'codex-b@example.com',
-      accessToken: 'oauth-access-token-b',
+      credential: 'oauth-access-token-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-b',
@@ -2462,7 +2455,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const firstAccount = await db.insert(schema.accounts).values({
       siteId: codexSite.id,
       username: 'codex-concurrency-a@example.com',
-      accessToken: 'oauth-access-token-a',
+      credential: 'oauth-access-token-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-concurrency-account-a',
@@ -2480,7 +2473,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const secondAccount = await db.insert(schema.accounts).values({
       siteId: codexSite.id,
       username: 'codex-concurrency-b@example.com',
-      accessToken: 'oauth-access-token-b',
+      credential: 'oauth-access-token-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-concurrency-account-b',
@@ -2588,14 +2581,13 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
       username: 'imported-codex@example.com',
-      accessToken: 'imported-access-token',
+      credential: 'imported-access-token',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-imported-123',
       status: 'active',
     });
 
     const parsedExtra = JSON.parse(accounts[0]?.extraConfig || '{}') as {
-      credentialMode?: string;
       oauth?: {
         provider?: string;
         refreshToken?: string;
@@ -2604,7 +2596,10 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         tokenExpiresAt?: number;
       };
     };
-    expect(parsedExtra.credentialMode).toBe('session');
+    expect(accounts[0]).toMatchObject({
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+    });
     expect(parsedExtra.oauth).toMatchObject({
       refreshToken: 'imported-refresh-token',
       email: 'imported-codex@example.com',
@@ -2743,7 +2738,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
       username: 'explicit-user@example.com',
-      accessToken: 'imported-access-token',
+      credential: 'imported-access-token',
       oauthProvider: 'codex',
       oauthAccountKey: 'explicit-account-id',
       status: 'disabled',
@@ -2992,8 +2987,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-a@example.com',
-      accessToken: 'oauth-access-token-a',
-      apiToken: null,
+      credential: 'oauth-access-token-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-pool-a',
@@ -3010,8 +3004,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountB = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-b@example.com',
-      accessToken: 'oauth-access-token-b',
-      apiToken: null,
+      credential: 'oauth-access-token-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-pool-b',
@@ -3123,7 +3116,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const first = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-create-a@example.com',
-      accessToken: 'rollback-create-access-a',
+      credential: 'rollback-create-access-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-create-a',
@@ -3140,7 +3133,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const second = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-create-b@example.com',
-      accessToken: 'rollback-create-access-b',
+      credential: 'rollback-create-access-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-create-b',
@@ -3203,7 +3196,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const first = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-delete-a@example.com',
-      accessToken: 'rollback-delete-access-a',
+      credential: 'rollback-delete-access-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-delete-a',
@@ -3220,7 +3213,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const second = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-delete-b@example.com',
-      accessToken: 'rollback-delete-access-b',
+      credential: 'rollback-delete-access-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-delete-b',
@@ -3294,7 +3287,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const first = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-delete-double-fail-a@example.com',
-      accessToken: 'rollback-delete-double-fail-access-a',
+      credential: 'rollback-delete-double-fail-access-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-delete-double-fail-a',
@@ -3311,7 +3304,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const second = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rollback-delete-double-fail-b@example.com',
-      accessToken: 'rollback-delete-double-fail-access-b',
+      credential: 'rollback-delete-double-fail-access-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'rollback-delete-double-fail-b',
@@ -3385,7 +3378,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const first = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'normalized-strategy-a@example.com',
-      accessToken: 'normalized-strategy-access-a',
+      credential: 'normalized-strategy-access-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'normalized-strategy-a',
@@ -3402,7 +3395,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const second = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'normalized-strategy-b@example.com',
-      accessToken: 'normalized-strategy-access-b',
+      credential: 'normalized-strategy-access-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'normalized-strategy-b',
@@ -3542,8 +3535,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const first = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-a@example.com',
-      accessToken: 'access-a',
-      apiToken: null,
+      credential: 'access-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'pool-a',
@@ -3552,8 +3544,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const second = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-b@example.com',
-      accessToken: 'access-b',
-      apiToken: null,
+      credential: 'access-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'pool-b',
@@ -3659,8 +3650,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-save-proxy@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'codex-save-proxy-account',
@@ -3802,8 +3792,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-a@example.com',
-      accessToken: 'oauth-access-pool-a',
-      apiToken: null,
+      credential: 'oauth-access-pool-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'pool-account-a',
@@ -3820,8 +3809,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountB = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-b@example.com',
-      accessToken: 'oauth-access-pool-b',
-      apiToken: null,
+      credential: 'oauth-access-pool-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'pool-account-b',
@@ -3918,8 +3906,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'split-a@example.com',
-      accessToken: 'oauth-access-split-a',
-      apiToken: null,
+      credential: 'oauth-access-split-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'split-account-a',
@@ -3936,8 +3923,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const accountB = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'split-b@example.com',
-      accessToken: 'oauth-access-split-b',
-      apiToken: null,
+      credential: 'oauth-access-split-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'split-account-b',
@@ -4119,7 +4105,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'legacy-user@example.com',
-      accessToken: 'legacy-oauth-access-token',
+      credential: 'legacy-oauth-access-token',
       status: 'active',
       extraConfig: JSON.stringify({
         oauth: {

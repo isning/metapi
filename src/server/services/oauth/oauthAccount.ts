@@ -23,7 +23,7 @@ type ParsedExtraConfig = {
   oauth?: ParsedOauthInfo;
 };
 
-type ExtraConfigInput = string | Record<string, unknown> | null | undefined;
+export type OauthExtraConfigInput = string | Record<string, unknown> | null | undefined;
 
 export type OauthModelDiscoveryStatus = 'healthy' | 'abnormal';
 
@@ -48,7 +48,7 @@ export type OauthInfo = {
 export type StoredOauthState = Omit<OauthInfo, 'provider' | 'accountId' | 'accountKey' | 'projectId'>;
 
 type OauthIdentityCarrier = {
-  extraConfig?: ExtraConfigInput;
+  extraConfig?: OauthExtraConfigInput;
   oauthProvider?: string | null;
   oauthAccountKey?: string | null;
   oauthProjectId?: string | null;
@@ -60,7 +60,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function parseExtraConfig(extraConfig?: ExtraConfigInput): ParsedExtraConfig {
+function parseExtraConfig(extraConfig?: OauthExtraConfigInput): ParsedExtraConfig {
   if (!extraConfig) return {};
   if (isRecord(extraConfig)) return extraConfig as ParsedExtraConfig;
   if (typeof extraConfig !== 'string') return {};
@@ -123,7 +123,7 @@ function asModelDiscoveryStatus(value: unknown): OauthModelDiscoveryStatus | und
   return undefined;
 }
 
-function parseStoredOauthIdentity(extraConfig?: ExtraConfigInput): StoredOauthIdentity | null {
+function parseStoredOauthIdentity(extraConfig?: OauthExtraConfigInput): StoredOauthIdentity | null {
   const parsed = parseExtraConfig(extraConfig).oauth;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const accountKey = asTrimmedString(parsed.accountKey) || asTrimmedString(parsed.accountId);
@@ -137,7 +137,7 @@ function parseStoredOauthIdentity(extraConfig?: ExtraConfigInput): StoredOauthId
   };
 }
 
-function parseStoredOauthRuntimeState(extraConfig?: ExtraConfigInput): Partial<OauthInfo> | null {
+function parseStoredOauthRuntimeState(extraConfig?: OauthExtraConfigInput): Partial<OauthInfo> | null {
   const parsed = parseExtraConfig(extraConfig).oauth;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   return {
@@ -155,7 +155,7 @@ function parseStoredOauthRuntimeState(extraConfig?: ExtraConfigInput): Partial<O
   };
 }
 
-export function getOauthInfoFromExtraConfig(extraConfig?: ExtraConfigInput): OauthInfo | null {
+export function getOauthInfoFromExtraConfig(extraConfig?: OauthExtraConfigInput): OauthInfo | null {
   const identity = parseStoredOauthIdentity(extraConfig);
   const runtime = parseStoredOauthRuntimeState(extraConfig);
   const provider = identity?.provider;
@@ -198,29 +198,8 @@ export function getOauthInfoFromAccount(account?: OauthIdentityCarrier | null): 
   };
 }
 
-export function buildOauthIdentityBackfillPatch(
-  account?: OauthIdentityCarrier | null,
-): Partial<Pick<OauthIdentityCarrier, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId'>> | null {
-  if (!account) return null;
-  const legacyIdentity = parseStoredOauthIdentity(account.extraConfig);
-  if (!legacyIdentity?.provider) return null;
-
-  const patch: Partial<Pick<OauthIdentityCarrier, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId'>> = {};
-  if (!asTrimmedString(account.oauthProvider)) {
-    patch.oauthProvider = legacyIdentity.provider;
-  }
-  if (!asTrimmedString(account.oauthAccountKey) && (legacyIdentity.accountKey || legacyIdentity.accountId)) {
-    patch.oauthAccountKey = legacyIdentity.accountKey || legacyIdentity.accountId;
-  }
-  if (!asTrimmedString(account.oauthProjectId) && legacyIdentity.projectId) {
-    patch.oauthProjectId = legacyIdentity.projectId;
-  }
-
-  return Object.keys(patch).length > 0 ? patch : null;
-}
-
 export function buildOauthInfo(
-  extraConfig?: ExtraConfigInput,
+  extraConfig?: OauthExtraConfigInput,
   patch: Partial<OauthInfo> = {},
 ): OauthInfo {
   const provider = patch.provider || getOauthInfoFromExtraConfig(extraConfig)?.provider;

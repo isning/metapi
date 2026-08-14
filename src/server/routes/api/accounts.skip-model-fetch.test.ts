@@ -74,7 +74,7 @@ describe('accounts skipModelFetch behavior', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-test-skip-fetch',
+        apiKey: 'sk-test-skip-fetch',
         credentialMode: 'apikey',
         skipModelFetch: true,
       },
@@ -107,7 +107,7 @@ describe('accounts skipModelFetch behavior', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-test-normal-fetch',
+        apiKey: 'sk-test-normal-fetch',
         credentialMode: 'apikey',
         skipModelFetch: false,
       },

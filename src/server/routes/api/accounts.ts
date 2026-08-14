@@ -9,13 +9,13 @@ import {
   rebuildRoutesBestEffort,
 } from "../../services/accountMutationWorkflow.js";
 import {
-  getCredentialModeFromExtraConfig,
   getProxyUrlFromExtraConfig,
   guessPlatformUserIdFromUsername,
   hasOauthProvider,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   normalizeCredentialMode as normalizeCredentialModeInput,
+  resolveStoredAccountCredentialMode,
   resolvePlatformUserId,
   type AccountCredentialMode,
 } from "../../services/accountExtraConfig.js";
@@ -115,12 +115,35 @@ function resolveRequestedCredentialMode(input: unknown): AccountCredentialMode {
   return normalizeCredentialModeInput(input) || "auto";
 }
 
+function supportsRequestedCredentialMode(
+  adapter: NonNullable<ReturnType<typeof getAdapter>>,
+  credentialMode: AccountCredentialMode,
+): boolean {
+  if (credentialMode === "auto") return true;
+  // All concrete adapters expose this capability. The fallback preserves
+  // compatibility with legacy third-party adapters while they migrate.
+  const capabilities = adapter.credentialCapabilities || {
+    session: true,
+    apiKey: true,
+  };
+  return credentialMode === "session"
+    ? capabilities.session
+    : capabilities.apiKey;
+}
+
+function unsupportedCredentialModeMessage(
+  credentialMode: AccountCredentialMode,
+): string {
+  return credentialMode === "session"
+    ? "此站点仅支持 API Key，请在「API Key 管理」中添加。"
+    : "此站点不支持 API Key 连接。";
+}
+
 function resolveStoredCredentialMode(
   account: typeof schema.accounts.$inferSelect,
 ): AccountCredentialMode {
-  const fromConfig = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (fromConfig && fromConfig !== "auto") return fromConfig;
-  return hasSessionTokenValue(account.accessToken) ? "session" : "apikey";
+  const mode = resolveStoredAccountCredentialMode(account);
+  return mode === 'oauth' ? 'session' : mode;
 }
 
 function buildCapabilitiesFromCredentialMode(
@@ -160,7 +183,7 @@ function buildCapabilitiesForAccount(
   const credentialMode = resolveStoredCredentialMode(account);
   return buildCapabilitiesFromCredentialMode(
     credentialMode,
-    hasSessionTokenValue(account.accessToken),
+    hasSessionTokenValue(account.credential),
     account,
   );
 }
@@ -189,13 +212,11 @@ function resolveRequestedCreateTokens(
   credentialMode: AccountCredentialMode,
 ): string[] {
   if (credentialMode !== "apikey") {
-    const single = String(body.accessToken || "").trim();
+    const single = String(body.credential || "").trim();
     return single ? [single] : [];
   }
 
-  const batchTokens = parseBatchApiKeys(body.accessTokens);
-  if (batchTokens.length > 0) return batchTokens;
-  return parseBatchApiKeys(body.accessToken);
+  return parseBatchApiKeys(body.apiKey);
 }
 
 function normalizeSortOrder(input: unknown): number | null {
@@ -433,6 +454,8 @@ async function refreshRuntimeHealthForRow(
       accountStatus: refreshedAccount?.status || row.accounts.status,
       siteStatus: row.sites.status,
       extraConfig: refreshedAccount?.extraConfig ?? row.accounts.extraConfig,
+      credentialMode: refreshedAccount?.credentialMode ?? row.accounts.credentialMode,
+      oauthProvider: refreshedAccount?.oauthProvider ?? row.accounts.oauthProvider,
       sessionCapable: capabilities.canRefreshBalance,
     });
 
@@ -579,7 +602,6 @@ export async function accountsRoutes(app: FastifyInstance) {
         .get();
 
       const extraConfigPatch: Record<string, unknown> = {
-        credentialMode: "session",
         autoRelogin: {
           username,
           passwordCipher: encryptAccountPassword(password),
@@ -600,8 +622,9 @@ export async function accountsRoutes(app: FastifyInstance) {
         await db
           .update(schema.accounts)
           .set({
-            accessToken: loginResult.accessToken,
-            apiToken: preferredApiToken || undefined,
+            credential: loginResult.accessToken,
+            credentialMode: 'session',
+            credentialKind: 'adapter_default',
             checkinEnabled: true,
             status: "active",
             extraConfig,
@@ -618,8 +641,9 @@ export async function accountsRoutes(app: FastifyInstance) {
           values: {
             siteId,
             username,
-            accessToken: loginResult.accessToken,
-            apiToken: preferredApiToken || undefined,
+            credential: loginResult.accessToken,
+            credentialMode: 'session',
+            credentialKind: 'adapter_default',
             checkinEnabled: true,
             extraConfig,
             isPinned: false,
@@ -679,10 +703,12 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       const { siteId, platformUserId } = parsedBody.data;
-      const accessToken = (parsedBody.data.accessToken || "").trim();
       const credentialMode = resolveRequestedCredentialMode(
         parsedBody.data.credentialMode,
       );
+      const accessToken = (credentialMode === "apikey"
+        ? parsedBody.data.apiKey || ""
+        : parsedBody.data.credential || "").trim();
       const site = await db
         .select()
         .from(schema.sites)
@@ -691,12 +717,23 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (!site) return { success: false, message: "site not found" };
 
       if (!accessToken) {
-        return { success: false, message: "Token 不能为空" };
+        return {
+          success: false,
+          message: credentialMode === "apikey"
+            ? "API Key 不能为空"
+            : "连接凭据不能为空",
+        };
       }
 
       const adapter = getAdapter(site.platform);
       if (!adapter)
         return { success: false, message: `不支持的平台: ${site.platform}` };
+      if (!supportsRequestedCredentialMode(adapter, credentialMode)) {
+        return {
+          success: false,
+          message: unsupportedCredentialModeMessage(credentialMode),
+        };
+      }
 
       const normalizedPlatform = String(
         adapter.platformName || site.platform || "",
@@ -937,7 +974,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           tokenType: "session",
           userInfo: result.userInfo,
           balance: result.balance,
-          apiToken: result.apiToken,
+          discoveredModelTokenCount: result.discoveredModelToken ? 1 : 0,
         };
       }
 
@@ -1103,7 +1140,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           .send({ success: false, message: "账号 ID 无效" });
       }
 
-      const nextAccessToken = (parsedBody.data.accessToken || "").trim();
+      const nextAccessToken = (parsedBody.data.credential || "").trim();
       if (!nextAccessToken) {
         return reply
           .code(400)
@@ -1130,6 +1167,12 @@ export async function accountsRoutes(app: FastifyInstance) {
             success: false,
             message: `platform not supported: ${site.platform}`,
           });
+      }
+      if (!supportsRequestedCredentialMode(adapter, "session")) {
+        return reply.code(400).send({
+          success: false,
+          message: unsupportedCredentialModeMessage("session"),
+        });
       }
 
       const bodyPlatformUserId = Number.parseInt(
@@ -1181,26 +1224,22 @@ export async function accountsRoutes(app: FastifyInstance) {
         Number.isFinite(bodyPlatformUserId) && bodyPlatformUserId > 0
           ? bodyPlatformUserId
           : inferredPlatformUserId;
-      const nextApiToken =
-        typeof verifyResult?.apiToken === "string" &&
-        verifyResult.apiToken.trim().length > 0
-          ? verifyResult.apiToken.trim()
-          : account.apiToken || "";
+      const discoveredModelToken =
+        typeof verifyResult?.discoveredModelToken === "string" && verifyResult.discoveredModelToken.trim().length > 0
+          ? verifyResult.discoveredModelToken.trim()
+          : null;
 
       const updates: Record<string, unknown> = {
-        accessToken: nextAccessToken,
+        credential: nextAccessToken,
+        credentialMode: 'session',
+        credentialKind: parsedBody.data.credentialKind || account.credentialKind || 'adapter_default',
         status: "active",
         updatedAt: new Date().toISOString(),
       };
       if (nextUsername) {
         updates.username = nextUsername;
       }
-      if (nextApiToken) {
-        updates.apiToken = nextApiToken;
-      }
-      const extraConfigPatch: Record<string, unknown> = {
-        credentialMode: "session",
-      };
+      const extraConfigPatch: Record<string, unknown> = {};
       if (resolvedPlatformUserId) {
         extraConfigPatch.platformUserId = resolvedPlatformUserId;
       }
@@ -1240,7 +1279,7 @@ export async function accountsRoutes(app: FastifyInstance) {
 
       await convergeAccountMutation({
         accountId,
-        preferredApiToken: nextApiToken,
+        preferredApiToken: discoveredModelToken,
         defaultTokenSource: "sync",
         refreshBalance: true,
         refreshModels: true,
@@ -1261,7 +1300,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         capabilities: latest
           ? buildCapabilitiesForAccount(latest)
           : buildCapabilitiesFromCredentialMode("session", true, null),
-        apiTokenFound: !!nextApiToken,
+        discoveredModelTokenCount: discoveredModelToken ? 1 : 0,
       };
     },
   );
@@ -1297,17 +1336,28 @@ export async function accountsRoutes(app: FastifyInstance) {
         });
     }
 
-    const explicitBatchTokens = parseBatchApiKeys(body.accessTokens);
+    const explicitApiKeys = parseBatchApiKeys(body.apiKey);
     const credentialMode =
-      explicitBatchTokens.length > 0
+      explicitApiKeys.length > 0
         ? "apikey"
         : resolveRequestedCredentialMode(body.credentialMode);
+    if (!supportsRequestedCredentialMode(adapter, credentialMode)) {
+      return reply.code(400).send({
+        success: false,
+        message: unsupportedCredentialModeMessage(credentialMode),
+      });
+    }
     const requestedTokens =
-      explicitBatchTokens.length > 0
-        ? explicitBatchTokens
+      explicitApiKeys.length > 0
+        ? explicitApiKeys
         : resolveRequestedCreateTokens(body, credentialMode);
     if (requestedTokens.length === 0) {
-      return reply.code(400).send({ success: false, message: "请填写 Token" });
+      return reply.code(400).send({
+          success: false,
+          message: credentialMode === "apikey"
+            ? "请填写 API Key"
+            : "请填写连接凭据",
+      });
     }
 
     if (credentialMode === "apikey" && requestedTokens.length > 1) {
@@ -1386,7 +1436,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         credentialMode: resolveStoredCredentialMode(created.account),
         capabilities: buildCapabilitiesForAccount(created.account),
         modelCount: created.modelCount,
-        apiTokenFound: created.apiTokenFound,
+        discoveredModelTokenCount: created.discoveredModelTokenCount,
         usernameDetected: created.usernameDetected,
         queued: created.queued,
         jobId: created.jobId,
@@ -1414,6 +1464,11 @@ export async function accountsRoutes(app: FastifyInstance) {
         return reply.code(400).send({ message: parsedBody.error });
       }
       const body = parsedBody.data as Record<string, unknown>;
+      if (body.credentialMode !== undefined) {
+        return reply.code(400).send({
+          message: "账号凭据模式不可切换，请在对应连接管理页面重新创建。",
+        });
+      }
       const row = await db
         .select()
         .from(schema.accounts)
@@ -1425,11 +1480,17 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
       const account = row.accounts;
       const site = row.sites;
+      const storedCredentialMode = resolveStoredAccountCredentialMode(account);
+      if (storedCredentialMode === 'apikey' && Object.prototype.hasOwnProperty.call(body, 'credential')) {
+        return reply.code(400).send({
+          message: 'API Key 连接的模型 Key 必须通过账号令牌管理更新。',
+        });
+      }
       const updates: any = {};
       for (const key of [
         "username",
-        "accessToken",
-        "apiToken",
+        "credential",
+        "credentialKind",
         "status",
         "checkinEnabled",
         "unitCost",
@@ -1518,35 +1579,14 @@ export async function accountsRoutes(app: FastifyInstance) {
         });
       }
 
-      const nextAccessToken =
-        typeof updates.accessToken === "string"
-          ? updates.accessToken
-          : account.accessToken;
-      const nextApiToken = Object.prototype.hasOwnProperty.call(
-        updates,
-        "apiToken",
-      )
-        ? updates.apiToken
-        : account.apiToken;
-      const nextExtraConfig =
-        typeof updates.extraConfig === "string"
-          ? updates.extraConfig
-          : account.extraConfig;
-      const explicitNextMode =
-        getCredentialModeFromExtraConfig(nextExtraConfig);
-      const nextCredentialMode =
-        explicitNextMode && explicitNextMode !== "auto"
-          ? explicitNextMode
-          : hasSessionTokenValue(nextAccessToken)
-            ? "session"
-            : "apikey";
+      const nextCredentialMode = storedCredentialMode === 'oauth' ? 'session' : storedCredentialMode;
+      const credentialsChanged = Object.prototype.hasOwnProperty.call(body, 'credential');
       const nextStatus =
         typeof updates.status === "string" && updates.status.trim()
           ? updates.status.trim()
           : account.status || "active";
       const needsModelRefresh =
-        Object.prototype.hasOwnProperty.call(body, "accessToken") ||
-        Object.prototype.hasOwnProperty.call(body, "apiToken") ||
+        credentialsChanged ||
         Object.prototype.hasOwnProperty.call(body, "extraConfig") ||
         Object.prototype.hasOwnProperty.call(body, "proxyUrl") ||
         wantsManagedSub2ApiAuthPatch;
@@ -1560,8 +1600,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const { account: updatedAccount } = await applyAccountUpdateWorkflow({
         accountId: id,
         updates,
-        preferredApiToken:
-          nextCredentialMode !== "apikey" ? nextApiToken : null,
+        preferredApiToken: null,
         refreshModels: needsModelRefresh,
         preserveExpiredStatus: isExpiredApiKeyAccount,
         allowInactiveModelRefresh: shouldAttemptExpiredApiKeyRecovery,

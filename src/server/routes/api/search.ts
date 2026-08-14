@@ -2,19 +2,12 @@ import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { like, desc, eq, or } from 'drizzle-orm';
 import { getProxyLogBaseSelectFields } from '../../services/proxyLogStore.js';
-import { getCredentialModeFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { resolveStoredAccountCredentialMode } from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import { listActiveCompiledRuntimeModelInventory } from '../../services/compiledRuntimeInventoryService.js';
 
-function hasSessionTokenValue(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
 function resolveAccountSearchSegment(account: typeof schema.accounts.$inferSelect): 'session' | 'apikey' {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit === 'apikey') return 'apikey';
-  if (explicit === 'session') return 'session';
-  return hasSessionTokenValue(account.accessToken) ? 'session' : 'apikey';
+  return resolveStoredAccountCredentialMode(account) === 'apikey' ? 'apikey' : 'session';
 }
 
 function normalizeSearchQuery(input: string): string {
@@ -71,8 +64,7 @@ export async function searchRoutes(app: FastifyInstance) {
       ? await db.select().from(schema.accounts)
         .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
         .where(or(
-          eq(schema.accounts.accessToken, ''),
-          like(schema.accounts.extraConfig, '%"credentialMode":"apikey"%'),
+          eq(schema.accounts.credentialMode, 'apikey'),
         ))
         .limit(perCategory)
         .all()
@@ -84,7 +76,23 @@ export async function searchRoutes(app: FastifyInstance) {
     })])).values()].slice(0, perCategory);
 
     // Search account tokens by token name/group/account/site
-    const tokenResults = await db.select().from(schema.accountTokens)
+    const tokenResults = await db.select({
+      account_tokens: {
+        id: schema.accountTokens.id,
+        accountId: schema.accountTokens.accountId,
+        name: schema.accountTokens.name,
+        tokenGroup: schema.accountTokens.tokenGroup,
+        compatibilityPolicy: schema.accountTokens.compatibilityPolicy,
+        valueStatus: schema.accountTokens.valueStatus,
+        source: schema.accountTokens.source,
+        enabled: schema.accountTokens.enabled,
+        isDefault: schema.accountTokens.isDefault,
+        createdAt: schema.accountTokens.createdAt,
+        updatedAt: schema.accountTokens.updatedAt,
+      },
+      accounts: schema.accounts,
+      sites: schema.sites,
+    }).from(schema.accountTokens)
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(or(

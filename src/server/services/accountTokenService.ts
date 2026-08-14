@@ -1,7 +1,6 @@
-﻿import { and, eq, ne } from 'drizzle-orm';
+﻿import { and, eq, inArray, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
-import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 
 type UpstreamApiToken = {
   name?: string | null;
@@ -10,7 +9,12 @@ type UpstreamApiToken = {
   tokenGroup?: string | null;
 };
 
-type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+export type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+export type AccountTokenOwnerRow = {
+  token: AccountTokenRow;
+  account: typeof schema.accounts.$inferSelect;
+  site: typeof schema.sites.$inferSelect;
+};
 
 export const ACCOUNT_TOKEN_VALUE_STATUS_READY = 'ready' as const;
 export const ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING = 'masked_pending' as const;
@@ -21,12 +25,9 @@ export type AccountTokenValueStatus =
 export function normalizeTokenForDisplay(token?: string | null, platform?: string | null): string {
   if (!token) return '';
   const value = token.trim();
-  if (!value) return '';
   if (platform !== undefined) {
-    // Keep the parameter for route-level compatibility; display rule is now global.
-  }
-  if (!value.toLowerCase().startsWith('sk-')) {
-    return `sk-${value}`;
+    // Keep the parameter for route-level compatibility. Token values are opaque
+    // credentials and must never be rewritten based on a platform convention.
   }
   return value;
 }
@@ -158,32 +159,124 @@ function sameTokenGroup(
   return normalizeTokenGroup(leftGroup, leftName) === normalizeTokenGroup(rightGroup, rightName);
 }
 
-type AccountTokenDb = typeof db;
+export type AccountTokenDb = typeof db;
 
-async function updateAccountApiToken(
+export async function listAccountTokens(
   accountId: number,
-  tokenValue: string | null,
-  connection: AccountTokenDb = db,
-) {
-  await connection.update(schema.accounts)
-    .set({ apiToken: tokenValue || null, updatedAt: new Date().toISOString() })
-    .where(eq(schema.accounts.id, accountId))
-    .run();
+  database: AccountTokenDb = db,
+): Promise<AccountTokenRow[]> {
+  return database.select()
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, accountId))
+    .all();
 }
 
-function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return normalizeTokenValue(account.accessToken) === null;
+export async function listAllAccountTokens(
+  database: AccountTokenDb = db,
+): Promise<AccountTokenRow[]> {
+  return database.select().from(schema.accountTokens).all();
+}
+
+export async function listUsableAccountTokens(
+  accountId: number,
+  database: AccountTokenDb = db,
+): Promise<AccountTokenRow[]> {
+  const rows = await database.select()
+    .from(schema.accountTokens)
+    .where(and(
+      eq(schema.accountTokens.accountId, accountId),
+      eq(schema.accountTokens.enabled, true),
+      eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+    ))
+    .all();
+  return rows.filter(isUsableAccountToken);
+}
+
+export async function getAccountTokenById(
+  tokenId: number,
+  database: AccountTokenDb = db,
+): Promise<AccountTokenRow | null> {
+  return await database.select()
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.id, tokenId))
+    .get() ?? null;
+}
+
+export async function listAccountTokensByIds(
+  tokenIds: number[],
+  database: AccountTokenDb = db,
+): Promise<AccountTokenRow[]> {
+  const ids = Array.from(new Set(tokenIds.filter((id) => Number.isSafeInteger(id) && id > 0)));
+  if (ids.length === 0) return [];
+  return database.select()
+    .from(schema.accountTokens)
+    .where(inArray(schema.accountTokens.id, ids))
+    .all();
+}
+
+export async function getAccountTokenWithOwner(
+  tokenId: number,
+  database: AccountTokenDb = db,
+): Promise<AccountTokenOwnerRow | null> {
+  const row = await database.select({
+    token: schema.accountTokens,
+    account: schema.accounts,
+    site: schema.sites,
+  })
+    .from(schema.accountTokens)
+    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(eq(schema.accountTokens.id, tokenId))
+    .get();
+  return row ?? null;
+}
+
+export async function listAvailableModelTokenCredentials(): Promise<Array<{
+  modelName: string;
+  accountId: number;
+  siteId: number;
+  accountCredential: string;
+  accountCredentialMode: string;
+  accountExtraConfig: string | null;
+  accountOauthProvider: string | null;
+  tokenId: number;
+  token: string;
+  tokenEnabled: boolean | null;
+  tokenValueStatus: string;
+}>> {
+  const rows = await db.select({
+    modelName: schema.tokenModelAvailability.modelName,
+    accountId: schema.accounts.id,
+    siteId: schema.accounts.siteId,
+    accountCredential: schema.accounts.credential,
+    accountCredentialMode: schema.accounts.credentialMode,
+    accountExtraConfig: schema.accounts.extraConfig,
+    accountOauthProvider: schema.accounts.oauthProvider,
+    tokenId: schema.accountTokens.id,
+    token: schema.accountTokens.token,
+    tokenEnabled: schema.accountTokens.enabled,
+    tokenValueStatus: schema.accountTokens.valueStatus,
+  }).from(schema.tokenModelAvailability)
+    .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
+    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(and(
+      eq(schema.tokenModelAvailability.available, true),
+      eq(schema.accountTokens.enabled, true),
+      eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+      eq(schema.accounts.status, 'active'),
+      eq(schema.sites.status, 'active'),
+    ))
+    .all();
+  return rows.filter((row) => isUsableAccountToken({
+    enabled: row.tokenEnabled,
+    token: row.token,
+    valueStatus: row.tokenValueStatus,
+  } as AccountTokenRow));
 }
 
 export async function getPreferredAccountToken(accountId: number) {
-  const tokens = await db.select()
-    .from(schema.accountTokens)
-    .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.enabled, true)))
-    .all();
-
-  const usableTokens = tokens.filter(isUsableAccountToken);
+  const usableTokens = await listUsableAccountTokens(accountId);
   if (usableTokens.length === 0) return null;
 
   const preferred = usableTokens.find((t) => t.isDefault) || usableTokens[0];
@@ -202,10 +295,7 @@ export async function ensureDefaultTokenForAccount(
 
   return db.transaction(async (tx: AccountTokenDb) => {
     const now = new Date().toISOString();
-    const tokens = await tx.select()
-      .from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, accountId))
-      .all();
+    const tokens = await listAccountTokens(accountId, tx);
 
     let target = tokens.find((t) => t.token === normalizedToken) || null;
     if (!target) {
@@ -225,7 +315,7 @@ export async function ensureDefaultTokenForAccount(
         .run();
       const insertedId = getInsertedRowId(inserted);
       target = insertedId != null
-        ? (await tx.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get()) ?? null
+        ? await getAccountTokenById(insertedId, tx)
         : null;
       if (!target) return null;
     } else {
@@ -248,14 +338,13 @@ export async function ensureDefaultTokenForAccount(
       .where(and(eq(schema.accountTokens.accountId, accountId), ne(schema.accountTokens.id, target.id)))
       .run();
 
-    await updateAccountApiToken(accountId, normalizedToken, tx);
     return target.id;
   });
 }
 
 export async function setDefaultToken(tokenId: number): Promise<boolean> {
   return db.transaction(async (tx: AccountTokenDb) => {
-    const target = await tx.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    const target = await getAccountTokenById(tokenId, tx);
     if (!target || !isUsableAccountToken(target)) return false;
     const now = new Date().toISOString();
     await tx.update(schema.accountTokens)
@@ -268,21 +357,16 @@ export async function setDefaultToken(tokenId: number): Promise<boolean> {
       .where(eq(schema.accountTokens.id, tokenId))
       .run();
 
-    await updateAccountApiToken(target.accountId, target.token, tx);
     return true;
   });
 }
 
 export async function repairDefaultToken(accountId: number) {
   return db.transaction(async (tx: AccountTokenDb) => {
-    const tokens = await tx.select()
-      .from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, accountId))
-      .all();
+    const tokens = await listAccountTokens(accountId, tx);
 
     const enabled = tokens.filter(isUsableAccountToken);
     if (enabled.length === 0) {
-      await updateAccountApiToken(accountId, null, tx);
       return null;
     }
 
@@ -299,17 +383,13 @@ export async function repairDefaultToken(accountId: number) {
       .where(eq(schema.accountTokens.id, currentDefault.id))
       .run();
 
-    await updateAccountApiToken(accountId, currentDefault.token, tx);
     return currentDefault;
   });
 }
 
 export async function syncTokensFromUpstream(accountId: number, upstreamTokens: UpstreamApiToken[]) {
   const now = new Date().toISOString();
-  const existing = await db.select()
-    .from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+  const existing = await listAccountTokens(accountId);
 
   let created = 0;
   let updated = 0;
@@ -462,7 +542,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       .run();
     const insertedId = getInsertedRowId(inserted);
     if (insertedId == null) continue;
-    const createdRow = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get();
+    const createdRow = await getAccountTokenById(insertedId);
     if (!createdRow) continue;
 
     existing.push(createdRow);
@@ -496,9 +576,7 @@ export async function listTokensWithRelations(accountId?: number) {
     ? await base.where(eq(schema.accountTokens.accountId, accountId)).all()
     : await base.all();
 
-  return rows
-    .filter((row) => !isApiKeyConnection(row.accounts))
-    .map((row) => {
+  return rows.map((row) => {
     const { token, ...tokenMeta } = row.account_tokens;
     return {
       ...tokenMeta,

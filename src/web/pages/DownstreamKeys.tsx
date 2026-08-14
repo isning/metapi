@@ -617,18 +617,28 @@ export default function DownstreamKeys() {
         .sort((left, right) => left.siteName.localeCompare(right.siteName));
 
       const credentialOptions: DownstreamCredentialOption[] = [];
+      const defaultTokenAccountIds = new Set<number>();
+      for (const token of tokenRows) {
+        const accountId = Number(token?.account?.id ?? token?.accountId);
+        if (
+          Number.isFinite(accountId)
+          && accountId > 0
+          && token?.isDefault === true
+          && token?.enabled !== false
+          && String(token?.valueStatus || 'ready') === 'ready'
+        ) defaultTokenAccountIds.add(Math.trunc(accountId));
+      }
       for (const account of accountRows) {
         const siteId = Number(account?.site?.id);
         const accountId = Number(account?.id);
-        const apiToken = String(account?.apiToken || '').trim();
-        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0 || !apiToken) continue;
+        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0 || !defaultTokenAccountIds.has(Math.trunc(accountId))) continue;
         credentialOptions.push({
           key: `default_api_key:${siteId}:${accountId}`,
           ref: { kind: 'default_api_key', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
           siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
           accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
           label: tr('pages.downstreamKeys.defaultApiKey'),
-          detail: `使用账号默认 API Key (${apiToken.slice(0, 6)}...)`,
+          detail: '使用账号当前默认模型 Key',
         });
       }
 

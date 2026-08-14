@@ -111,7 +111,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 1,
           username: 'linuxdo_7659',
-          accessToken: 'expired-token',
+          credential: 'expired-token',
           status: 'active',
           extraConfig: JSON.stringify({
             autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
@@ -141,7 +141,7 @@ describe('checkinService auto relogin', () => {
     expect(adapterMock.checkin.mock.calls[0][1]).toBe('expired-token');
     expect(adapterMock.checkin.mock.calls[1][1]).toBe('fresh-token');
     expect(adapterMock.checkin.mock.calls[0][2]).toBe(7659);
-    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'fresh-token' }));
+    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ credential: 'fresh-token' }));
   });
 
   it('passes guessed platform user id when config does not include it', async () => {
@@ -150,7 +150,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 2,
           username: 'linuxdo_11494',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -178,7 +178,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 12,
           username: 'linuxdo_5566',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -207,7 +207,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 13,
           username: 'linuxdo_7788',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           balance: 10,
           extraConfig: null,
@@ -237,7 +237,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 9,
           username: 'linuxdo_9999',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -268,7 +268,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 16,
           username: 'interval-user',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -297,7 +297,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 17,
           username: 'interval-success',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -325,7 +325,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 10,
           username: 'linuxdo_131936',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -360,7 +360,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 18,
           username: 'plain-user',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -397,7 +397,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 15,
           username: 'sub2_user',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },
@@ -432,7 +432,7 @@ describe('checkinService auto relogin', () => {
         accounts: {
           id: 14,
           username: 'linuxdo_10277',
-          accessToken: 'token',
+          credential: 'token',
           status: 'active',
           extraConfig: null,
         },

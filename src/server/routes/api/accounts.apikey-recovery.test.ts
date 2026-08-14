@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { clearRouteGroupMemberTestData, insertRouteGroupMember, insertRouteGroupMembers, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getModelsMock = vi.fn();
 
@@ -15,27 +15,23 @@ vi.mock('../../services/platforms/index.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
-type RouteGroupManagementModule = typeof import('../../services/routeGroupManagementService.js');
 
-describe('accounts api key recovery', { timeout: 15_000 }, () => {
+describe('accounts api key ownership', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
   let dataDir = '';
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-accounts-apikey-recovery-'));
+    dataDir = mkdtempSync(join(tmpdir(), 'metapi-accounts-apikey-ownership-'));
     process.env.DATA_DIR = dataDir;
 
     const migrate = await import('../../db/migrate.js');
     await migrate.runSqliteMigrations();
     const dbModule = await import('../../db/index.js');
-    const routeGroupManagementModule = await import('../../services/routeGroupManagementService.js');
     const routesModule = await import('./accounts.js');
     db = dbModule.db;
     schema = dbModule.schema;
-    createRouteGroupFromPayload = routeGroupManagementModule.createRouteGroupFromPayload;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -62,84 +58,91 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
     delete process.env.DATA_DIR;
   });
 
-  it('reactivates an expired API key connection after editing in a working replacement key', async () => {
-    getModelsMock.mockResolvedValueOnce(['gpt-4.1']);
-
+  async function seedApiKeyAccount(input: { name: string; token: string; status?: string }) {
     const site = await db.insert(schema.sites).values({
-      name: 'Recovery Site',
-      url: 'https://recovery.example.com',
+      name: input.name,
+      url: `https://${input.name.toLowerCase().replaceAll(' ', '-')}.example.com`,
       platform: 'new-api',
       status: 'active',
     }).returning().get();
-
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      username: 'expired-apikey-user',
-      accessToken: '',
-      apiToken: 'sk-old-expired-key',
-      status: 'expired',
+      username: 'apikey-user',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
+      status: input.status ?? 'active',
       checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: input.token,
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    return { site, account, token };
+  }
+
+  it('requires model keys to be updated through account token management', async () => {
+    const { account, token } = await seedApiKeyAccount({
+      name: 'Separated Key Ownership',
+      token: 'existing-model-key',
+      status: 'expired',
+    });
 
     const response = await app.inject({
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
-      payload: {
-        username: 'expired-apikey-user',
-        status: 'expired',
-        checkinEnabled: false,
-        accessToken: '',
-        apiToken: 'sk-new-valid-key',
-      },
+      payload: { credential: 'replacement-model-key' },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      id: account.id,
-      status: 'active',
-      apiToken: 'sk-new-valid-key',
+      message: 'API Key 连接的模型 Key 必须通过账号令牌管理更新。',
     });
-
-    const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
-    expect(latest).toMatchObject({
-      id: account.id,
-      status: 'active',
-      apiToken: 'sk-new-valid-key',
-    });
-
-    const availabilityRows = await db.select().from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, account.id))
-      .all();
-    expect(availabilityRows.map((row) => row.modelName)).toContain('gpt-4.1');
-
-    const routeGroupCandidates = await listAllRouteGroupMembers();
-    expect(routeGroupCandidates.some((channel) => channel.accountId === account.id)).toBe(true);
+    const latestAccount = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id)).get();
+    const latestToken = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, token.id)).get();
+    expect(latestAccount?.credential).toBe('');
+    expect(latestToken?.token).toBe('existing-model-key');
+    expect(getModelsMock).not.toHaveBeenCalled();
   });
 
-  it('keeps an expired API key connection pinned when only status is edited', async () => {
-    const site = await db.insert(schema.sites).values({
-      name: 'Pinned Site',
-      url: 'https://pinned.example.com',
-      platform: 'new-api',
-      status: 'active',
-    }).returning().get();
+  it('rejects legacy account-level key fields instead of migrating them in the route', async () => {
+    const { account } = await seedApiKeyAccount({
+      name: 'Legacy Field Rejection',
+      token: 'existing-model-key',
+    });
 
-    const account = await db.insert(schema.accounts).values({
-      siteId: site.id,
-      username: 'status-only-user',
-      accessToken: '',
-      apiToken: 'sk-still-expired',
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: { apiToken: 'replacement-model-key' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: expect.stringContaining('Unsupported legacy account field "apiToken"'),
+    });
+    const tokens = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).all();
+    expect(tokens.map((row) => row.token)).toEqual(['existing-model-key']);
+  });
+
+  it('does not reactivate an expired API key account for metadata-only edits', async () => {
+    const { account } = await seedApiKeyAccount({
+      name: 'Expired Metadata Edit',
+      token: 'expired-model-key',
       status: 'expired',
-      checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
-    }).returning().get();
+    });
 
     const response = await app.inject({
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
       payload: {
-        username: 'status-only-user-edited',
+        username: 'renamed-apikey-user',
         status: 'active',
         checkinEnabled: false,
       },
@@ -148,100 +151,41 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       id: account.id,
-      username: 'status-only-user-edited',
+      username: 'renamed-apikey-user',
       status: 'expired',
     });
     expect(getModelsMock).not.toHaveBeenCalled();
   });
 
-  it('keeps the new api key but preserves expired status and previous availability when recovery fails', async () => {
-    getModelsMock.mockRejectedValueOnce(new Error('upstream unavailable'));
-
+  it('updates a Session connection credential without creating a model key', async () => {
     const site = await db.insert(schema.sites).values({
-      name: 'Recovery Failure Site',
-      url: 'https://recovery-failure.example.com',
+      name: 'Session Credential Edit',
+      url: 'https://session-credential-edit.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
-
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      username: 'expired-apikey-user',
-      accessToken: '',
-      apiToken: 'sk-old-expired-key',
-      status: 'expired',
-      checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+      username: 'session-user',
+      credentialMode: 'session',
+      credential: 'old-session-credential',
+      credentialKind: 'access_token',
+      status: 'active',
+      checkinEnabled: true,
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
-      accountId: account.id,
-      modelName: 'gpt-4.1',
-      available: true,
-      latencyMs: 100,
-      checkedAt: '2026-04-01T10:00:00.000Z',
-    }).run();
-
-    const routeGroup = await createRouteGroupFromPayload({
-      model: { publicName: 'gpt-4.1' },
-      presentation: { displayName: 'gpt-4.1' },
-      enabled: true,
-      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
-    });
-
-    const seededChannel = await insertRouteGroupMember({
-      groupId: routeGroup.id,
-      accountId: account.id,
-      tokenId: null,
-      sourceModel: 'gpt-4.1',
-      fallbackStageOrder: 0,
-      weight: 10,
-      enabled: true,
-      manualOverride: false,
-    });
 
     const response = await app.inject({
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
-      payload: {
-        username: 'expired-apikey-user',
-        status: 'expired',
-        checkinEnabled: false,
-        accessToken: '',
-        apiToken: 'sk-new-invalid-key',
-      },
+      payload: { credential: 'new-session-credential' },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      id: account.id,
-      status: 'expired',
-      apiToken: 'sk-new-invalid-key',
-    });
-
-    const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
-    expect(latest).toMatchObject({
-      id: account.id,
-      status: 'expired',
-      apiToken: 'sk-new-invalid-key',
-    });
-
-    const availabilityRows = await db.select().from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, account.id))
-      .all();
-    expect(availabilityRows).toHaveLength(1);
-    expect(availabilityRows[0]).toMatchObject({
-      accountId: account.id,
-      modelName: 'gpt-4.1',
-    });
-
-    const routeGroupCandidates = await listAllRouteGroupMembers();
-    expect(routeGroupCandidates).toContainEqual(expect.objectContaining({
-      id: seededChannel.id,
-      routeGroupId: routeGroup.id,
-      routeGroupKey: routeGroup.id,
-      accountId: account.id,
-      tokenId: null,
-    }));
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id)).get();
+    expect(latest?.credential).toBe('new-session-credential');
+    const tokens = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).all();
+    expect(tokens).toEqual([]);
   });
 });

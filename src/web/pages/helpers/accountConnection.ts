@@ -5,7 +5,7 @@ export function resolveAccountCredentialMode(account: any): 'session' | 'apikey'
   if (typeof account?.capabilities?.proxyOnly === 'boolean') {
     return account.capabilities.proxyOnly ? 'apikey' : 'session';
   }
-  return typeof account?.accessToken === 'string' && account.accessToken.trim()
+  return typeof account?.credential === 'string' && account.credential.trim()
     ? 'session'
     : 'apikey';
 }

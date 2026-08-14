@@ -43,8 +43,9 @@ describe('probeRuntimeModel', () => {
     id: 1,
     siteId: 1,
     username: 'probe-user',
-    accessToken: '',
-    apiToken: 'sk-probe',
+    credential: '',
+    credentialMode: 'apikey',
+    credentialKind: 'none',
     status: 'active',
     extraConfig: null,
   } as any;
@@ -82,6 +83,7 @@ describe('probeRuntimeModel', () => {
     const result = await probeRuntimeModel({
       site,
       account,
+      tokenValue: 'sk-probe',
       modelName: 'gpt-5.4',
       timeoutMs: 10,
     });
@@ -118,6 +120,7 @@ describe('probeRuntimeModel', () => {
     const result = await probeRuntimeModel({
       site,
       account,
+      tokenValue: 'sk-probe',
       modelName: 'gpt-5.4',
       timeoutMs: 30,
     });

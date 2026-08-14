@@ -486,7 +486,7 @@ function formatAccountCredentialLabel(account: typeof schema.accounts.$inferSele
   return username;
 }
 
-function formatTokenCredentialLabel(token: typeof schema.accountTokens.$inferSelect): string {
+function formatTokenCredentialLabel(token: Pick<typeof schema.accountTokens.$inferSelect, 'id' | 'name'>): string {
   const name = typeof token.name === 'string' && token.name.trim()
     ? token.name.trim()
     : `Token ${token.id}`;
@@ -514,7 +514,11 @@ export async function listCredentialEndpointMatrix(siteId: number): Promise<Cred
       .orderBy(asc(schema.accounts.sortOrder), asc(schema.accounts.id))
       .all(),
     db.select({
-      token: schema.accountTokens,
+      token: {
+        id: schema.accountTokens.id,
+        accountId: schema.accountTokens.accountId,
+        name: schema.accountTokens.name,
+      },
       account: schema.accounts,
     }).from(schema.accountTokens)
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
@@ -540,7 +544,11 @@ export async function listCredentialEndpointMatrix(siteId: number): Promise<Cred
     credentials.push({
       ...key,
       label: formatAccountCredentialLabel(account),
-      detail: account.apiToken ? 'account api key' : account.oauthProvider ? `oauth:${account.oauthProvider}` : 'account credential',
+      detail: account.oauthProvider
+        ? `oauth:${account.oauthProvider}`
+        : account.credentialMode === 'apikey'
+          ? 'API Key connection'
+          : 'account credential',
       bindings: profileIds.map((profileId, index) => {
         const persisted = bindingByCredentialAndProfile.get(`${key.credentialKey}:${profileId}`);
         return persisted
@@ -700,7 +708,10 @@ async function resolveCredentialKeyForSite(siteId: number, credentialKey: string
   if (tokenMatch) {
     const tokenId = Number.parseInt(tokenMatch[1] || '', 10);
     const row = await db.select({
-      token: schema.accountTokens,
+      token: {
+        id: schema.accountTokens.id,
+        accountId: schema.accountTokens.accountId,
+      },
       account: schema.accounts,
     }).from(schema.accountTokens)
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))

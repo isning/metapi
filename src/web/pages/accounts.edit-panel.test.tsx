@@ -78,7 +78,7 @@ describe('Accounts edit panel', () => {
         id: 1,
         siteId: 1,
         username: 'alpha',
-        accessToken: 'session-alpha',
+        credential: 'session-alpha',
         status: 'active',
         site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
       },
@@ -163,6 +163,145 @@ describe('Accounts edit panel', () => {
         && node.props.placeholder === '账号名称'
       ));
       expect(usernameInput.props.value).toBe('alpha');
+
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not allow changing credential mode from the edit panel', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '编辑'
+      ));
+      await act(async () => {
+        editButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const saveButton = root.root.find((node) => node.props['data-testid'] === 'account-edit-save');
+      await act(async () => {
+        await saveButton?.props.onClick();
+      });
+
+      expect(apiMock.updateAccount).toHaveBeenCalledWith(1, expect.not.objectContaining({
+        credentialMode: expect.anything(),
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('uses the adapter-specific credential label in the edit panel', async () => {
+    apiMock.getSites.mockResolvedValue([
+      { id: 1, name: 'AnyRouter', platform: 'anyrouter', status: 'active' },
+    ]);
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        siteId: 1,
+        username: 'alpha',
+        credential: 'session-alpha',
+        status: 'active',
+        site: { id: 1, name: 'AnyRouter', status: 'active', platform: 'anyrouter' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '编辑'
+      ));
+      await act(async () => {
+        editButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(root.root.find((node) => (
+        node.type === 'input' && node.props.placeholder === '粘贴 Session Cookie 或 API Token'
+      )).props.value).toBe('session-alpha');
+      expect(collectText(root.root)).toContain('此凭据用于账号管理、健康检查与令牌同步，不作为模型调用 Key。');
+      expect(root.root.findAll((node) => (
+        node.type === 'input' && node.props.placeholder === '站点管理 API Token（可选）'
+      ))).toHaveLength(0);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not submit API Key fields from the account edit panel', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        siteId: 1,
+        username: 'api-key-account',
+        credential: '',
+        apiToken: 'sk-default-key',
+        status: 'active',
+        extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+        site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '编辑'
+      ));
+      await act(async () => {
+        editButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const saveButton = root.root.find((node) => node.props['data-testid'] === 'account-edit-save');
+      await act(async () => {
+        await saveButton.props.onClick();
+      });
+
+      expect(apiMock.updateAccount).toHaveBeenCalledWith(1, expect.not.objectContaining({
+        apiToken: expect.anything(),
+        cred: expect.anything(),
+      }));
     } finally {
       root?.unmount();
     }
@@ -359,7 +498,7 @@ describe('Accounts edit panel', () => {
         id: 1,
         siteId: 1,
         username: 'alpha',
-        accessToken: 'session-alpha',
+        credential: 'session-alpha',
         status: 'active',
         site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
       },
@@ -367,7 +506,7 @@ describe('Accounts edit panel', () => {
         id: 2,
         siteId: 2,
         username: 'beta',
-        accessToken: 'session-beta',
+        credential: 'session-beta',
         status: 'active',
         site: { id: 2, name: 'Site B', status: 'active', platform: 'new-api' },
       },

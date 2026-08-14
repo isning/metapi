@@ -1,9 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
-  getCredentialModeFromExtraConfig,
-  hasOauthProvider,
   mergeAccountExtraConfig,
+  resolveStoredAccountCredentialMode,
 } from './accountExtraConfig.js';
 
 export type RuntimeHealthState = 'healthy' | 'unhealthy' | 'degraded' | 'unknown' | 'disabled';
@@ -104,6 +103,8 @@ export function buildRuntimeHealthForAccount(input: {
   accountStatus?: string | null;
   siteStatus?: string | null;
   extraConfig?: string | Record<string, unknown> | null;
+  credentialMode?: unknown;
+  oauthProvider?: string | null;
   sessionCapable?: boolean;
   hasDiscoveredModels?: boolean;
 }): RuntimeHealthInfo {
@@ -119,9 +120,14 @@ export function buildRuntimeHealthForAccount(input: {
     };
   }
 
-  if (accountStatus === 'expired') {
-    const credentialMode = getCredentialModeFromExtraConfig(input.extraConfig);
-    const usesOauthCredential = hasOauthProvider({ extraConfig: input.extraConfig });
+  const stored = extractRuntimeHealth(input.extraConfig);
+  const hasRecentRuntimeFailure = !!stored
+    && stored.state !== 'healthy'
+    && (stored.source || '').toLowerCase() !== 'auth';
+
+  if (accountStatus === 'expired' && !hasRecentRuntimeFailure) {
+    const credentialMode = resolveStoredAccountCredentialMode(input);
+    const usesOauthCredential = credentialMode === 'oauth';
     return {
       state: 'unhealthy',
       reason: usesOauthCredential
@@ -136,7 +142,6 @@ export function buildRuntimeHealthForAccount(input: {
     };
   }
 
-  const stored = extractRuntimeHealth(input.extraConfig);
   const ignoreStoredProxyOnlyAuthFailure = isProxyOnlyAuthFailure(stored, input.sessionCapable);
   if (
     stored

@@ -9,6 +9,10 @@ import {
   isMaskedTokenValue,
   isUsableAccountToken,
   getAvailableModelsForAccountToken,
+  getAccountTokenById,
+  getAccountTokenWithOwner,
+  getPreferredAccountToken,
+  listAccountTokens,
   listTokensWithRelations,
   normalizeTokenForDisplay,
   maskToken,
@@ -21,7 +25,7 @@ import {
   runAccountTokenBatchCommand,
 } from '../../services/accountTokenCommandService.js';
 import { getAdapter } from '../../services/platforms/index.js';
-import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
+import { getAccountManagementCredential, getProxyUrlFromExtraConfig, isApiKeyAccount, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { withAccountProxyOverride } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
@@ -78,6 +82,10 @@ type CoverageRefreshFailureItem = {
   discoveredApiToken: false;
 };
 
+function resolveManagementCredential(account: typeof schema.accounts.$inferSelect): string {
+  return getAccountManagementCredential(account) || '';
+}
+
 type CoverageRefreshItem = ModelRefreshResult | CoverageRefreshFailureItem;
 type CoverageRefreshRebuildResult = CoverageBatchRebuildResult;
 
@@ -128,9 +136,7 @@ function isSiteDisabled(status?: string | null): boolean {
 }
 
 function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return !(account.accessToken || '').trim();
+  return isApiKeyAccount(account);
 }
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -189,10 +195,7 @@ function normalizeBatchIds(input: unknown): number[] {
 }
 
 async function listAccountTokenIds(accountId: number): Promise<Set<number>> {
-  const rows = await db.select({ id: schema.accountTokens.id })
-    .from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+  const rows = await listAccountTokens(accountId);
   return new Set(rows.map((row) => row.id));
 }
 
@@ -201,10 +204,7 @@ async function applyCompatibilityPolicyToSingleNewSyncedToken(input: {
   beforeIds: Set<number>;
   compatibilityPolicy: string | null;
 }): Promise<typeof schema.accountTokens.$inferSelect | null> {
-  const rows = await db.select()
-    .from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, input.accountId))
-    .all();
+  const rows = await listAccountTokens(input.accountId);
   const createdRows = rows.filter((row) => !input.beforeIds.has(row.id));
   if (createdRows.length !== 1) return null;
   const [created] = createdRows;
@@ -215,7 +215,7 @@ async function applyCompatibilityPolicyToSingleNewSyncedToken(input: {
     })
     .where(eq(schema.accountTokens.id, created.id))
     .run();
-  const updated = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
+  const updated = await getAccountTokenById(created.id);
   return updated || null;
 }
 
@@ -272,7 +272,8 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     };
   }
 
-  if (!row.accounts.accessToken) {
+  const managementCredential = resolveManagementCredential(row.accounts);
+  if (!managementCredential) {
     return {
       ...base,
       status: 'skipped',
@@ -305,7 +306,7 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     const accountProxyUrl = getProxyUrlFromExtraConfig(row.accounts.extraConfig);
     let tokens = await withTimeout(
       () => withAccountProxyOverride(accountProxyUrl,
-        () => adapter.getApiTokens(row.sites.url, row.accounts.accessToken, platformUserId)),
+        () => adapter.getApiTokens(row.sites.url, managementCredential, platformUserId)),
       TOKEN_SYNC_TIMEOUT_MS,
       `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
     );
@@ -313,7 +314,7 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     if (tokens.length === 0) {
       const fallback = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(row.sites.url, row.accounts.accessToken, platformUserId)),
+          () => adapter.getApiToken(row.sites.url, managementCredential, platformUserId)),
         TOKEN_SYNC_TIMEOUT_MS,
         `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
       );
@@ -530,8 +531,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const parsed = parseAccountTokenModelsPayload(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
     const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
-    const token = await db.select({ id: schema.accountTokens.id, accountId: schema.accountTokens.accountId })
-      .from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    const token = await getAccountTokenById(tokenId);
     if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
 
     await db.transaction(async (tx) => {
@@ -553,8 +553,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
     const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
     if (models.length === 0) return reply.code(400).send({ success: false, message: '模型列表不能为空' });
-    const token = await db.select({ id: schema.accountTokens.id, accountId: schema.accountTokens.accountId })
-      .from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    const token = await getAccountTokenById(tokenId);
     if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
 
     const checkedAt = new Date().toISOString();
@@ -609,9 +608,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
       }
       const now = new Date().toISOString();
-      const existing = await db.select().from(schema.accountTokens)
-        .where(eq(schema.accountTokens.accountId, body.accountId))
-        .all();
+      const existing = await listAccountTokens(body.accountId);
       const valueStatus = isMaskedTokenValue(tokenValue)
         ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
         : ACCOUNT_TOKEN_VALUE_STATUS_READY;
@@ -648,11 +645,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
-      created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
-      if (!created) {
+      const latestCreated = await getAccountTokenById(created.id);
+      if (!latestCreated) {
         return reply.code(500).send({ success: false, message: '创建令牌失败' });
       }
-      return { success: true, token: created, coverageRefresh };
+      return { success: true, token: latestCreated, coverageRefresh };
     }
 
     const account = row.accounts;
@@ -662,7 +659,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '站点已禁用，无法创建令牌' });
     }
 
-    if (!account.accessToken?.trim()) {
+    const managementCredential = resolveManagementCredential(account);
+    if (!managementCredential) {
       return reply.code(400).send({ success: false, message: '账号缺少访问令牌，无法创建站点令牌' });
     }
 
@@ -715,7 +713,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       getProxyUrlFromExtraConfig(account.extraConfig),
       () => adapter.createApiToken(
         site.url,
-        account.accessToken,
+        managementCredential,
         platformUserId,
         {
           name: asTrimmedString(body.name),
@@ -751,13 +749,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       : null;
     const coverageRefresh = await refreshCoverageForAccounts([account.id]);
 
-    const preferred = await db.select().from(schema.accountTokens)
-      .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.isDefault, true)))
-      .get();
-    const token = preferred || (await db.select().from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, account.id))
-      .all())
-      .slice(-1)[0] || null;
+    const preferred = await getPreferredAccountToken(account.id);
+    const token = preferred || (await listAccountTokens(account.id)).slice(-1)[0] || null;
     const responseToken = policyAppliedToken || token;
 
     return {
@@ -807,7 +800,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
     }
 
-    const existing = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    const existing = await getAccountTokenById(tokenId);
     if (!existing) {
       return reply.code(404).send({ success: false, message: '令牌不存在' });
     }
@@ -862,7 +855,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 
-    let latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    let latest = await getAccountTokenById(tokenId);
     if (!latest) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
@@ -877,7 +870,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       await repairDefaultToken(existing.accountId);
     }
 
-    latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    latest = await getAccountTokenById(tokenId);
     if (!latest) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
@@ -890,7 +883,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (Number.isNaN(tokenId)) {
       return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
     }
-    const tokenRow = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    const tokenRow = await getAccountTokenById(tokenId);
     if (!tokenRow) {
       return reply.code(404).send({ success: false, message: '令牌不存在' });
     }
@@ -917,34 +910,29 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
     }
 
-    const row = await db.select()
-      .from(schema.accountTokens)
-      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(eq(schema.accountTokens.id, tokenId))
-      .get();
+    const row = await getAccountTokenWithOwner(tokenId);
     if (!row) {
       return reply.code(404).send({ success: false, message: '令牌不存在' });
     }
 
-    if (isApiKeyConnection(row.accounts)) {
+    if (isApiKeyConnection(row.account)) {
       return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
     }
 
-    if (isMaskedPendingAccountToken(row.account_tokens) || isMaskedTokenValue(row.account_tokens.token)) {
+    if (isMaskedPendingAccountToken(row.token) || isMaskedTokenValue(row.token.token)) {
       return reply.code(409).send({
         success: false,
         message: '当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。',
       });
     }
 
-    const tokenValue = normalizeTokenForDisplay(row.account_tokens.token, row.sites.platform);
+    const tokenValue = normalizeTokenForDisplay(row.token.token, row.site.platform);
     return {
       success: true,
-      id: row.account_tokens.id,
-      name: row.account_tokens.name,
+      id: row.token.id,
+      name: row.token.name,
       token: tokenValue,
-      tokenMasked: maskToken(row.account_tokens.token, row.sites.platform),
+      tokenMasked: maskToken(row.token.token, row.site.platform),
     };
   });
 
@@ -973,7 +961,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!adapter) {
       return reply.code(400).send({ success: false, message: `不支持的平台: ${site.platform}` });
     }
-    if (!account.accessToken?.trim()) {
+    const managementCredential = resolveManagementCredential(account);
+    if (!managementCredential) {
       return reply.code(400).send({ success: false, message: '账号缺少访问令牌，无法拉取分组' });
     }
 
@@ -981,7 +970,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
       const groups = await withAccountProxyOverride(
         getProxyUrlFromExtraConfig(account.extraConfig),
-        () => adapter.getUserGroups(site.url, account.accessToken, platformUserId),
+        () => adapter.getUserGroups(site.url, managementCredential, platformUserId),
       );
       const normalized = Array.from(new Set((groups || []).map((item) => String(item || '').trim()).filter(Boolean)));
       return { success: true, groups: normalized.length > 0 ? normalized : ['default'] };
@@ -1093,20 +1082,16 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '账号 ID 无效' });
     }
 
-    const row = await db.select()
-      .from(schema.accountTokens)
-      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.isDefault, true)))
-      .get();
+    const preferred = await getPreferredAccountToken(accountId);
+    const row = preferred ? await getAccountTokenWithOwner(preferred.id) : null;
 
     return {
       success: true,
       token: row
         ? (() => {
-          if (isApiKeyConnection(row.accounts)) return null;
-          const { token: rawToken, ...meta } = row.account_tokens;
-          return { ...meta, tokenMasked: maskToken(rawToken, row.sites.platform) };
+          if (isApiKeyConnection(row.account)) return null;
+          const { token: rawToken, ...meta } = row.token;
+          return { ...meta, tokenMasked: maskToken(rawToken, row.site.platform) };
         })()
         : null,
     };

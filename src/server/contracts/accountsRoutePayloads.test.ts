@@ -15,9 +15,9 @@ describe('account route payload contracts', () => {
     expect(parseAccountCreatePayload({
       siteId: 1,
       username: 'alice',
-      accessToken: 'access',
-      accessTokens: ['a', 'b'],
-      apiToken: 'api',
+      credential: 'access',
+      credentialKind: 'access_token',
+      apiKey: 'key',
       platformUserId: 2,
       checkinEnabled: true,
       credentialMode: 'apikey',
@@ -30,9 +30,9 @@ describe('account route payload contracts', () => {
       data: {
         siteId: 1,
         username: 'alice',
-        accessToken: 'access',
-        accessTokens: ['a', 'b'],
-        apiToken: 'api',
+        credential: 'access',
+        credentialKind: 'access_token',
+        apiKey: 'key',
         platformUserId: 2,
         checkinEnabled: true,
         credentialMode: 'apikey',
@@ -43,17 +43,17 @@ describe('account route payload contracts', () => {
       },
     });
 
-    expect(parseAccountUpdatePayload({ apiToken: null, sortOrder: 0, proxyUrl: null })).toEqual({
+    expect(parseAccountUpdatePayload({ credentialMode: 'apikey', sortOrder: 0, proxyUrl: null })).toEqual({
       success: true,
-      data: { apiToken: null, sortOrder: 0, proxyUrl: null },
+      data: { credentialMode: 'apikey', sortOrder: 0, proxyUrl: null },
     });
     expect(parseAccountBatchPayload({ ids: [1], action: 'refresh' })).toEqual({
       success: true,
       data: { ids: [1], action: 'refresh' },
     });
-    expect(parseAccountRebindSessionPayload({ accessToken: 'new' })).toEqual({
+    expect(parseAccountRebindSessionPayload({ credential: 'new' })).toEqual({
       success: true,
-      data: { accessToken: 'new' },
+      data: { credential: 'new' },
     });
     expect(parseAccountHealthRefreshPayload(undefined)).toEqual({ success: true, data: {} });
     expect(parseAccountLoginPayload({ siteId: 1, username: 'u', password: 'p' })).toEqual({
@@ -73,11 +73,10 @@ describe('account route payload contracts', () => {
   it('returns field-specific validation messages', () => {
     const cases: Array<[string, () => unknown, string]> = [
       ['siteId', () => parseAccountCreatePayload({ siteId: 0 }), 'Invalid siteId. Expected positive number.'],
-      ['accessToken', () => parseAccountCreatePayload({ siteId: 1, accessToken: 1 }), 'Invalid accessToken. Expected string.'],
+      ['credential', () => parseAccountCreatePayload({ siteId: 1, credential: 1 }), 'Invalid credential. Expected string.'],
       ['username', () => parseAccountLoginPayload({ siteId: 1, username: 1, password: 'p' }), 'Invalid username. Expected string.'],
       ['password', () => parseAccountLoginPayload({ siteId: 1, username: 'u', password: 1 }), 'Invalid password. Expected string.'],
-      ['apiToken', () => parseAccountUpdatePayload({ apiToken: 1 }), 'Invalid apiToken. Expected string or null.'],
-      ['accessTokens', () => parseAccountCreatePayload({ siteId: 1, accessTokens: [1] }), 'Invalid accessTokens. Expected string[].'],
+      ['apiKey', () => parseAccountCreatePayload({ siteId: 1, apiKey: 1 }), 'Invalid apiKey. Expected string.'],
       ['checkinEnabled', () => parseAccountCreatePayload({ siteId: 1, checkinEnabled: 'yes' }), 'Invalid checkinEnabled. Expected boolean.'],
       ['unitCost', () => parseAccountUpdatePayload({ unitCost: '1' }), 'Invalid unitCost. Expected number or null.'],
       ['credentialMode', () => parseAccountCreatePayload({ siteId: 1, credentialMode: 'password' }), 'Invalid credentialMode. Expected auto/session/apikey.'],
@@ -97,6 +96,15 @@ describe('account route payload contracts', () => {
 
     for (const [name, parse, error] of cases) {
       expect(parse(), name).toEqual({ success: false, error });
+    }
+  });
+
+  it('rejects removed credential fields instead of silently ignoring them', () => {
+    for (const field of ['accessToken', 'apiToken', 'cred', 'modelApiKey', 'managementApiToken']) {
+      expect(parseAccountUpdatePayload({ [field]: 'legacy-value' })).toEqual({
+        success: false,
+        error: `Unsupported legacy account field "${field}". Use "credential" for connection credentials or "apiKey" for model keys.`,
+      });
     }
   });
 });

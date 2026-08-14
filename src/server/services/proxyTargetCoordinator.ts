@@ -1,8 +1,4 @@
 import { config } from '../config.js';
-import {
-  getCredentialModeFromExtraConfig,
-  hasOauthProvider,
-} from './accountExtraConfig.js';
 
 type StickyEntry = {
   targetId: number;
@@ -49,11 +45,10 @@ const stickySessionBindings = new Map<string, StickyEntry>();
 const targetRuntimeStates = new Map<number, TargetRuntimeState>();
 let nextLeaseId = 1;
 type SessionScopedTargetInput =
-  | string
   | null
   | undefined
   | {
-    extraConfig?: string | null;
+    credentialMode?: string | null;
     oauthProvider?: string | null;
   };
 
@@ -71,14 +66,10 @@ function cleanupExpiredStickyBindings(nowMs = Date.now()): void {
   }
 }
 
-function getSessionScopedExtraConfig(input?: SessionScopedTargetInput): string | null | undefined {
-  if (typeof input === 'string' || input == null) return input;
-  return input.extraConfig;
-}
-
 function isSessionScopedTarget(input?: SessionScopedTargetInput): boolean {
-  return getCredentialModeFromExtraConfig(getSessionScopedExtraConfig(input)) === 'session'
-    || hasOauthProvider(input);
+  return input?.credentialMode === 'session'
+    || input?.credentialMode === 'oauth'
+    || !!input?.oauthProvider;
 }
 
 function getStickySessionTtlMs(): number {
@@ -207,16 +198,16 @@ class ProxyTargetCoordinator {
 
   getTargetLoadSnapshot(input: {
     targetId: number;
-    accountExtraConfig?: string | null;
+    accountCredentialMode?: string | null;
     accountOauthProvider?: string | null;
   }): ProxyTargetLoadSnapshot {
     const targetId = Math.trunc(input.targetId || 0);
     const sessionScoped = isSessionScopedTarget({
-      extraConfig: input.accountExtraConfig,
+      credentialMode: input.accountCredentialMode,
       oauthProvider: input.accountOauthProvider,
     });
     const concurrencyLimit = getTargetConcurrencyLimit({
-      extraConfig: input.accountExtraConfig,
+      credentialMode: input.accountCredentialMode,
       oauthProvider: input.accountOauthProvider,
     });
     const state = targetId > 0 ? targetRuntimeStates.get(targetId) : null;
@@ -239,7 +230,7 @@ class ProxyTargetCoordinator {
 
   getTargetLoadSnapshots(input: Array<{
     targetId: number;
-    accountExtraConfig?: string | null;
+    accountCredentialMode?: string | null;
     accountOauthProvider?: string | null;
   }>): Map<number, ProxyTargetLoadSnapshot> {
     const snapshots = new Map<number, ProxyTargetLoadSnapshot>();
@@ -252,7 +243,7 @@ class ProxyTargetCoordinator {
 
   async acquireTargetLease(input: {
     targetId: number;
-    accountExtraConfig?: string | null;
+    accountCredentialMode?: string | null;
     accountOauthProvider?: string | null;
   }): Promise<AcquireProxyTargetLeaseResult> {
     const targetId = Math.trunc(input.targetId || 0);
@@ -264,7 +255,7 @@ class ProxyTargetCoordinator {
     }
 
     const concurrencyLimit = getTargetConcurrencyLimit({
-      extraConfig: input.accountExtraConfig,
+      credentialMode: input.accountCredentialMode,
       oauthProvider: input.accountOauthProvider,
     });
     if (concurrencyLimit <= 0) {

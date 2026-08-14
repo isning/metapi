@@ -44,7 +44,7 @@ describe('proxyTargetCoordinator', () => {
       downstreamApiKeyId: 9,
     });
 
-    proxyTargetCoordinator.bindStickyTarget(key, 42, JSON.stringify({ credentialMode: 'session' }));
+    proxyTargetCoordinator.bindStickyTarget(key, 42, { credentialMode: 'session' });
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBe(42);
 
     await vi.advanceTimersByTimeAsync(31_100);
@@ -118,12 +118,12 @@ describe('proxyTargetCoordinator', () => {
       downstreamApiKeyId: 9,
     });
 
-    proxyTargetCoordinator.bindStickyTarget(key, 42, JSON.stringify({ credentialMode: 'apikey' }));
+    proxyTargetCoordinator.bindStickyTarget(key, 42, { credentialMode: 'apikey' });
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBe(42);
 
     const lease = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 42,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+      accountCredentialMode: 'apikey',
     });
     expect(lease.status).toBe('acquired');
     if (lease.status === 'acquired') {
@@ -142,7 +142,7 @@ describe('proxyTargetCoordinator', () => {
 
     proxyTargetCoordinator.bindStickyTarget(key, 42, {
       oauthProvider: 'codex',
-      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+      credentialMode: 'oauth',
     });
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBe(42);
   });
@@ -150,7 +150,7 @@ describe('proxyTargetCoordinator', () => {
   it('queues requests behind the active lease and grants the next waiter after release', async () => {
     const first = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     expect(first.status).toBe('acquired');
     if (first.status !== 'acquired') return;
@@ -158,7 +158,7 @@ describe('proxyTargetCoordinator', () => {
     let secondSettled = false;
     const secondPromise = proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     }).then((result) => {
       secondSettled = true;
       return result;
@@ -180,14 +180,14 @@ describe('proxyTargetCoordinator', () => {
   it('times out queued requests when no slot becomes available', async () => {
     const first = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     expect(first.status).toBe('acquired');
     if (first.status !== 'acquired') return;
 
     const secondPromise = proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
 
     await vi.advanceTimersByTimeAsync(250);
@@ -202,7 +202,7 @@ describe('proxyTargetCoordinator', () => {
   it('keeps active leases alive until they are explicitly released', async () => {
     const first = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     expect(first.status).toBe('acquired');
     if (first.status !== 'acquired') return;
@@ -210,7 +210,7 @@ describe('proxyTargetCoordinator', () => {
     let secondSettled = false;
     const secondPromise = proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     }).then((result) => {
       secondSettled = true;
       return result;
@@ -233,7 +233,7 @@ describe('proxyTargetCoordinator', () => {
   it('exposes the set of currently active leased channels', async () => {
     const lease = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 23,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     expect(lease.status).toBe('acquired');
     if (lease.status !== 'acquired') return;
@@ -247,20 +247,20 @@ describe('proxyTargetCoordinator', () => {
   it('reports active and waiting load for a guarded session channel', async () => {
     const first = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 31,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     expect(first.status).toBe('acquired');
     if (first.status !== 'acquired') return;
 
     const secondPromise = proxyTargetCoordinator.acquireTargetLease({
       targetId: 31,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(proxyTargetCoordinator.getTargetLoadSnapshot({
       targetId: 31,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
     })).toEqual({
       targetId: 31,
       sessionScoped: true,
@@ -284,7 +284,7 @@ describe('proxyTargetCoordinator', () => {
   it('treats structured oauth providers as session-scoped in load snapshots', () => {
     expect(proxyTargetCoordinator.getTargetLoadSnapshot({
       targetId: 41,
-      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountCredentialMode: 'session',
       accountOauthProvider: 'codex',
     })).toEqual({
       targetId: 41,

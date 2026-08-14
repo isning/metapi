@@ -1,13 +1,26 @@
 import { z } from 'zod';
 
 const accountCredentialModeSchema = z.enum(['auto', 'session', 'apikey']);
+const accountCredentialKindSchema = z.enum([
+  'session_cookie',
+  'access_token',
+  'adapter_default',
+]);
+
+const LEGACY_ACCOUNT_CREDENTIAL_FIELDS = new Set([
+  'accessToken',
+  'apiToken',
+  'cred',
+  'modelApiKey',
+  'managementApiToken',
+]);
 
 const accountCreatePayloadSchema = z.object({
   siteId: z.number().int().positive(),
   username: z.string().optional(),
-  accessToken: z.string().optional(),
-  accessTokens: z.array(z.string()).optional(),
-  apiToken: z.string().optional(),
+  credential: z.string().optional(),
+  credentialKind: accountCredentialKindSchema.optional(),
+  apiKey: z.string().optional(),
   platformUserId: z.number().int().positive().optional(),
   checkinEnabled: z.boolean().optional(),
   credentialMode: accountCredentialModeSchema.optional(),
@@ -18,8 +31,9 @@ const accountCreatePayloadSchema = z.object({
 
 const accountUpdatePayloadSchema = z.object({
   username: z.string().optional(),
-  accessToken: z.string().optional(),
-  apiToken: z.union([z.string(), z.null()]).optional(),
+  credential: z.string().optional(),
+  credentialKind: accountCredentialKindSchema.optional(),
+  credentialMode: accountCredentialModeSchema.optional(),
   status: z.string().optional(),
   checkinEnabled: z.boolean().optional(),
   unitCost: z.union([z.number(), z.null()]).optional(),
@@ -37,7 +51,8 @@ const accountBatchPayloadSchema = z.object({
 }).passthrough();
 
 const accountRebindSessionPayloadSchema = z.object({
-  accessToken: z.string().optional(),
+  credential: z.string().optional(),
+  credentialKind: accountCredentialKindSchema.optional(),
   platformUserId: z.number().int().positive().optional(),
   refreshToken: z.string().optional(),
   tokenExpiresAt: z.union([z.number(), z.string()]).optional(),
@@ -56,7 +71,9 @@ const accountLoginPayloadSchema = z.object({
 
 const accountVerifyTokenPayloadSchema = z.object({
   siteId: z.number().int().positive(),
-  accessToken: z.string().optional(),
+  credential: z.string().optional(),
+  credentialKind: accountCredentialKindSchema.optional(),
+  apiKey: z.string().optional(),
   platformUserId: z.number().int().positive().optional(),
   credentialMode: accountCredentialModeSchema.optional(),
 }).passthrough();
@@ -84,8 +101,8 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   if (firstPath === 'siteId') {
     return 'Invalid siteId. Expected positive number.';
   }
-  if (firstPath === 'accessToken') {
-    return 'Invalid accessToken. Expected string.';
+  if (firstPath === 'credential') {
+    return 'Invalid credential. Expected string.';
   }
   if (firstPath === 'username') {
     return 'Invalid username. Expected string.';
@@ -93,11 +110,8 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   if (firstPath === 'password') {
     return 'Invalid password. Expected string.';
   }
-  if (firstPath === 'apiToken') {
-    return 'Invalid apiToken. Expected string or null.';
-  }
-  if (firstPath === 'accessTokens') {
-    return 'Invalid accessTokens. Expected string[].';
+  if (firstPath === 'apiKey') {
+    return 'Invalid apiKey. Expected string.';
   }
   if (firstPath === 'checkinEnabled') {
     return 'Invalid checkinEnabled. Expected boolean.';
@@ -107,6 +121,9 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'credentialMode') {
     return 'Invalid credentialMode. Expected auto/session/apikey.';
+  }
+  if (firstPath === 'credentialKind') {
+    return 'Invalid credentialKind.';
   }
   if (firstPath === 'skipModelFetch') {
     return 'Invalid skipModelFetch. Expected boolean.';
@@ -149,6 +166,15 @@ function formatAccountsPayloadError(error: z.ZodError): string {
 
 function parseAccountsPayload<T>(schema: z.ZodType<T>, input: unknown):
 { success: true; data: T } | { success: false; error: string } {
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const legacyField = Object.keys(input).find((key) => LEGACY_ACCOUNT_CREDENTIAL_FIELDS.has(key));
+    if (legacyField) {
+      return {
+        success: false,
+        error: `Unsupported legacy account field "${legacyField}". Use "credential" for connection credentials or "apiKey" for model keys.`,
+      };
+    }
+  }
   const result = schema.safeParse(normalizeAccountsPayloadInput(input));
   if (!result.success) {
     return {

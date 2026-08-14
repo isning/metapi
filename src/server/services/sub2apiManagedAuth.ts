@@ -174,7 +174,7 @@ export async function refreshSub2ApiManagedSession(params: {
   });
   await db.update(schema.accounts)
     .set({
-      accessToken: refreshed.accessToken,
+      credential: refreshed.accessToken,
       extraConfig: nextExtraConfig,
       status: params.account.status === 'expired' ? 'active' : params.account.status,
       updatedAt: new Date().toISOString(),

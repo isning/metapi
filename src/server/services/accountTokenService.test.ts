@@ -14,18 +14,18 @@ describe('maskToken', () => {
     expect(masked.includes('***')).toBe(true);
   });
 
-  it('adds sk- prefix for new-api display when upstream key misses prefix', () => {
+  it('does not invent an sk- prefix for an upstream key', () => {
     const masked = maskToken('5Uh6KjAgVOqQxNv97MAS7abkBf7Fg5GphgBXUpAOuvq2IvL4', 'new-api');
-    expect(masked.startsWith('sk-')).toBe(true);
+    expect(masked.startsWith('sk-')).toBe(false);
   });
 });
 
 describe('normalizeTokenForDisplay', () => {
-  it('adds sk- for any platform when token misses prefix', () => {
-    expect(normalizeTokenForDisplay('abc123', 'new-api')).toBe('sk-abc123');
-    expect(normalizeTokenForDisplay('xyz789', 'one-api')).toBe('sk-xyz789');
-    expect(normalizeTokenForDisplay('pqr456', 'anyrouter')).toBe('sk-pqr456');
-    expect(normalizeTokenForDisplay('uvw000', 'veloera')).toBe('sk-uvw000');
+  it('preserves opaque upstream key values across platforms', () => {
+    expect(normalizeTokenForDisplay('abc123', 'new-api')).toBe('abc123');
+    expect(normalizeTokenForDisplay('xyz789', 'one-api')).toBe('xyz789');
+    expect(normalizeTokenForDisplay('pqr456', 'anyrouter')).toBe('pqr456');
+    expect(normalizeTokenForDisplay('uvw000', 'veloera')).toBe('uvw000');
   });
 
   it('keeps existing sk- token unchanged', () => {

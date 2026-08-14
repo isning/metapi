@@ -583,7 +583,7 @@ async function probeCodexQuotaSnapshot(input: {
   if (!site) {
     throw new Error('oauth site not found');
   }
-  const accessToken = (input.account.accessToken || '').trim();
+  const accessToken = (input.account.credential || '').trim();
   if (!accessToken) {
     throw new Error('codex oauth access token missing');
   }

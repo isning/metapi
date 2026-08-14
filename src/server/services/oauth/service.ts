@@ -382,8 +382,9 @@ async function revertPersistedOauthAccount(input: {
     await tx.update(schema.accounts).set({
       siteId: input.previousAccount!.siteId,
       username: input.previousAccount!.username,
-      accessToken: input.previousAccount!.accessToken,
-      apiToken: input.previousAccount!.apiToken,
+      credential: input.previousAccount!.credential,
+      credentialMode: input.previousAccount!.credentialMode,
+      credentialKind: input.previousAccount!.credentialKind,
       checkinEnabled: input.previousAccount!.checkinEnabled,
       status: input.previousAccount!.status,
       oauthProvider: input.previousAccount!.oauthProvider,
@@ -628,7 +629,6 @@ async function upsertOauthAccount(input: {
     providerData: input.exchange.providerData,
   });
   const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, {
-    credentialMode: 'session',
     ...(input.proxyUrl !== undefined ? { proxyUrl: input.proxyUrl } : {}),
     ...(input.useSystemProxy !== undefined ? { useSystemProxy: input.useSystemProxy } : {}),
     oauth: buildStoredOauthState(oauth),
@@ -638,8 +638,9 @@ async function upsertOauthAccount(input: {
     await db.update(schema.accounts).set({
       siteId: site.id,
       username,
-      accessToken: input.exchange.accessToken,
-      apiToken: null,
+      credential: input.exchange.accessToken,
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
       checkinEnabled: false,
       status: input.persistedStatus ?? 'disabled',
       oauthProvider: input.definition.metadata.provider,
@@ -662,8 +663,9 @@ async function upsertOauthAccount(input: {
     values: {
       siteId: site.id,
       username,
-      accessToken: input.exchange.accessToken,
-      apiToken: null,
+      credential: input.exchange.accessToken,
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
       checkinEnabled: false,
       status: input.persistedStatus ?? 'active',
       oauthProvider: input.definition.metadata.provider,
@@ -1250,12 +1252,13 @@ export async function refreshOauthAccessToken(accountId: number) {
     },
   });
   const extraConfig = mergeAccountExtraConfig(account.extraConfig, {
-    credentialMode: 'session',
     oauth: buildStoredOauthStateFromAccount(account, nextOauth),
   });
 
   await db.update(schema.accounts).set({
-    accessToken: refreshed.accessToken,
+    credential: refreshed.accessToken,
+    credentialMode: 'oauth',
+    credentialKind: 'oauth_access_token',
     oauthProvider: oauth.provider,
     oauthAccountKey: nextOauth.accountKey || nextOauth.accountId || null,
     oauthProjectId: nextOauth.projectId || null,
@@ -1267,7 +1270,9 @@ export async function refreshOauthAccessToken(accountId: number) {
   return {
     accountId,
     accessToken: refreshed.accessToken,
+    oauthProvider: oauth.provider,
     accountKey: nextOauth.accountKey || nextOauth.accountId,
+    projectId: nextOauth.projectId,
     extraConfig,
   };
 }

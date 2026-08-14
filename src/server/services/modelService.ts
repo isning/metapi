@@ -2,13 +2,15 @@ import { and, eq, sql } from 'drizzle-orm';
 import { db, runtimeDbDialect, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import {
-  ACCOUNT_TOKEN_VALUE_STATUS_READY,
   ensureDefaultTokenForAccount,
+  listAccountTokens,
+  listAvailableModelTokenCredentials,
+  listUsableAccountTokens,
   isMaskedTokenValue,
   isUsableAccountToken,
 } from './accountTokenService.js';
 import {
-  getCredentialModeFromExtraConfig,
+  getAccountManagementCredential,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   requiresManagedAccountTokens,
@@ -714,10 +716,7 @@ export async function refreshModelsForAccount(
 
   const restoreAvailabilityOnFailure = options?.allowInactive === true;
   const previousAccountTokens = restoreAvailabilityOnFailure
-    ? await db.select()
-      .from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, accountId))
-      .all()
+    ? await listAccountTokens(accountId)
     : [];
   const previousModelAvailability = restoreAvailabilityOnFailure
     ? await db.select()
@@ -743,10 +742,7 @@ export async function refreshModelsForAccount(
       ))
       .run();
 
-    const currentAccountTokens = await db.select({ id: schema.accountTokens.id })
-      .from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, accountId))
-      .all();
+    const currentAccountTokens = await listAccountTokens(accountId);
 
     for (const token of currentAccountTokens) {
       await db.delete(schema.tokenModelAvailability)
@@ -987,7 +983,7 @@ export async function refreshModelsForAccount(
         }
         discoveryAccount = {
           ...discoveryAccount,
-          accessToken: refreshed.accessToken,
+          credential: refreshed.accessToken,
           extraConfig: refreshed.extraConfig,
         };
         await withTimeout(
@@ -1158,20 +1154,17 @@ export async function refreshModelsForAccount(
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let discoveredApiToken: string | null = null;
 
-  if (!account.apiToken && account.accessToken) {
+  const managementCredential = getAccountManagementCredential(account) || '';
+  if (account.credentialMode !== 'apikey' && managementCredential) {
     try {
       discoveredApiToken = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(site.url, account.accessToken, platformUserId)),
+          () => adapter.getApiToken(site.url, managementCredential, platformUserId)),
         API_TOKEN_DISCOVERY_TIMEOUT_MS,
         `api token discovery timeout (${Math.round(API_TOKEN_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
       );
       if (discoveredApiToken && !isMaskedTokenValue(discoveredApiToken)) {
         await ensureDefaultTokenForAccount(account.id, discoveredApiToken, { name: 'default', source: 'sync' });
-        await db.update(schema.accounts).set({
-          apiToken: discoveredApiToken,
-          updatedAt: new Date().toISOString(),
-        }).where(eq(schema.accounts.id, account.id)).run();
       } else {
         discoveredApiToken = null;
       }
@@ -1180,14 +1173,7 @@ export async function refreshModelsForAccount(
 
   const usesManagedTokens = requiresManagedAccountTokens(account);
   let enabledTokens = usesManagedTokens
-    ? await db.select()
-      .from(schema.accountTokens)
-      .where(and(
-        eq(schema.accountTokens.accountId, account.id),
-        eq(schema.accountTokens.enabled, true),
-        eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
-      ))
-      .all()
+    ? await listUsableAccountTokens(account.id)
     : [];
   enabledTokens = enabledTokens.filter(isUsableAccountToken);
 
@@ -1273,10 +1259,8 @@ export async function refreshModelsForAccount(
     mergeDiscoveredModels(models, discovery.latencyMs);
   };
 
-  // Prefer account-level credential discovery so model availability does not rely on managed tokens.
-  await discoverModelsWithCredential(account.apiToken);
   await discoverModelsWithCredential(discoveredApiToken);
-  await discoverModelsWithCredential(account.accessToken);
+  await discoverModelsWithCredential(managementCredential);
 
   for (const token of enabledTokens) {
     const discovery = await withTimeout(
@@ -1389,41 +1373,11 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
 }
 
 export async function rebuildManagedRouteGroupsFromAvailability() {
-  const tokenRows = await db.select({
-    modelName: schema.tokenModelAvailability.modelName,
-    accountId: schema.accounts.id,
-    siteId: schema.accounts.siteId,
-    accountAccessToken: schema.accounts.accessToken,
-    accountApiToken: schema.accounts.apiToken,
-    accountExtraConfig: schema.accounts.extraConfig,
-    accountOauthProvider: schema.accounts.oauthProvider,
-    tokenId: schema.accountTokens.id,
-    token: schema.accountTokens.token,
-    tokenEnabled: schema.accountTokens.enabled,
-    tokenValueStatus: schema.accountTokens.valueStatus,
-  }).from(schema.tokenModelAvailability)
-    .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
-    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(
-      and(
-        eq(schema.tokenModelAvailability.available, true),
-        eq(schema.accountTokens.enabled, true),
-        eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
-        eq(schema.accounts.status, 'active'),
-        eq(schema.sites.status, 'active'),
-      ),
-    )
-    .all();
+  const tokenRows = await listAvailableModelTokenCredentials();
   const usableTokenRows = tokenRows.filter((row) => (
-    isUsableAccountToken({
-      enabled: row.tokenEnabled,
-      token: row.token,
-      valueStatus: row.tokenValueStatus,
-    } as typeof schema.accountTokens.$inferSelect)
-    && requiresManagedAccountTokens({
-      accessToken: row.accountAccessToken,
-      apiToken: row.accountApiToken,
+    requiresManagedAccountTokens({
+      credential: row.accountCredential,
+      credentialMode: row.accountCredentialMode,
       extraConfig: row.accountExtraConfig,
       oauthProvider: row.accountOauthProvider,
     })
@@ -1433,8 +1387,8 @@ export async function rebuildManagedRouteGroupsFromAvailability() {
     modelName: schema.modelAvailability.modelName,
     accountId: schema.accounts.id,
     siteId: schema.accounts.siteId,
-    accountAccessToken: schema.accounts.accessToken,
-    accountApiToken: schema.accounts.apiToken,
+    accountCredential: schema.accounts.credential,
+    accountCredentialMode: schema.accounts.credentialMode,
     accountExtraConfig: schema.accounts.extraConfig,
     accountOauthProvider: schema.accounts.oauthProvider,
   }).from(schema.modelAvailability)
@@ -1532,8 +1486,8 @@ export async function rebuildManagedRouteGroupsFromAvailability() {
 
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection({
-      accessToken: row.accountAccessToken,
-      apiToken: row.accountApiToken,
+      credential: row.accountCredential,
+      credentialMode: row.accountCredentialMode,
       extraConfig: row.accountExtraConfig,
       oauthProvider: row.accountOauthProvider,
     })) continue;

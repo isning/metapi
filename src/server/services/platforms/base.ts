@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import {
+  getPlatformCredentialCapabilities,
+  type PlatformCredentialCapabilities,
+} from '../../../shared/platformCredentialCapabilities.js';
 import type {
   UpstreamPricingCatalog,
   UpstreamPricingCredential,
@@ -59,7 +63,8 @@ export interface TokenVerifyResult {
   tokenType: 'session' | 'apikey' | 'unknown';
   userInfo?: UserInfo | null;
   balance?: BalanceInfo | null;
-  apiToken?: string | null;
+  /** Model invocation credential discovered through an account-management API. */
+  discoveredModelToken?: string | null;
   models?: string[];
 }
 
@@ -100,6 +105,7 @@ export interface CreateApiTokenOptions {
 
 export interface PlatformAdapter {
   readonly platformName: string;
+  readonly credentialCapabilities: PlatformCredentialCapabilities;
   detect(url: string): Promise<boolean>;
   login(baseUrl: string, username: string, password: string): Promise<LoginResult>;
   getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
@@ -119,6 +125,10 @@ export interface PlatformAdapter {
 export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract readonly platformName: string;
 
+  get credentialCapabilities(): PlatformCredentialCapabilities {
+    return getPlatformCredentialCapabilities(this.platformName);
+  }
+
   abstract detect(url: string): Promise<boolean>;
   abstract checkin(baseUrl: string, accessToken: string): Promise<CheckinResult>;
   abstract getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo>;
@@ -130,9 +140,9 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     if (userInfo) {
       let balance: BalanceInfo | null = null;
       try { balance = await this.getBalance(baseUrl, token); } catch {}
-      let apiToken: string | null = null;
-      try { apiToken = await this.getApiToken(baseUrl, token); } catch {}
-      return { tokenType: 'session', userInfo, balance, apiToken };
+      let discoveredModelToken: string | null = null;
+      try { discoveredModelToken = await this.getApiToken(baseUrl, token); } catch {}
+      return { tokenType: 'session', userInfo, balance, discoveredModelToken };
     }
 
     // 2. Try as API key (for /v1/models)

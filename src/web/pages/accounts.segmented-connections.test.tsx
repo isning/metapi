@@ -46,7 +46,7 @@ describe('Accounts segmented connections view', () => {
       {
         id: 1,
         username: 'session-user',
-        accessToken: 'session-token',
+        credential: 'session-token',
         apiToken: 'sk-session',
         status: 'active',
         credentialMode: 'session',
@@ -56,7 +56,7 @@ describe('Accounts segmented connections view', () => {
       {
         id: 2,
         username: '',
-        accessToken: '',
+        credential: '',
         apiToken: 'sk-apikey',
         status: 'active',
         credentialMode: 'apikey',

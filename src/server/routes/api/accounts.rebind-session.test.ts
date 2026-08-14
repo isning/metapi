@@ -113,7 +113,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect((response.json() as { message?: string }).message).toContain('accessToken');
+    expect((response.json() as { message?: string }).message).toContain('cred');
     expect(verifyTokenMock).not.toHaveBeenCalled();
   });
 

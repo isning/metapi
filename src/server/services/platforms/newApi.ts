@@ -1011,9 +1011,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         const userId = directRes.data.id;
         const userInfo = this.parseUserInfo(directRes.data);
         const balance = this.parseBalance(directRes.data);
-        let apiToken: string | null = null;
-        try { apiToken = await this.getApiTokenWithUser(baseUrl, token, userId); } catch {}
-        return { tokenType: 'session', userInfo, balance, apiToken };
+        return { tokenType: 'session', userInfo, balance };
       }
 
       if (directRes?.message?.includes('New-Api-User')) {
@@ -1025,9 +1023,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
           if (res?.success && res?.data) {
             const userInfo = this.parseUserInfo(res.data);
             const balance = this.parseBalance(res.data);
-            let apiToken: string | null = null;
-            try { apiToken = await this.getApiTokenWithUser(baseUrl, token, userId); } catch {}
-            return { tokenType: 'session', userInfo, balance, apiToken };
+            return { tokenType: 'session', userInfo, balance };
           }
           if (
             platformUserId &&
@@ -1045,9 +1041,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const userId = cookieRes.data.id;
       const userInfo = this.parseUserInfo(cookieRes.data);
       const balance = this.parseBalance(cookieRes.data);
-      let apiToken: string | null = null;
-      try { apiToken = await this.getApiTokenWithUser(baseUrl, token, userId); } catch {}
-      return { tokenType: 'session', userInfo, balance, apiToken };
+      return { tokenType: 'session', userInfo, balance };
     }
 
     const cookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, token, platformUserId);
@@ -1056,9 +1050,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       if (cookieRetry?.success && cookieRetry?.data) {
         const userInfo = this.parseUserInfo(cookieRetry.data);
         const balance = this.parseBalance(cookieRetry.data);
-        let apiToken: string | null = null;
-        try { apiToken = await this.getApiTokenWithUser(baseUrl, token, cookieUserId); } catch {}
-        return { tokenType: 'session', userInfo, balance, apiToken };
+        return { tokenType: 'session', userInfo, balance };
       }
     }
 

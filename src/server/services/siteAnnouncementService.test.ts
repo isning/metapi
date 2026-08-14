@@ -73,7 +73,9 @@ describe('siteAnnouncementService', () => {
     await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'demo-user',
-      accessToken: 'jwt-token',
+      credentialMode: 'session',
+      credential: 'jwt-token',
+      credentialKind: 'access_token',
       status: 'active',
     }).run();
     await db.insert(schema.sites).values({
@@ -150,7 +152,9 @@ describe('siteAnnouncementService', () => {
     await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'demo-user',
-      accessToken: 'jwt-token',
+      credentialMode: 'session',
+      credential: 'jwt-token',
+      credentialKind: 'access_token',
       status: 'active',
     }).run();
 

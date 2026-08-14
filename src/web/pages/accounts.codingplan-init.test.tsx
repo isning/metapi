@@ -104,7 +104,7 @@ describe('Accounts CodingPlan initialization', () => {
 
       expect(apiMock.addAccount).toHaveBeenCalledWith(expect.objectContaining({
         siteId: 10,
-        accessToken: 'sk-codingplan-demo',
+        apiKey: 'sk-codingplan-demo',
         credentialMode: 'apikey',
         skipModelFetch: true,
       }));
@@ -167,7 +167,7 @@ describe('Accounts CodingPlan initialization', () => {
 
       expect(apiMock.addAccount).toHaveBeenCalledWith(expect.objectContaining({
         siteId: 11,
-        accessToken: 'sk-deepseek-demo',
+        apiKey: 'sk-deepseek-demo',
         credentialMode: 'apikey',
         skipModelFetch: true,
       }));

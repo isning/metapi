@@ -50,7 +50,7 @@ describe('Accounts tokens embedded header', () => {
       {
         id: 1,
         username: 'session-user',
-        accessToken: 'session-token',
+        credential: 'session-token',
         status: 'active',
         credentialMode: 'session',
         capabilities: { canCheckin: true, canRefreshBalance: true, proxyOnly: false },

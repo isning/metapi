@@ -17,7 +17,6 @@ import {
   executeSchemaBootstrapCompatibility,
   executeSchemaBootstrapCompatibilitySync,
 } from './schemaBootstrapCompatibility.js';
-import { ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS } from './accountTokenSchemaCompatibility.js';
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
 import { mkdirSync } from 'fs';
@@ -135,8 +134,6 @@ function ensureTokenManagementSchema() {
   if (!tableColumnExists('account_tokens', 'value_status')) {
     execSqliteSchemaBootstrapCompatibility("ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';");
   }
-
-  execSqliteSchemaBootstrapCompatibility(ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS[0]!.sql.sqlite);
 
   execSqliteSchemaBootstrapCompatibility(`
     CREATE TABLE IF NOT EXISTS token_model_availability (

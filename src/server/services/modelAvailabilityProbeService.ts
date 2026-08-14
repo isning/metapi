@@ -2,7 +2,11 @@ import { and, asc, eq } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { startBackgroundTask } from './backgroundTaskService.js';
-import { isUsableAccountToken, ACCOUNT_TOKEN_VALUE_STATUS_READY } from './accountTokenService.js';
+import {
+  isUsableAccountToken,
+  ACCOUNT_TOKEN_VALUE_STATUS_READY,
+  listAccountTokensByIds,
+} from './accountTokenService.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
 
@@ -175,7 +179,10 @@ async function loadProbeTargetsForAccount(context: ProbeAccountContext): Promise
     });
   }
 
-  const tokenRows = await db.select()
+  const tokenRows = await db.select({
+    availability: schema.tokenModelAvailability,
+    tokenId: schema.accountTokens.id,
+  })
     .from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .where(and(
@@ -185,17 +192,22 @@ async function loadProbeTargetsForAccount(context: ProbeAccountContext): Promise
     ))
     .orderBy(asc(schema.tokenModelAvailability.checkedAt))
     .all();
+  const tokensById = new Map(
+    (await listAccountTokensByIds(tokenRows.map((row) => row.tokenId)))
+      .map((token) => [token.id, token]),
+  );
   for (const row of tokenRows) {
-    if (!isUsableAccountToken(row.account_tokens)) continue;
-    const tokenValue = String(row.account_tokens.token || '').trim();
+    const token = tokensById.get(row.tokenId);
+    if (!token || !isUsableAccountToken(token)) continue;
+    const tokenValue = String(token.token || '').trim();
     if (!tokenValue) continue;
     targets.push({
       kind: 'token',
-      rowId: row.token_model_availability.id,
-      tokenId: row.account_tokens.id,
-      modelName: row.token_model_availability.modelName,
+      rowId: row.availability.id,
+      tokenId: token.id,
+      modelName: row.availability.modelName,
       tokenValue,
-      lastKnownAvailable: !!row.token_model_availability.available,
+      lastKnownAvailable: !!row.availability.available,
       account: context.account,
       site: context.site,
     });

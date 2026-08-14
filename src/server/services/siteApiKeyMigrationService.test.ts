@@ -36,7 +36,7 @@ describe('siteApiKeyMigrationService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('migrates site apiKey into an apikey connection, clears the site field, and removes a mirrored token row', async () => {
+  it('deduplicates a site apiKey against its account token and clears the site field', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'legacy-site',
       url: 'https://legacy.example.com',
@@ -47,10 +47,10 @@ describe('siteApiKeyMigrationService', () => {
     const existing = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: null,
-      accessToken: '',
-      apiToken: 'sk-legacy-site-token',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
 
     await db.insert(schema.accountTokens).values({
@@ -67,7 +67,6 @@ describe('siteApiKeyMigrationService', () => {
       migrated: 0,
       deduped: 1,
       clearedSites: 1,
-      removedMirrorTokens: 1,
       warned: 0,
     });
 
@@ -76,13 +75,12 @@ describe('siteApiKeyMigrationService', () => {
 
     const accounts = await db.select().from(schema.accounts).where(eq(schema.accounts.siteId, site.id)).all();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.apiToken).toBe('sk-legacy-site-token');
-    expect(accounts[0]?.accessToken).toBe('');
+    expect(accounts[0]).toMatchObject({ credentialMode: 'apikey', credential: '', credentialKind: 'none' });
     expect(accounts[0]?.checkinEnabled).toBe(false);
-    expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({ credentialMode: 'apikey' });
 
     const tokens = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, existing.id)).all();
-    expect(tokens).toHaveLength(0);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.token).toBe('sk-legacy-site-token');
   });
 
   it('creates a new apikey connection from site apiKey when no matching connection exists', async () => {
@@ -99,20 +97,19 @@ describe('siteApiKeyMigrationService', () => {
       migrated: 1,
       deduped: 0,
       clearedSites: 1,
-      removedMirrorTokens: 0,
       warned: 0,
     });
 
     const accounts = await db.select().from(schema.accounts).where(eq(schema.accounts.siteId, site.id)).all();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.apiToken).toBe('sk-new-site-token');
-    expect(accounts[0]?.accessToken).toBe('');
+    expect(accounts[0]).toMatchObject({ credentialMode: 'apikey', credential: '', credentialKind: 'none' });
     expect(accounts[0]?.status).toBe('active');
-    expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({ credentialMode: 'apikey' });
+    const tokens = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, accounts[0]!.id)).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({ token: 'sk-new-site-token', enabled: true, isDefault: true });
   });
 
-  it('warns and keeps token rows intact when an apikey connection has multiple child tokens', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('keeps all account token rows intact when the site key already belongs to the account', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'warn-site',
       url: 'https://warn.example.com',
@@ -123,10 +120,10 @@ describe('siteApiKeyMigrationService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: null,
-      accessToken: '',
-      apiToken: 'sk-warn-site-token',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
 
     await db.insert(schema.accountTokens).values([
@@ -148,8 +145,7 @@ describe('siteApiKeyMigrationService', () => {
 
     const summary = await migrateSiteApiKeysToAccounts();
 
-    expect(summary.warned).toBe(1);
-    expect(warnSpy).toHaveBeenCalled();
+    expect(summary).toMatchObject({ migrated: 0, deduped: 1, clearedSites: 1, warned: 0 });
 
     const tokens = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, account.id)).all();
     expect(tokens).toHaveLength(2);

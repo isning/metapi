@@ -1,10 +1,12 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
+  getAccountTokenById,
+  getAccountTokenWithOwner,
   isMaskedPendingAccountToken,
   repairDefaultToken,
 } from './accountTokenService.js';
-import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
+import { getAccountManagementCredential, getProxyUrlFromExtraConfig, isApiKeyAccount, resolvePlatformUserId } from './accountExtraConfig.js';
 import { getAdapter } from './platforms/index.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 
@@ -16,9 +18,7 @@ export type AccountTokenBatchResult = {
 };
 
 function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return !(account.accessToken || '').trim();
+  return isApiKeyAccount(account);
 }
 
 function isSiteDisabled(status?: string | null): boolean {
@@ -26,31 +26,27 @@ function isSiteDisabled(status?: string | null): boolean {
 }
 
 export async function deleteAccountTokenById(tokenId: number): Promise<AccountTokenCommandResult> {
-  const row = await db.select()
-    .from(schema.accountTokens)
-    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(eq(schema.accountTokens.id, tokenId))
-    .get();
+  const row = await getAccountTokenWithOwner(tokenId);
   if (!row) return { success: false, message: '令牌不存在' };
-  if (isApiKeyConnection(row.accounts)) {
+  if (isApiKeyConnection(row.account)) {
     return { success: false, message: 'API Key 连接不支持管理账号令牌' };
   }
 
-  const existing = row.account_tokens;
-  const account = row.accounts;
-  const site = row.sites;
+  const existing = row.token;
+  const account = row.account;
+  const site = row.site;
   const adapter = getAdapter(site.platform);
+  const managementCredential = getAccountManagementCredential(account) || '';
   const shouldDeleteUpstream = !isMaskedPendingAccountToken(existing)
     && !isSiteDisabled(site.status)
-    && !!account.accessToken?.trim()
+    && !!managementCredential
     && !!adapter;
 
   if (shouldDeleteUpstream) {
     const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
     const upstreamDeleted = await withAccountProxyOverride(
       getProxyUrlFromExtraConfig(account.extraConfig),
-      () => adapter!.deleteApiToken(site.url, account.accessToken, existing.token, platformUserId),
+      () => adapter!.deleteApiToken(site.url, managementCredential, existing.token, platformUserId),
     );
     if (!upstreamDeleted) {
       return { success: false, message: '站点删除令牌失败，本地未删除' };
@@ -71,7 +67,7 @@ export async function runAccountTokenBatchCommand(
 
   for (const id of ids) {
     try {
-      const existing = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, id)).get();
+      const existing = await getAccountTokenById(id);
       if (!existing) {
         failedItems.push({ id, message: 'Token not found' });
         continue;

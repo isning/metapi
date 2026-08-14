@@ -70,7 +70,6 @@ type AccountTokenSyncResult = {
 type SyncableAccount = {
   id: number;
   username?: string | null;
-  accessToken?: string | null;
   status?: string | null;
   credentialMode?: string | null;
   capabilities?: {

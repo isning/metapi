@@ -209,16 +209,23 @@ async function validatePolicyReferences(input: {
     const rows = await db.select({
       accountId: schema.accounts.id,
       siteId: schema.accounts.siteId,
-      apiToken: schema.accounts.apiToken,
     })
       .from(schema.accounts)
       .where(inArray(schema.accounts.id, accountIds))
       .all();
-    const accountById = new Map<number, { accountId: number; siteId: number; apiToken: string | null }>(
+    const defaultTokens = await db.select({ accountId: schema.accountTokens.accountId })
+      .from(schema.accountTokens)
+      .where(and(
+        inArray(schema.accountTokens.accountId, accountIds),
+        eq(schema.accountTokens.isDefault, true),
+        eq(schema.accountTokens.enabled, true),
+      ))
+      .all();
+    const defaultTokenAccountIds = new Set(defaultTokens.map((row) => Number(row.accountId)));
+    const accountById = new Map<number, { accountId: number; siteId: number }>(
       rows.map((row) => [Number(row.accountId), {
         accountId: Number(row.accountId),
         siteId: Number(row.siteId),
-        apiToken: row.apiToken,
       }]),
     );
     for (const ref of defaultApiKeyRefs) {
@@ -229,7 +236,7 @@ async function validatePolicyReferences(input: {
       if (Number(matched.siteId) !== ref.siteId) {
         return `excludedCredentialRefs 中的 default_api_key 引用与站点不匹配: ${ref.accountId}`;
       }
-      if (!(matched.apiToken || '').trim()) {
+      if (!defaultTokenAccountIds.has(ref.accountId)) {
         return `excludedCredentialRefs 中的 default_api_key 账号缺少默认 API Key: ${ref.accountId}`;
       }
     }

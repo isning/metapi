@@ -51,7 +51,7 @@ describe('Accounts rebind modal', () => {
         balanceUsed: 0,
         todayReward: 0,
         todaySpend: 0,
-        accessToken: 'session-token',
+        credential: 'session-token',
         status: 'expired',
         checkinEnabled: true,
         siteId: 10,

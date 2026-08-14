@@ -87,7 +87,7 @@ export async function executeSub2ApiManagedRefreshPass(input: {
         await refreshSub2ApiManagedSessionSingleflight({
           account: row.accounts,
           site: row.sites,
-          currentAccessToken: row.accounts.accessToken || '',
+          currentAccessToken: row.accounts.credential || '',
           currentExtraConfig: row.accounts.extraConfig,
         });
         refreshedAccountIds.push(row.accounts.id);

@@ -6,6 +6,7 @@ import { sendNotification } from './notifyService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { emitInboxItem } from './inboxService.js';
 import type { SiteAnnouncement } from './platforms/base.js';
+import { getAccountManagementCredential } from './accountExtraConfig.js';
 
 export type SiteAnnouncementSyncResult = {
   scannedSites: number;
@@ -36,21 +37,17 @@ function buildAnnouncementMessage(row: SiteAnnouncement): string {
   return content || title;
 }
 
-async function resolveSiteAccessToken(siteId: number, siteApiKey?: string | null): Promise<string> {
-  const direct = String(siteApiKey || '').trim();
-  if (direct) return direct;
-
-  const account = await db.select()
+async function resolveSiteManagementCredential(siteId: number): Promise<string> {
+  const accounts = await db.select()
     .from(schema.accounts)
     .where(and(
       eq(schema.accounts.siteId, siteId),
       eq(schema.accounts.status, 'active'),
     ))
     .orderBy(asc(schema.accounts.id))
-    .limit(1)
-    .get();
+    .all();
 
-  return String(account?.accessToken || '').trim();
+  return accounts.map(getAccountManagementCredential).find(Boolean) || '';
 }
 
 async function listTargetSites(siteId?: number | null) {
@@ -90,8 +87,8 @@ export async function syncSiteAnnouncements(options?: { siteId?: number | null }
     }
 
     try {
-      const accessToken = await resolveSiteAccessToken(site.id, site.apiKey);
-      const announcements = await adapter.getSiteAnnouncements(site.url, accessToken);
+      const managementCredential = await resolveSiteManagementCredential(site.id);
+      const announcements = await adapter.getSiteAnnouncements(site.url, managementCredential);
       const seenAt = formatUtcSqlDateTime(new Date());
 
       for (const announcement of announcements) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStoredSub2ApiSubscriptionSummary,
-  getCredentialModeFromExtraConfig,
+  getAccountManagementCredential,
   hasOauthProvider,
   getPlatformUserIdFromExtraConfig,
   getProxyUrlFromExtraConfig,
@@ -19,6 +19,21 @@ import {
 import { config } from '../config.js';
 
 describe('accountExtraConfig', () => {
+  it('resolves session management credentials without treating model keys as management credentials', () => {
+    expect(getAccountManagementCredential({
+      credential: 'session-cookie',
+      credentialMode: 'session',
+    })).toBe('session-cookie');
+    expect(getAccountManagementCredential({
+      credential: 'session-cookie',
+      credentialMode: 'session',
+    })).toBe('session-cookie');
+    expect(getAccountManagementCredential({
+      credential: '',
+      credentialMode: 'apikey',
+    })).toBeUndefined();
+  });
+
   it('reads platformUserId from extra config when present', () => {
     expect(getPlatformUserIdFromExtraConfig(JSON.stringify({ platformUserId: 11494 }))).toBe(11494);
     expect(getPlatformUserIdFromExtraConfig(JSON.stringify({ platformUserId: '7659' }))).toBe(7659);
@@ -71,13 +86,6 @@ describe('accountExtraConfig', () => {
         passwordCipher: 'cipher',
       }),
     }));
-  });
-
-  it('parses credential mode from extra config', () => {
-    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'apikey' }))).toBe('apikey');
-    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'session' }))).toBe('session');
-    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'AUTO' }))).toBe('auto');
-    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'unknown' }))).toBeUndefined();
   });
 
   it('normalizes credential mode input', () => {
@@ -138,53 +146,44 @@ describe('accountExtraConfig', () => {
     }
   });
 
-  it('treats auto-mode api token connections as direct-account routable', () => {
+  it('requires managed tokens for API Key accounts', () => {
     expect(supportsDirectAccountRoutingConnection({
-      accessToken: '',
-      apiToken: 'sk-demo',
-      extraConfig: null,
-    })).toBe(true);
-    expect(requiresManagedAccountTokens({
-      accessToken: '',
-      apiToken: 'sk-demo',
-      extraConfig: null,
+      credential: '',
+      credentialMode: 'apikey',
     })).toBe(false);
+    expect(requiresManagedAccountTokens({
+      credential: '',
+      credentialMode: 'apikey',
+    })).toBe(true);
   });
 
   it('treats oauth and session connections as non-managed-token direct routes only when intended', () => {
     expect(supportsDirectAccountRoutingConnection({
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      oauthProvider: 'codex',
     })).toBe(true);
     expect(requiresManagedAccountTokens({
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      oauthProvider: 'codex',
     })).toBe(false);
     expect(supportsDirectAccountRoutingConnection({
-      accessToken: 'session-token',
-      apiToken: 'sk-default',
-      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+      credential: 'session-token',
+      credentialMode: 'session',
     })).toBe(false);
     expect(requiresManagedAccountTokens({
-      accessToken: 'session-token',
-      apiToken: 'sk-default',
-      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+      credential: 'session-token',
+      credentialMode: 'session',
     })).toBe(true);
   });
 
   it('recognizes structured oauth provider columns even when extraConfig omits oauth.provider', () => {
     const structuredOauthAccount = {
       oauthProvider: 'codex',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({
-        credentialMode: 'session',
-        oauth: {
-          email: 'oauth-user@example.com',
-        },
-      }),
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      extraConfig: JSON.stringify({ oauth: { email: 'oauth-user@example.com' } }),
     };
 
     expect(hasOauthProvider(structuredOauthAccount)).toBe(true);

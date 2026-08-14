@@ -4,13 +4,19 @@ import {
   getOauthInfoFromExtraConfig,
   isOauthProvider,
   type OauthInfo,
+  type OauthExtraConfigInput,
 } from './oauthAccount.js';
 
 export type CodexOauthInfo = OauthInfo & {
   provider: 'codex';
 };
 
-type OauthExtraConfigInput = Parameters<typeof getOauthInfoFromExtraConfig>[0];
+export function getCodexOauthInfoFromExtraConfig(extraConfig?: OauthExtraConfigInput): CodexOauthInfo | null {
+  const oauth = getOauthInfoFromExtraConfig(extraConfig);
+  if (!oauth || oauth.provider !== 'codex') return null;
+  return oauth as CodexOauthInfo;
+}
+
 type BuildOauthInfoInput = Parameters<typeof buildOauthInfo>[0];
 type OauthIdentityCarrierLike = Pick<
   typeof schema.accounts.$inferSelect,
@@ -23,12 +29,6 @@ function isOauthIdentityCarrierLike(value: unknown): value is OauthIdentityCarri
     || 'oauthProvider' in value
     || 'oauthAccountKey' in value
     || 'oauthProjectId' in value;
-}
-
-export function getCodexOauthInfoFromExtraConfig(extraConfig?: OauthExtraConfigInput): CodexOauthInfo | null {
-  const oauth = getOauthInfoFromExtraConfig(extraConfig);
-  if (!oauth || oauth.provider !== 'codex') return null;
-  return oauth as CodexOauthInfo;
 }
 
 export function isCodexPlatform(

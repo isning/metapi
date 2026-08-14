@@ -110,7 +110,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 1,
           username: 'linuxdo_11494',
-          accessToken: 'stale-token',
+          credential: 'stale-token',
           status: 'active',
           extraConfig: JSON.stringify({
             platformUserId: 11494,
@@ -140,7 +140,7 @@ describe('balanceService auto relogin', () => {
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
     expect(adapterMock.getBalance.mock.calls[0][1]).toBe('stale-token');
     expect(adapterMock.getBalance.mock.calls[1][1]).toBe('fresh-token');
-    expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'fresh-token')).toBe(true);
+    expect(updateSetMock.mock.calls.some((call) => call[0]?.credential === 'fresh-token')).toBe(true);
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
 
@@ -150,7 +150,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 2,
           username: 'linuxdo_7659',
-          accessToken: 'stale-token',
+          credential: 'stale-token',
           status: 'active',
           extraConfig: null,
         },
@@ -178,7 +178,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 12,
           username: 'linuxdo_forbidden',
-          accessToken: 'stale-token',
+          credential: 'stale-token',
           status: 'active',
           extraConfig: null,
         },
@@ -205,7 +205,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 13,
           username: 'linuxdo_missing_user',
-          accessToken: 'stale-token',
+          credential: 'stale-token',
           status: 'active',
           extraConfig: null,
         },
@@ -232,7 +232,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 5,
           username: 'sub2-user',
-          accessToken: 'old-access-token',
+          credential: 'old-access-token',
           status: 'active',
           extraConfig: JSON.stringify({
             sub2apiAuth: {
@@ -270,7 +270,7 @@ describe('balanceService auto relogin', () => {
     expect(result).toEqual({ balance: 20, used: 1, quota: 21 });
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(1);
     expect(adapterMock.getBalance.mock.calls[0]?.[1]).toBe('new-access-token');
-    expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'new-access-token')).toBe(true);
+    expect(updateSetMock.mock.calls.some((call) => call[0]?.credential === 'new-access-token')).toBe(true);
     const updateWithSub2ApiAuth = updateSetMock.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .find((payload) => typeof payload.extraConfig === 'string' && String(payload.extraConfig).includes('refresh-token-2'));
@@ -288,7 +288,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 6,
           username: 'sub2-user',
-          accessToken: 'expired-access-token',
+          credential: 'expired-access-token',
           status: 'active',
           extraConfig: JSON.stringify({
             sub2apiAuth: {
@@ -339,7 +339,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 8,
           username: 'sub2-user',
-          accessToken: 'expired-access-token',
+          credential: 'expired-access-token',
           status: 'active',
           extraConfig: JSON.stringify({
             sub2apiAuth: {
@@ -386,15 +386,14 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 10,
           username: 'wong-key',
-          accessToken: '',
-          apiToken: 'sk-only-token',
+          credential: '',
+          credentialMode: 'apikey',
+          credentialKind: 'none',
           balance: 5,
           balanceUsed: 1,
           quota: 6,
           status: 'active',
-          extraConfig: JSON.stringify({
-            credentialMode: 'apikey',
-          }),
+          extraConfig: null,
         },
         sites: {
           id: 10,
@@ -427,7 +426,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 3,
           username: 'ld6jl3djexjf',
-          accessToken: 'active-token',
+          credential: 'active-token',
           status: 'active',
           extraConfig: JSON.stringify({
             runtimeHealth: {
@@ -473,7 +472,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 4,
           username: 'linuxdo_7659',
-          accessToken: 'active-token',
+          credential: 'active-token',
           status: 'active',
           extraConfig: null,
         },
@@ -520,7 +519,7 @@ describe('balanceService auto relogin', () => {
         accounts: {
           id: 7,
           username: 'linuxdo_low_balance',
-          accessToken: 'active-token',
+          credential: 'active-token',
           status: 'active',
           extraConfig: null,
         },

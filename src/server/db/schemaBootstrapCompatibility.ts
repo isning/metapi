@@ -1,5 +1,4 @@
 import {
-  ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS,
   ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS,
   ensureAccountTokenSchemaCompatibility,
   type AccountTokenSchemaInspector,
@@ -97,8 +96,6 @@ const REGISTERED_BOOTSTRAP_UPDATES = new Set(
   [
     ...SITE_COLUMN_COMPATIBILITY_SPECS
       .flatMap((spec) => spec.normalizeSql ? Object.values(spec.normalizeSql) : []),
-    ...ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS
-      .flatMap((spec) => Object.values(spec.sql)),
   ].map((sqlText) => normalizeSqlText(sqlText)),
 );
 

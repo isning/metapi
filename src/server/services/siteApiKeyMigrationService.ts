@@ -1,13 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { insertAndGetById } from '../db/insertHelpers.js';
-import { getCredentialModeFromExtraConfig, mergeAccountExtraConfig } from './accountExtraConfig.js';
+import { isApiKeyAccount } from './accountExtraConfig.js';
+import { listAllAccountTokens } from './accountTokenService.js';
 
 export type SiteApiKeyMigrationSummary = {
   migrated: number;
   deduped: number;
   clearedSites: number;
-  removedMirrorTokens: number;
   warned: number;
 };
 
@@ -16,9 +16,7 @@ function normalizeTokenValue(value: unknown): string {
 }
 
 function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return normalizeTokenValue(account.accessToken).length === 0;
+  return isApiKeyAccount(account);
 }
 
 async function clearSiteApiKey(siteId: number) {
@@ -36,7 +34,6 @@ export async function migrateSiteApiKeysToAccounts(): Promise<SiteApiKeyMigratio
     migrated: 0,
     deduped: 0,
     clearedSites: 0,
-    removedMirrorTokens: 0,
     warned: 0,
   };
 
@@ -44,6 +41,7 @@ export async function migrateSiteApiKeysToAccounts(): Promise<SiteApiKeyMigratio
   if (sites.length === 0) return summary;
 
   const accounts = await db.select().from(schema.accounts).all();
+  const accountTokens = await listAllAccountTokens();
   let nextSortOrder = accounts.reduce((max, account) => Math.max(max, account.sortOrder || 0), -1) + 1;
 
   for (const site of sites) {
@@ -53,47 +51,50 @@ export async function migrateSiteApiKeysToAccounts(): Promise<SiteApiKeyMigratio
     let targetAccount = accounts.find((account) => (
       account.siteId === site.id
       && isApiKeyConnection(account)
-      && normalizeTokenValue(account.apiToken) === siteApiKey
+      && accountTokens.some((token) => (
+        token.accountId === account.id
+        && normalizeTokenValue(token.token) === siteApiKey
+      ))
     )) || null;
 
     if (targetAccount) {
       summary.deduped += 1;
     } else {
-      targetAccount = await insertAndGetById<typeof schema.accounts.$inferSelect>({
-        table: schema.accounts,
-        idColumn: schema.accounts.id,
-        values: {
-          siteId: site.id,
-          username: null,
-          accessToken: '',
-          apiToken: siteApiKey,
-          checkinEnabled: false,
-          status: 'active',
-          extraConfig: mergeAccountExtraConfig(undefined, { credentialMode: 'apikey' }),
-          isPinned: false,
-          sortOrder: nextSortOrder,
-        },
-        insertErrorMessage: 'failed to create migrated site account',
-        loadErrorMessage: 'failed to create migrated site account',
+      targetAccount = await db.transaction(async (tx) => {
+        const created = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+          txDb: tx,
+          table: schema.accounts,
+          idColumn: schema.accounts.id,
+          values: {
+            siteId: site.id,
+            username: null,
+            credentialMode: 'apikey',
+            credential: '',
+            credentialKind: 'none',
+            checkinEnabled: false,
+            status: 'active',
+            isPinned: false,
+            sortOrder: nextSortOrder,
+          },
+          insertErrorMessage: 'failed to create migrated site account',
+          loadErrorMessage: 'failed to create migrated site account',
+        });
+        const inserted = await tx.insert(schema.accountTokens).values({
+          accountId: created.id,
+          name: 'default',
+          token: siteApiKey,
+          tokenGroup: 'default',
+          valueStatus: 'ready',
+          source: 'migration',
+          enabled: true,
+          isDefault: true,
+        }).run();
+        if (!inserted) throw new Error('failed to create migrated site API key');
+        return created;
       });
       accounts.push(targetAccount);
       nextSortOrder += 1;
       summary.migrated += 1;
-    }
-
-    if (targetAccount) {
-      const childTokens = await db.select()
-        .from(schema.accountTokens)
-        .where(eq(schema.accountTokens.accountId, targetAccount.id))
-        .all();
-
-      if (childTokens.length === 1 && normalizeTokenValue(childTokens[0]?.token) === siteApiKey) {
-        await db.delete(schema.accountTokens).where(eq(schema.accountTokens.id, childTokens[0]!.id)).run();
-        summary.removedMirrorTokens += 1;
-      } else if (childTokens.length > 1) {
-        summary.warned += 1;
-        console.warn(`Skipped destructive token cleanup for API key connection #${targetAccount.id}: found ${childTokens.length} child tokens`);
-      }
     }
 
     await clearSiteApiKey(site.id);

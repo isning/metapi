@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { listAccountTokens } from './accountTokenService.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from './accountTokenService.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
@@ -80,11 +81,11 @@ async function ensureDummyAccount(siteId: number): Promise<typeof schema.account
   const inserted = await db.insert(schema.accounts).values({
     siteId,
     username: DUMMY_ACCOUNT_USERNAME,
-    accessToken: 'dummy-session-token',
-    apiToken: 'sk-dummy-upstream-account',
+    credential: 'dummy-session-token',
+    credentialMode: 'session',
+    credentialKind: 'adapter_default',
     status: 'active',
     extraConfig: JSON.stringify({
-      credentialMode: 'session',
       dummyUpstream: true,
     }),
   }).run();
@@ -96,9 +97,7 @@ async function ensureDummyAccount(siteId: number): Promise<typeof schema.account
 
 async function ensureDummyToken(accountId: number, tokenName: string, modelName: string): Promise<number> {
   const tokenValue = `sk-${tokenName}-route-graph-test`;
-  const tokens = await db.select().from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+  const tokens = await listAccountTokens(accountId);
   const existing = tokens.find((token) => token.name === tokenName || token.token === tokenValue);
   let tokenId = existing?.id ?? null;
 

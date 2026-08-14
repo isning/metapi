@@ -126,7 +126,7 @@ describe('accounts model catalog source discovery', () => {
       payload: {
         siteId: site.id,
         credentialMode: 'apikey',
-        accessToken: 'sk-catalog-credential',
+        apiKey: 'sk-catalog-credential',
       },
     });
 

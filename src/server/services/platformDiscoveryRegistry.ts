@@ -123,7 +123,7 @@ export async function discoverCodexModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
+  const accessToken = (input.account.credential || '').trim();
   if (!accessToken) {
     throw new Error('codex oauth access token missing');
   }
@@ -155,7 +155,7 @@ export async function discoverClaudeModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
+  const accessToken = (input.account.credential || '').trim();
   if (!accessToken) {
     throw new Error('claude oauth access token missing');
   }
@@ -184,7 +184,7 @@ export async function validateGeminiCliOauthConnection(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<void> {
-  const accessToken = (input.account.accessToken || '').trim();
+  const accessToken = (input.account.credential || '').trim();
   if (!accessToken) {
     throw new Error('gemini cli oauth access token missing');
   }
@@ -219,7 +219,7 @@ export async function discoverAntigravityModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
+  const accessToken = (input.account.credential || '').trim();
   if (!accessToken) {
     throw new Error('antigravity oauth access token missing');
   }

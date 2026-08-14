@@ -51,7 +51,7 @@ describe('Accounts proxy-only expired state', () => {
         balanceUsed: 0,
         todayReward: 0,
         todaySpend: 0,
-        accessToken: 'api-key-only-token',
+        credential: 'api-key-only-token',
         status: 'expired',
         checkinEnabled: false,
         runtimeHealth: {

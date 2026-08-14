@@ -102,7 +102,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-nihao',
+        apiKey: 'sk-nihao',
         credentialMode: 'apikey',
       },
     });
@@ -149,7 +149,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-rotate',
+        apiKey: 'sk-rotate',
         credentialMode: 'apikey',
       },
     });
@@ -235,7 +235,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-nihao-create',
+        apiKey: 'sk-nihao-create',
         credentialMode: 'apikey',
       },
     });
@@ -286,7 +286,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-nihao-create-rotate',
+        apiKey: 'sk-nihao-create-rotate',
         credentialMode: 'apikey',
       },
     });
@@ -339,7 +339,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         username: 'batch-key',
-        accessToken: 'sk-batch-a\nsk-batch-b',
+        apiKey: 'sk-batch-a\nsk-batch-b',
         credentialMode: 'apikey',
       },
     });
@@ -363,7 +363,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(accounts.map((item) => item.username)).toEqual(['batch-key #1', 'batch-key #2']);
   });
 
-  it('treats accessTokens payloads as batch API key creation even without credentialMode', async () => {
+  it('treats newline-delimited apiKey payloads as batch API key creation', async () => {
     getModelsMock.mockImplementation(async (_baseUrl, token) => {
       if (token === 'sk-array-a') return ['gpt-4o-mini'];
       if (token === 'sk-array-b') return ['gpt-4.1-mini'];
@@ -390,7 +390,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         username: 'array-key',
-        accessTokens: ['sk-array-a', 'sk-array-b'],
+        apiKey: 'sk-array-a\nsk-array-b',
       },
     });
 
@@ -412,4 +412,5 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(accounts.map((item) => item.apiToken)).toEqual(['sk-array-a', 'sk-array-b']);
     expect(accounts.map((item) => item.username)).toEqual(['array-key #1', 'array-key #2']);
   });
+
 });

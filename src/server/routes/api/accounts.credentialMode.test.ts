@@ -11,10 +11,13 @@ const getModelsMock = vi.fn();
 const getApiTokensMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
-  getAdapter: () => ({
+  getAdapter: (platform: string) => ({
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
     getModels: (...args: unknown[]) => getModelsMock(...args),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
+    credentialCapabilities: platform === 'openai'
+      ? { session: false, apiKey: true }
+      : { session: true, apiKey: true },
   }),
 }));
 
@@ -78,7 +81,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-fast-verify',
+        apiKey: 'sk-fast-verify',
         credentialMode: 'apikey',
       },
     });
@@ -90,6 +93,84 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       modelCount: 2,
     });
     expect(getModelsMock).toHaveBeenCalledTimes(1);
+    expect(verifyTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects accessToken input when API-key mode requires apiKey', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Separated Credential Fields',
+      url: 'https://separated-credentials.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const verifyResponse = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: site.id,
+        accessToken: 'sk-wrong-field',
+        credentialMode: 'apikey',
+      },
+    });
+
+    expect(verifyResponse.statusCode).toBe(400);
+    expect(verifyResponse.json()).toMatchObject({
+      success: false,
+      message: expect.stringContaining('Unsupported legacy account field "accessToken"'),
+    });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 'sk-wrong-field',
+        credentialMode: 'apikey',
+      },
+    });
+
+    expect(createResponse.statusCode).toBe(400);
+    expect(createResponse.json()).toMatchObject({
+      message: expect.stringContaining('Unsupported legacy account field "accessToken"'),
+    });
+    expect(getModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects Session connection flows for OpenAI-compatible API-key-only sites', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'OpenAI API Only',
+      url: 'https://api.openai.example.com',
+      platform: 'openai',
+    }).returning().get();
+
+    const verifyResponse = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: site.id,
+        credential: 'not-a-session',
+        credentialMode: 'session',
+      },
+    });
+    expect(verifyResponse.statusCode).toBe(200);
+    expect(verifyResponse.json()).toMatchObject({
+      success: false,
+      message: '此站点仅支持 API Key，请在「API Key 管理」中添加。',
+    });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        credential: 'not-a-session',
+        credentialMode: 'session',
+      },
+    });
+    expect(createResponse.statusCode).toBe(400);
+    expect(createResponse.json()).toMatchObject({
+      message: '此站点仅支持 API Key，请在「API Key 管理」中添加。',
+    });
     expect(verifyTokenMock).not.toHaveBeenCalled();
   });
 
@@ -108,7 +189,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-proxy-only',
+        apiKey: 'sk-proxy-only',
         credentialMode: 'apikey',
       },
     });
@@ -120,15 +201,53 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.accessToken || '').toBe('');
-    expect((accounts[0]?.apiToken || '').startsWith('sk-')).toBe(true);
+    expect(accounts[0]?.credentialMode).toBe('apikey');
+    expect(accounts[0]?.credential).toBe('');
+    expect(accounts[0]?.credentialKind).toBe('none');
     expect(accounts[0]?.checkinEnabled).toBe(false);
 
     const accountTokens = await db.select().from(schema.accountTokens).all();
-    expect(accountTokens).toHaveLength(0);
+    expect(accountTokens).toHaveLength(1);
+    expect(accountTokens[0]).toMatchObject({
+      accountId: accounts[0]?.id,
+      token: 'sk-proxy-only',
+      enabled: true,
+      isDefault: true,
+    });
+  });
 
-    const parsedExtra = JSON.parse(accounts[0]?.extraConfig || '{}') as { credentialMode?: string };
-    expect(parsedExtra.credentialMode).toBe('apikey');
+  it('rejects changing a session account into API-key mode', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'API Key Reclassification Site',
+      url: 'https://api-key-reclassification.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'session-user',
+      credentialMode: 'session',
+      credential: 'stale-access-token',
+      credentialKind: 'access_token',
+      status: 'active',
+      checkinEnabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: {
+        credentialMode: 'apikey',
+        checkinEnabled: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: '账号凭据模式不可切换，请在对应连接管理页面重新创建。',
+    });
+    const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    expect(latest?.credentialMode).toBe('session');
+    expect(latest?.credential).toBe('stale-access-token');
   });
 
   it('rejects malformed verify-token payloads at the route boundary', async () => {
@@ -137,7 +256,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: '1',
-        accessToken: 'sk-fast-verify',
+        credential: 'session-value',
       },
     });
 
@@ -159,7 +278,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect((response.json() as { message?: string }).message).toContain('account payload');
   });
 
-  it('rejects non-string accessToken when adding account', async () => {
+  it('rejects non-string credential when adding account', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Typed Site',
       url: 'https://typed.example.com',
@@ -171,12 +290,12 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 123,
+        credential: 123,
       },
     });
 
     expect(response.statusCode).toBe(400);
-    expect((response.json() as { message?: string }).message).toContain('accessToken');
+    expect((response.json() as { message?: string }).message).toContain('credential');
   });
 
   it('marks apikey connection healthy in account list after model discovery succeeds', async () => {
@@ -189,11 +308,18 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'Wong',
-      accessToken: '',
-      apiToken: 'sk-healthy-apikey',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-healthy-apikey',
+      enabled: true,
+      isDefault: true,
+    }).run();
 
     await db.insert(schema.modelAvailability).values({
       accountId: account.id,
@@ -237,12 +363,14 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credentialMode: 'oauth',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-123',
       status: 'active',
       checkinEnabled: false,
       extraConfig: JSON.stringify({
-        credentialMode: 'session',
         oauth: {
           provider: 'codex',
           accountId: 'chatgpt-account-123',
@@ -298,14 +426,14 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'structured-oauth@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credentialMode: 'oauth',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
       status: 'active',
       checkinEnabled: false,
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-structured-123',
       extraConfig: JSON.stringify({
-        credentialMode: 'session',
         oauth: {
           email: 'structured-oauth@example.com',
           planType: 'team',
@@ -372,7 +500,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'jwt-access-token',
+        credential: 'jwt-access-token',
         refreshToken: 'jwt-refresh-token',
         tokenExpiresAt: 1760000000000,
       },
@@ -381,13 +509,13 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect(response.statusCode).toBe(200);
     const created = (await db.select().from(schema.accounts).all())[0];
     const parsedExtra = JSON.parse(created?.extraConfig || '{}') as {
-      credentialMode?: string;
       sub2apiAuth?: {
         refreshToken?: string;
         tokenExpiresAt?: number;
       };
     };
-    expect(parsedExtra.credentialMode).toBe('session');
+    expect(created?.credentialMode).toBe('session');
+    expect(created?.credential).toBe('jwt-access-token');
     expect(parsedExtra.sub2apiAuth?.refreshToken).toBe('jwt-refresh-token');
     expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
   });
@@ -401,9 +529,10 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'sub2-user',
-      accessToken: 'access-token',
+      credentialMode: 'session',
+      credential: 'access-token',
+      credentialKind: 'access_token',
       extraConfig: JSON.stringify({
-        credentialMode: 'session',
         sub2apiAuth: {
           refreshToken: 'old-refresh-token',
           tokenExpiresAt: 1750000000000,
@@ -454,7 +583,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'before-edit',
-      accessToken: 'access-token',
+      credentialMode: 'session',
+      credential: 'access-token',
+      credentialKind: 'access_token',
       status: 'active',
       unitCost: 25,
       extraConfig: JSON.stringify({
@@ -470,8 +601,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         status: 'disabled',
         checkinEnabled: false,
         unitCost: null,
-        accessToken: 'access-token-updated',
-        apiToken: null,
+        credential: 'access-token-updated',
         isPinned: false,
         refreshToken: null,
         tokenExpiresAt: null,
@@ -486,8 +616,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       status: 'disabled',
       checkinEnabled: false,
       unitCost: null,
-      accessToken: 'access-token-updated',
-      apiToken: null,
+      credential: 'access-token-updated',
       isPinned: false,
     });
     expect(JSON.parse(updated?.extraConfig || '{}')).not.toHaveProperty('proxyUrl');
@@ -502,7 +631,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pinned-user',
-      accessToken: 'access-token',
+      credentialMode: 'session',
+      credential: 'access-token',
+      credentialKind: 'access_token',
       status: 'active',
       isPinned: false,
       sortOrder: 0,
@@ -535,7 +666,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'update-user',
-      accessToken: 'access-token',
+      credentialMode: 'session',
+      credential: 'access-token',
+      credentialKind: 'access_token',
       status: 'active',
     }).returning().get();
 
@@ -558,7 +691,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'update-user',
-      accessToken: 'access-token',
+      credentialMode: 'session',
+      credential: 'access-token',
+      credentialKind: 'access_token',
       status: 'active',
     }).returning().get();
 

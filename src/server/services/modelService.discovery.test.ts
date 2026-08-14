@@ -139,8 +139,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'alice',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -195,8 +194,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'nihao-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
@@ -249,8 +247,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'catalog-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -307,8 +304,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'ark-user',
-      accessToken: 'ark-token',
-      apiToken: null,
+      credential: 'ark-token',
       status: 'active',
     }).returning().get();
 
@@ -336,8 +332,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'dedupe-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -381,8 +376,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'concurrent-refresh-user',
-      accessToken: 'shared-credential',
-      apiToken: 'shared-credential',
+      credential: 'shared-credential',
       status: 'active',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
@@ -438,8 +432,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'token-availability-upsert-user',
-      accessToken: '',
-      apiToken: '',
+      credential: '',
       status: 'active',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
@@ -496,11 +489,18 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'fail-user',
-      accessToken: '',
-      apiToken: 'sk-invalid',
+      credential: '',
+      credentialMode: 'apikey',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'invalid-model-key',
+      enabled: true,
+      isDefault: true,
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -538,8 +538,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'shielded-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -577,8 +576,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'shielded-user-403',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -593,10 +591,10 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
   });
 
-  it('does not scan hidden managed tokens for direct apikey connections', async () => {
+  it('discovers API Key account models only through its managed account token', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'sk-direct-credential' ? ['gpt-4.1'] : ['hidden-should-not-be-used']
+      token === 'sk-migration-hidden' ? ['gpt-4.1'] : ['unexpected-credential']
     ));
 
     const site = await db.insert(schema.sites).values({
@@ -609,10 +607,10 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'apikey-direct-user',
-      accessToken: '',
-      apiToken: 'sk-direct-credential',
+      credential: '',
+      credentialMode: 'apikey',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
 
     const hiddenToken = await db.insert(schema.accountTokens).values({
@@ -632,14 +630,16 @@ describe('refreshModelsForAccount credential discovery', () => {
       status: 'success',
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
-      tokenScanned: 0,
-      discoveredByCredential: true,
+      tokenScanned: 1,
+      discoveredByCredential: false,
     });
 
     const tokenRows = await db.select().from(schema.tokenModelAvailability)
       .where(eq(schema.tokenModelAvailability.tokenId, hiddenToken.id))
       .all();
-    expect(tokenRows).toHaveLength(0);
+    expect(tokenRows).toEqual([
+      expect.objectContaining({ modelName: 'gpt-4.1', available: true }),
+    ]);
   });
 
   it('returns structured result when account missing', async () => {
@@ -668,8 +668,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'disabled-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -698,8 +697,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'inactive-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'disabled',
     }).returning().get();
 
@@ -731,8 +729,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'rebind-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'disabled',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
@@ -810,8 +807,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'placeholder-user',
-      accessToken: '',
-      apiToken: null,
+      credential: '',
       status: 'active',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
@@ -876,8 +872,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-123',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -975,8 +974,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-456',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1047,8 +1049,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-pool-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-789',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1108,8 +1113,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'claude-user@example.com',
-      accessToken: 'claude-oauth-token',
-      apiToken: null,
+      credential: 'claude-oauth-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'claude',
+      oauthAccountKey: 'claude-user@example.com',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1170,7 +1178,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       });
 
       await db.update(schema.accounts).set({
-        accessToken: 'claude-access-token-refreshed',
+        credential: 'claude-access-token-refreshed',
         oauthProvider: 'claude',
         oauthAccountKey: 'claude-refreshed-user@example.com',
         extraConfig: refreshedExtraConfig,
@@ -1213,8 +1221,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'claude-user@example.com',
-      accessToken: 'claude-access-token-expired',
-      apiToken: null,
+      credential: 'claude-access-token-expired',
       status: 'active',
       oauthProvider: 'claude',
       oauthAccountKey: 'claude-user@example.com',
@@ -1260,7 +1267,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     expect(latest).toMatchObject({
-      accessToken: 'claude-access-token-refreshed',
+      credential: 'claude-access-token-refreshed',
       oauthProvider: 'claude',
       oauthAccountKey: 'claude-refreshed-user@example.com',
     });
@@ -1289,7 +1296,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       });
 
       await db.update(schema.accounts).set({
-        accessToken: 'codex-access-token-refreshed',
+        credential: 'codex-access-token-refreshed',
         oauthProvider: 'codex',
         oauthAccountKey: 'chatgpt-account-refreshed',
         extraConfig: refreshedExtraConfig,
@@ -1332,8 +1339,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'codex-access-token-expired',
-      apiToken: null,
+      credential: 'codex-access-token-expired',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-original',
@@ -1380,7 +1386,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     expect(latest).toMatchObject({
-      accessToken: 'codex-access-token-refreshed',
+      credential: 'codex-access-token-refreshed',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-refreshed',
     });
@@ -1410,7 +1416,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       });
 
       await db.update(schema.accounts).set({
-        accessToken: 'codex-access-token-refreshed',
+        credential: 'codex-access-token-refreshed',
         oauthProvider: 'codex',
         oauthAccountKey: 'chatgpt-account-refreshed',
         extraConfig: refreshedExtraConfig,
@@ -1449,8 +1455,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'codex-access-token-expired',
-      apiToken: null,
+      credential: 'codex-access-token-expired',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-original',
@@ -1482,7 +1487,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     expect(latest).toMatchObject({
-      accessToken: 'codex-access-token-refreshed',
+      credential: 'codex-access-token-refreshed',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-account-refreshed',
     });
@@ -1515,8 +1520,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'team-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-team',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1592,8 +1600,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-proxy-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-proxy',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1646,8 +1657,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'gemini-proxy-user@example.com',
-      accessToken: 'gemini-access-token',
-      apiToken: null,
+      credential: 'gemini-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'gemini-cli',
+      oauthAccountKey: 'gemini-proxy-user@example.com',
+      oauthProjectId: 'project-proxy-demo',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1703,8 +1718,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'gemini-site-proxy-user@example.com',
-      accessToken: 'gemini-access-token',
-      apiToken: null,
+      credential: 'gemini-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'gemini-cli',
+      oauthAccountKey: 'gemini-site-proxy-user@example.com',
+      oauthProjectId: 'project-site-proxy-demo',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -1750,7 +1769,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       });
 
       await db.update(schema.accounts).set({
-        accessToken: 'gemini-access-token-refreshed',
+        credential: 'gemini-access-token-refreshed',
         oauthProvider: 'gemini-cli',
         oauthAccountKey: 'gemini-refreshed-user@example.com',
         oauthProjectId: 'project-refresh-demo',
@@ -1790,8 +1809,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'gemini-user@example.com',
-      accessToken: 'gemini-access-token-expired',
-      apiToken: null,
+      credential: 'gemini-access-token-expired',
       status: 'active',
       oauthProvider: 'gemini-cli',
       oauthAccountKey: 'gemini-user@example.com',
@@ -1842,7 +1860,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     expect(latest).toMatchObject({
-      accessToken: 'gemini-access-token-refreshed',
+      credential: 'gemini-access-token-refreshed',
       oauthProvider: 'gemini-cli',
       oauthAccountKey: 'gemini-refreshed-user@example.com',
       oauthProjectId: 'project-refresh-demo',
@@ -1874,7 +1892,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       });
 
       await db.update(schema.accounts).set({
-        accessToken: 'antigravity-access-token-refreshed',
+        credential: 'antigravity-access-token-refreshed',
         oauthProvider: 'antigravity',
         oauthAccountKey: 'antigravity-refreshed-user@example.com',
         oauthProjectId: 'project-refresh-demo',
@@ -1930,8 +1948,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'antigravity-user@example.com',
-      accessToken: 'antigravity-access-token-expired',
-      apiToken: null,
+      credential: 'antigravity-access-token-expired',
       status: 'active',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'antigravity-user@example.com',
@@ -1980,7 +1997,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     expect(latest).toMatchObject({
-      accessToken: 'antigravity-access-token-refreshed',
+      credential: 'antigravity-access-token-refreshed',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'antigravity-refreshed-user@example.com',
       oauthProjectId: 'project-refresh-demo',
@@ -2027,8 +2044,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'antigravity-user@example.com',
-      accessToken: 'antigravity-access-token',
-      apiToken: null,
+      credential: 'antigravity-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'antigravity-user@example.com',
+      oauthProjectId: 'project-demo',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -2108,8 +2129,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'antigravity-trimmed@example.com',
-      accessToken: 'antigravity-access-token',
-      apiToken: null,
+      credential: 'antigravity-access-token',
       status: 'active',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'antigravity-trimmed@example.com',
@@ -2189,8 +2209,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'antigravity-endpoint-pool@example.com',
-      accessToken: 'antigravity-access-token',
-      apiToken: null,
+      credential: 'antigravity-access-token',
+      credentialMode: 'oauth',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'antigravity-endpoint-pool@example.com',
+      oauthProjectId: 'project-demo',
       status: 'active',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
@@ -2237,8 +2261,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'manual-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -2285,8 +2308,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'overlap-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -2333,8 +2355,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'fail-user',
-      accessToken: 'session-token',
-      apiToken: null,
+      credential: 'session-token',
       status: 'active',
     }).returning().get();
 
@@ -2384,8 +2405,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-a@example.com',
-      accessToken: 'oauth-access-token-a',
-      apiToken: null,
+      credential: 'oauth-access-token-a',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-model-pool-a',
@@ -2397,8 +2417,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const accountB = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'pool-b@example.com',
-      accessToken: 'oauth-access-token-b',
-      apiToken: null,
+      credential: 'oauth-access-token-b',
       status: 'active',
       oauthProvider: 'codex',
       oauthAccountKey: 'chatgpt-model-pool-b',

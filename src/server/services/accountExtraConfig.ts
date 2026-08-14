@@ -20,6 +20,13 @@ type Sub2ApiSubscriptionConfig = {
 };
 
 export type AccountCredentialMode = 'auto' | 'session' | 'apikey';
+export type StoredAccountCredentialMode = 'session' | 'apikey' | 'oauth';
+export type AccountCredentialKind =
+  | 'session_cookie'
+  | 'access_token'
+  | 'oauth_access_token'
+  | 'adapter_default'
+  | 'none';
 
 const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
   'auto',
@@ -29,7 +36,6 @@ const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
 
 type AccountExtraConfig = {
   platformUserId?: unknown;
-  credentialMode?: unknown;
   useSystemProxy?: unknown;
   oauth?: {
     provider?: unknown;
@@ -158,9 +164,41 @@ export function getPlatformUserIdFromExtraConfig(extraConfig?: ExtraConfigInput)
   return normalizeUserId(parsed.platformUserId);
 }
 
-export function getCredentialModeFromExtraConfig(extraConfig?: ExtraConfigInput): AccountCredentialMode | undefined {
-  const parsed = parseExtraConfig(extraConfig);
-  return normalizeCredentialMode(parsed.credentialMode);
+type AccountManagementCredentialInput = {
+  credential?: string | null;
+  credentialMode?: unknown;
+};
+
+/**
+ * Resolve the credential for account-management APIs. Model invocation keys
+ * are deliberately excluded: they belong to account_tokens.
+ */
+export function getAccountManagementCredential(
+  account: AccountManagementCredentialInput,
+): string | undefined {
+  const mode = resolveStoredAccountCredentialMode(account);
+  if (mode === 'apikey') return undefined;
+  return normalizeNonEmptyString(account.credential);
+}
+
+type StoredAccountCredentialInput = {
+  credentialMode?: unknown;
+  oauthProvider?: unknown;
+};
+
+export function resolveStoredAccountCredentialMode(
+  account: StoredAccountCredentialInput,
+): StoredAccountCredentialMode {
+  if (normalizeNonEmptyString(account.oauthProvider)) return 'oauth';
+  const storedMode = normalizeNonEmptyString(account.credentialMode)?.toLowerCase();
+  if (storedMode === 'oauth' || storedMode === 'session' || storedMode === 'apikey') {
+    return storedMode;
+  }
+  return 'session';
+}
+
+export function isApiKeyAccount(account: StoredAccountCredentialInput): boolean {
+  return resolveStoredAccountCredentialMode(account) === 'apikey';
 }
 
 export function getOauthProviderFromExtraConfig(extraConfig?: ExtraConfigInput): string | undefined {
@@ -181,8 +219,8 @@ export function hasOauthProvider(input?: OauthProviderInput): boolean {
 }
 
 type DirectAccountRoutingInput = {
-  accessToken?: string | null;
-  apiToken?: string | null;
+  credential?: string | null;
+  credentialMode?: unknown;
   extraConfig?: ExtraConfigInput;
   oauthProvider?: string | null;
 };
@@ -192,27 +230,12 @@ function hasCredentialValue(value: string | null | undefined): boolean {
 }
 
 export function supportsDirectAccountRoutingConnection(account: DirectAccountRoutingInput): boolean {
-  const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (hasOauthProvider(account)) {
-    return hasCredentialValue(account.accessToken) || hasCredentialValue(account.apiToken);
-  }
-  if (credentialMode === 'apikey') {
-    return hasCredentialValue(account.apiToken);
-  }
-  if (credentialMode === 'session') {
-    return false;
-  }
-  if (hasCredentialValue(account.accessToken)) return false;
-  return hasCredentialValue(account.apiToken);
+  return resolveStoredAccountCredentialMode(account) === 'oauth'
+    && hasCredentialValue(account.credential);
 }
 
 export function requiresManagedAccountTokens(account: DirectAccountRoutingInput): boolean {
-  const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (hasOauthProvider(account)) return false;
-  if (credentialMode === 'apikey') return false;
-  if (credentialMode === 'session') return true;
-  if (hasCredentialValue(account.apiToken) && !hasCredentialValue(account.accessToken)) return false;
-  return true;
+  return resolveStoredAccountCredentialMode(account) !== 'oauth';
 }
 
 export type ManagedSub2ApiAuth = {

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildOauthIdentityBackfillPatch,
+  getOauthInfoFromExtraConfig,
   buildOauthInfoFromAccount,
   buildStoredOauthStateFromAccount,
   getOauthInfoFromAccount,
   isOauthProvider,
 } from './oauthAccount.js';
+import { buildOauthIdentityBackfillPatch } from './oauthIdentityBackfill.js';
 
 describe('oauth account identity helpers', () => {
   it('prefers structured oauth provider/accountKey/projectId columns while preserving a legacy accountId', () => {
@@ -209,6 +210,15 @@ describe('oauth account identity helpers', () => {
     expect(isOauthProvider(account, 'gemini-cli')).toBe(false);
   });
 
+  it('keeps direct legacy parsing available for the dedicated cross-dialect backfill', () => {
+    expect(getOauthInfoFromExtraConfig(JSON.stringify({
+      oauth: { provider: 'codex', accountKey: 'legacy-account' },
+    }))).toEqual(expect.objectContaining({
+      provider: 'codex',
+      accountKey: 'legacy-account',
+    }));
+  });
+
   it('builds a structured identity backfill patch from legacy oauth metadata only for missing columns', () => {
     expect(buildOauthIdentityBackfillPatch({
       oauthProvider: null,
@@ -237,11 +247,9 @@ describe('oauth account identity helpers', () => {
           provider: 'legacy-provider-ignored',
           accountKey: 'legacy-account-ignored',
           projectId: 'legacy-project',
-          refreshToken: 'refresh-token',
         },
       }),
-    })).toEqual({
-      oauthProjectId: 'legacy-project',
-    });
+    })).toEqual({ oauthProjectId: 'legacy-project' });
   });
+
 });

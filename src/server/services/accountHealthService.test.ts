@@ -20,11 +20,30 @@ describe('accountHealthService', () => {
     expect(health.state).toBe('unhealthy');
   });
 
+  it('shows the latest non-auth failure instead of a stale expired status', () => {
+    const health = buildRuntimeHealthForAccount({
+      accountStatus: 'expired',
+      siteStatus: 'active',
+      extraConfig: {
+        runtimeHealth: {
+          state: 'unhealthy',
+          reason: 'fetch failed: connect ECONNREFUSED 203.0.113.1:443',
+          source: 'balance',
+          checkedAt: '2026-08-14T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(health.reason).toBe('fetch failed: connect ECONNREFUSED 203.0.113.1:443');
+    expect(health.source).toBe('balance');
+  });
+
   it('does not reuse expired session-token health for proxy-only accounts', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'expired',
       siteStatus: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+      credentialMode: 'apikey',
+      extraConfig: null,
       sessionCapable: false,
     });
 
@@ -40,8 +59,8 @@ describe('accountHealthService', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'expired',
       siteStatus: 'active',
+      credentialMode: 'apikey',
       extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
         runtimeHealth: {
           state: 'healthy',
           reason: '模型探测成功',
@@ -64,11 +83,9 @@ describe('accountHealthService', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'expired',
       siteStatus: 'active',
-      extraConfig: JSON.stringify({
-        oauth: {
-          provider: 'codex',
-        },
-      }),
+      credentialMode: 'oauth',
+      oauthProvider: 'codex',
+      extraConfig: null,
       sessionCapable: false,
     });
 

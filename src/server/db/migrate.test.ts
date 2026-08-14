@@ -18,7 +18,7 @@ describe('runSqliteMigrations', () => {
     dataDir = '';
   });
 
-  it('applies new migrations to a database recorded at an earlier Drizzle migration', async () => {
+  it('applies the account credential migration to a database recorded at migration 0004', async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-sqlite-migration-'));
     process.env.DATA_DIR = dataDir;
     const dbPath = join(dataDir, 'hub.db');
@@ -27,13 +27,28 @@ describe('runSqliteMigrations', () => {
     const sqlite = new Database(dbPath);
     try {
       migrate(drizzle(sqlite), { migrationsFolder: join(process.cwd(), 'drizzle') });
-      sqlite.exec('ALTER TABLE site_api_endpoints DROP COLUMN base_path_mode');
-      sqlite.exec('DROP TABLE token_disabled_models');
-      sqlite.exec('ALTER TABLE token_model_availability DROP COLUMN is_manual');
-      sqlite.exec(`CREATE INDEX upstream_model_cost_pricings_token_group_model_idx
-        ON upstream_model_cost_pricings (token_id, token_group, normalized_model_name, enabled)`);
-      sqlite.prepare('DELETE FROM __drizzle_migrations WHERE created_at > ?')
-        .run(1785130968994);
+      sqlite.exec('ALTER TABLE accounts DROP COLUMN credential_mode');
+      sqlite.exec('ALTER TABLE accounts DROP COLUMN credential_kind');
+      sqlite.exec('ALTER TABLE accounts RENAME COLUMN credential TO access_token');
+      sqlite.exec(`
+        INSERT INTO sites (id, name, url, platform) VALUES (901, 'migration-site', 'https://example.test', 'new-api');
+        INSERT INTO accounts (id, site_id, username, access_token, extra_config)
+          VALUES (901, 901, 'session-user', 'opaque-session', '{"credentialMode":"session","keep":true}');
+        INSERT INTO accounts (id, site_id, username, access_token, extra_config)
+          VALUES (902, 901, 'api-key-user', 'opaque-model-key', '{"credentialMode":"apikey","keep":true}');
+        INSERT INTO account_tokens (account_id, name, token, enabled, is_default)
+          VALUES (902, 'old-default', 'older-model-key', 1, 1);
+        INSERT INTO accounts (id, site_id, username, access_token, extra_config)
+          VALUES (
+            903,
+            901,
+            'oauth-user',
+            'oauth-access-token',
+            '{"oauth":{"provider":"codex","accountId":"legacy-id","accountKey":"legacy-key","projectId":"legacy-project","refreshToken":"refresh-token"}}'
+          );
+      `);
+      sqlite.prepare('DELETE FROM __drizzle_migrations WHERE created_at = ?')
+        .run(1786731726819);
     } finally {
       sqlite.close();
     }
@@ -45,8 +60,44 @@ describe('runSqliteMigrations', () => {
 
     const upgraded = new Database(dbPath, { readonly: true });
     try {
-      expect(upgraded.prepare('PRAGMA table_info(site_api_endpoints)').all())
-        .toEqual(expect.arrayContaining([expect.objectContaining({ name: 'base_path_mode' })]));
+      expect(upgraded.prepare('PRAGMA table_info(accounts)').all())
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: 'credential_mode' }),
+          expect.objectContaining({ name: 'credential' }),
+          expect.objectContaining({ name: 'credential_kind' }),
+        ]));
+      expect(upgraded.prepare('SELECT credential_mode, credential, credential_kind, extra_config FROM accounts WHERE id = 901').get())
+        .toEqual({
+          credential_mode: 'session',
+          credential: 'opaque-session',
+          credential_kind: 'adapter_default',
+          extra_config: '{"keep":true}',
+        });
+      expect(upgraded.prepare('SELECT credential_mode, credential, credential_kind, extra_config FROM accounts WHERE id = 902').get())
+        .toEqual({
+          credential_mode: 'apikey',
+          credential: '',
+          credential_kind: 'none',
+          extra_config: '{"keep":true}',
+        });
+      expect(upgraded.prepare('SELECT token, enabled, is_default FROM account_tokens WHERE account_id = 902 ORDER BY id').all())
+        .toEqual([
+          { token: 'older-model-key', enabled: 0, is_default: 0 },
+          { token: 'opaque-model-key', enabled: 1, is_default: 1 },
+        ]);
+      expect(upgraded.prepare(`
+        SELECT credential_mode, credential, credential_kind,
+          oauth_provider, oauth_account_key, oauth_project_id, extra_config
+        FROM accounts WHERE id = 903
+      `).get()).toEqual({
+        credential_mode: 'oauth',
+        credential: 'oauth-access-token',
+        credential_kind: 'oauth_access_token',
+        oauth_provider: 'codex',
+        oauth_account_key: 'legacy-key',
+        oauth_project_id: 'legacy-project',
+        extra_config: '{"oauth":{"refreshToken":"refresh-token"}}',
+      });
       expect(upgraded.prepare('SELECT COUNT(*) AS count FROM __drizzle_migrations').get())
         .toEqual({ count: readMigrationFiles({ migrationsFolder: join(process.cwd(), 'drizzle') }).length });
     } finally {

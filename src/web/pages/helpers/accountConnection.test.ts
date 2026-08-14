@@ -9,11 +9,11 @@ describe('accountConnection helpers', () => {
   it('resolves account credential mode from explicit mode, capabilities, and token presence', () => {
     expect(resolveAccountCredentialMode({ credentialMode: 'apikey' })).toBe('apikey');
     expect(resolveAccountCredentialMode({ capabilities: { proxyOnly: true } })).toBe('apikey');
-    expect(resolveAccountCredentialMode({ accessToken: ' session-token ' })).toBe('session');
+    expect(resolveAccountCredentialMode({ credential: ' session-token ' })).toBe('session');
     expect(resolveAccountCredentialMode({
       credentialMode: 'session',
       capabilities: { proxyOnly: true },
-      accessToken: 'api-token-ignored-by-explicit-mode',
+      credential: 'api-token-ignored-by-explicit-mode',
     })).toBe('session');
     expect(resolveAccountCredentialMode({})).toBe('apikey');
   });

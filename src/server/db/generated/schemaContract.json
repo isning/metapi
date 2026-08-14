@@ -96,16 +96,22 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "access_token": {
+        "credential_mode": {
           "logicalType": "text",
           "notNull": true,
-          "defaultValue": null,
+          "defaultValue": "'session'",
           "primaryKey": false
         },
-        "api_token": {
+        "credential": {
           "logicalType": "text",
-          "notNull": false,
-          "defaultValue": null,
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKey": false
+        },
+        "credential_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'adapter_default'",
           "primaryKey": false
         },
         "balance": {
