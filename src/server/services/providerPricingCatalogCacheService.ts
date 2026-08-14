@@ -12,6 +12,7 @@ import {
   type UpstreamPricingCatalogRequest,
 } from './upstreamPricingCatalogService.js';
 import { loadPlatformPricingConfig } from './platformPricingConfigService.js';
+import { getPreferredAccountToken } from './accountTokenService.js';
 
 export const PROVIDER_PRICING_CATALOG_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -214,8 +215,7 @@ async function loadCatalogRequest(input: {
     siteApiKey: schema.sites.apiKey,
     accountId: schema.accounts.id,
     accountUsername: schema.accounts.username,
-    accountAccessToken: schema.accounts.accessToken,
-    accountApiToken: schema.accounts.apiToken,
+    accountCredential: schema.accounts.credential,
     accountExtraConfig: schema.accounts.extraConfig,
   })
     .from(schema.accounts)
@@ -226,6 +226,7 @@ async function loadCatalogRequest(input: {
     ))
     .get();
   if (!row) return null;
+  const preferredToken = await getPreferredAccountToken(row.accountId);
   return {
     site: {
       id: row.siteId,
@@ -236,10 +237,12 @@ async function loadCatalogRequest(input: {
     account: {
       id: row.accountId,
       username: row.accountUsername,
-      accessToken: row.accountAccessToken,
-      apiToken: row.accountApiToken,
+      credential: row.accountCredential,
       extraConfig: row.accountExtraConfig,
     },
+    upstreamCredential: preferredToken
+      ? { token: preferredToken.token, tokenKind: 'api_token' }
+      : null,
   };
 }
 

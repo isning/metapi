@@ -8,8 +8,8 @@ describe('alertRules', () => {
     expect(isCloudflareChallenge('invalid token')).toBe(false);
   });
 
-  it('detects token expiration by status or message', () => {
-    expect(isTokenExpiredError({ status: 401, message: 'Unauthorized' })).toBe(true);
+  it('detects explicit token expiration by message', () => {
+    expect(isTokenExpiredError({ status: 401, message: 'Unauthorized' })).toBe(false);
     expect(isTokenExpiredError({ status: 403, message: 'Forbidden' })).toBe(false);
     expect(isTokenExpiredError({ message: 'HTTP 401: access token required' })).toBe(true);
     expect(isTokenExpiredError({ message: 'jwt expired' })).toBe(true);
@@ -18,6 +18,13 @@ describe('alertRules', () => {
     expect(isTokenExpiredError({ message: 'Token 无效' })).toBe(true);
     expect(isTokenExpiredError({ message: '无权进行此操作，未登录且未提供 access token' })).toBe(false);
     expect(isTokenExpiredError({ status: 500, message: 'upstream error' })).toBe(false);
+  });
+
+  it('does not mistake transport failures for expired credentials', () => {
+    expect(isTokenExpiredError({ message: 'fetch failed: connect ECONNREFUSED 203.0.113.1:443' })).toBe(false);
+    expect(isTokenExpiredError({ message: 'getaddrinfo ENOTFOUND api.example.test' })).toBe(false);
+    expect(isTokenExpiredError({ message: 'request timed out after 30 seconds' })).toBe(false);
+    expect(isTokenExpiredError({ status: 502, message: 'upstream connection reset by peer' })).toBe(false);
   });
 
   it('does not treat endpoint dispatch denial as token expiration', () => {

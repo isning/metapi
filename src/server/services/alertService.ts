@@ -5,52 +5,114 @@ import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { appendSessionTokenRebindHint } from './alertRules.js';
 import { emitInboxItem } from './inboxService.js';
 
-export async function reportTokenExpired(params: {
+export type CredentialFailureKind = 'session' | 'apikey';
+
+export function buildCredentialAuthenticationFailure(input: {
+  credentialKind: CredentialFailureKind;
+  accountId: number;
+  accountLabel: string;
+  siteLabel: string;
+  detail?: string;
+}) {
+  const detailText = input.detail ? appendSessionTokenRebindHint(input.detail) : '';
+  const detail = detailText ? ` (${detailText})` : '';
+  const isApiKey = input.credentialKind === 'apikey';
+
+  return {
+    title: isApiKey ? 'API Key 验证失败' : '访问令牌已失效',
+    summary: isApiKey
+      ? `${input.accountLabel} @ ${input.siteLabel} 的 API Key 被上游拒绝`
+      : `${input.accountLabel} @ ${input.siteLabel} 的访问令牌无效或已过期`,
+    message: isApiKey
+      ? `${input.accountLabel} @ ${input.siteLabel} 的 API Key 被上游拒绝${detail}`
+      : `${input.accountLabel} @ ${input.siteLabel} 的访问令牌无效或已过期${detail}`,
+    accountStatus: isApiKey ? null : 'expired' as const,
+    runtimeHealth: isApiKey
+      ? {
+          reason: detailText
+            ? `API Key 被上游拒绝：${detailText}`
+            : 'API Key 被上游拒绝',
+          source: 'proxy-auth',
+        }
+      : {
+          reason: detailText ? `访问令牌失效：${detailText}` : '访问令牌失效',
+          source: 'auth',
+        },
+    openAccountHref: isApiKey
+      ? `/accounts?focusAccountId=${input.accountId}`
+      : `/accounts?focusAccountId=${input.accountId}&openRebind=1`,
+  };
+}
+
+export async function reportCredentialAuthenticationFailure(params: {
   accountId: number;
   username?: string | null;
   siteName?: string | null;
+  credentialKind: CredentialFailureKind;
   detail?: string;
 }) {
   const accountLabel = params.username || `ID:${params.accountId}`;
   const siteLabel = params.siteName || 'unknown-site';
-  const detailText = params.detail ? appendSessionTokenRebindHint(params.detail) : '';
-  const detail = detailText ? ` (${detailText})` : '';
+  const failure = buildCredentialAuthenticationFailure({
+    credentialKind: params.credentialKind,
+    accountId: params.accountId,
+    accountLabel,
+    siteLabel,
+    detail: params.detail,
+  });
   await emitInboxItem({
     scope: 'attention',
     category: 'auth',
     severity: 'critical',
     type: 'token',
-    title: 'Token 已失效',
-    summary: `${accountLabel} @ ${siteLabel} 的 Token 无效或已过期`,
-    message: `${accountLabel} @ ${siteLabel} 的 Token 无效或已过期${detail}`,
+    title: failure.title,
+    summary: failure.summary,
+    message: failure.message,
     level: 'error',
     subject: { type: 'account', id: params.accountId, label: `${accountLabel} @ ${siteLabel}` },
     actions: [
-      { id: 'open-account', label: '打开账号', kind: 'navigate', href: `/accounts?focusAccountId=${params.accountId}&openRebind=1`, placement: 'primary' },
+      { id: 'open-account', label: '打开账号', kind: 'navigate', href: failure.openAccountHref, placement: 'primary' },
       { id: 'resolve', label: '标记已解决', kind: 'invoke', command: 'resolve', placement: 'secondary' },
     ],
-    dedupeKey: `account:${params.accountId}:token-expired`,
+    dedupeKey: `account:${params.accountId}:${params.credentialKind}-authentication-failed`,
     source: 'alert',
     relatedId: params.accountId,
     relatedType: 'account',
   });
 
-  await db.update(schema.accounts).set({
-    status: 'expired',
-    updatedAt: new Date().toISOString(),
-  }).where(eq(schema.accounts.id, params.accountId)).run();
+  if (failure.accountStatus) {
+    await db.update(schema.accounts).set({
+      status: failure.accountStatus,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.accounts.id, params.accountId)).run();
+  }
 
-  setAccountRuntimeHealth(params.accountId, {
+  await setAccountRuntimeHealth(params.accountId, {
     state: 'unhealthy',
-    reason: detailText ? `访问令牌失效：${detailText}` : '访问令牌失效',
-    source: 'auth',
+    reason: failure.runtimeHealth.reason,
+    source: failure.runtimeHealth.source,
   });
 
   await sendNotification(
-    'Token 已失效',
-    `${accountLabel} @ ${siteLabel} 的 Token 无效或已过期${detail}`,
+    failure.title,
+    failure.message,
     'error',
   );
+}
+
+// Backward-compatible entry point for callers that historically reported a
+// session token failure. New call sites should provide credentialKind.
+export async function reportTokenExpired(params: {
+  accountId: number;
+  username?: string | null;
+  siteName?: string | null;
+  credentialKind?: CredentialFailureKind;
+  detail?: string;
+}) {
+  return reportCredentialAuthenticationFailure({
+    ...params,
+    credentialKind: params.credentialKind || 'session',
+  });
 }
 
 export async function reportProxyAllFailed(params: { model: string; reason: string }) {

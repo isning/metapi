@@ -63,12 +63,11 @@ function resolveProbeTokenValue(context: RouteRuntimeExecutionTargetContext): st
 
   if (!context.account) return null;
   if (getOauthInfoFromAccount(context.account)) {
-    const accessToken = String(context.account.accessToken || '').trim();
+    const accessToken = String(context.account.credential || '').trim();
     return accessToken || null;
   }
 
-  const fallbackApiToken = String(context.account.apiToken || '').trim();
-  return fallbackApiToken || null;
+  return null;
 }
 
 function isProviderDirectedCooldown(context: RouteRuntimeExecutionTargetContext): boolean {

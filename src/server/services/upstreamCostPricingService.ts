@@ -21,6 +21,7 @@ import {
   refreshProviderPricingCatalog,
 } from './providerPricingCatalogCacheService.js';
 import { loadPlatformPricingConfig } from './platformPricingConfigService.js';
+import { getAccountTokenById } from './accountTokenService.js';
 
 export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model';
 export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog' | 'system_default';
@@ -98,10 +99,13 @@ type CatalogContext = {
   account: {
     id: number;
     username?: string | null;
-    accessToken?: string | null;
-    apiToken?: string | null;
+    credential?: string | null;
     extraConfig?: string | Record<string, unknown> | null;
   };
+  upstreamCredential?: {
+    token: string | null;
+    tokenKind: 'api_token';
+  } | null;
   tokenGroup?: string | null;
 };
 
@@ -570,32 +574,26 @@ async function loadProviderCatalogContext(input: UpstreamCostResolveInput): Prom
     };
   }
 
-  const rows = await db.select({
+  const row = await db.select({
     siteId: schema.sites.id,
     siteUrl: schema.sites.url,
     sitePlatform: schema.sites.platform,
     siteApiKey: schema.sites.apiKey,
     accountId: schema.accounts.id,
     accountUsername: schema.accounts.username,
-    accountAccessToken: schema.accounts.accessToken,
-    accountApiToken: schema.accounts.apiToken,
+    accountCredential: schema.accounts.credential,
     accountExtraConfig: schema.accounts.extraConfig,
-    tokenGroup: schema.accountTokens.tokenGroup,
   })
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .leftJoin(schema.accountTokens, and(
-      eq(schema.accountTokens.id, input.tokenId ?? -1),
-      eq(schema.accountTokens.accountId, schema.accounts.id),
-    ))
     .where(and(
       eq(schema.accounts.id, normalizePositiveId(accountId, 'accountId')),
       eq(schema.sites.id, normalizePositiveId(input.siteId, 'siteId')),
     ))
-    .all();
-
-  const row = rows[0];
+    .get();
   if (!row) return null;
+  const accountToken = input.tokenId == null ? null : await getAccountTokenById(input.tokenId);
+  if (accountToken && accountToken.accountId !== row.accountId) return null;
   return {
     site: {
       id: row.siteId,
@@ -606,11 +604,13 @@ async function loadProviderCatalogContext(input: UpstreamCostResolveInput): Prom
     account: {
       id: row.accountId,
       username: row.accountUsername,
-      accessToken: row.accountAccessToken,
-      apiToken: row.accountApiToken,
+      credential: row.accountCredential,
       extraConfig: row.accountExtraConfig,
     },
-    tokenGroup: input.tokenGroup ?? row.tokenGroup ?? null,
+    upstreamCredential: accountToken
+      ? { token: accountToken.token, tokenKind: 'api_token' }
+      : null,
+    tokenGroup: input.tokenGroup ?? accountToken?.tokenGroup ?? null,
   };
 }
 
@@ -730,11 +730,8 @@ async function assertUpstreamCostPricingOwnership(input: Pick<
   }
 
   if (input.tokenId == null) return;
-  const token = await db.select({ id: schema.accountTokens.id })
-    .from(schema.accountTokens)
-    .where(and(eq(schema.accountTokens.id, input.tokenId), eq(schema.accountTokens.accountId, input.accountId)))
-    .get();
-  if (!token) {
+  const token = await getAccountTokenById(input.tokenId);
+  if (!token || token.accountId !== input.accountId) {
     throw new Error('Token does not belong to the specified account.');
   }
 }

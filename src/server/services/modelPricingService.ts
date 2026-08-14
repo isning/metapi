@@ -15,6 +15,7 @@ export type {
 import type {
   UpstreamDirectModelPrice,
   UpstreamPricingCatalog as PricingData,
+  UpstreamPricingCredential,
   UpstreamPricingModel as PricingModel,
 } from './upstreamPricingCatalog.js';
 import { resolveUpstreamPricingModelGroup } from './upstreamPricingCatalog.js';
@@ -50,10 +51,10 @@ export interface EstimateProxyCostInput {
   account: {
     id: number;
     username?: string | null;
-    accessToken?: string | null;
-    apiToken?: string | null;
+    credential?: string | null;
     extraConfig?: string | Record<string, unknown> | null;
   };
+  upstreamCredential?: UpstreamPricingCredential | null;
   tokenId?: number | null;
   upstreamGroup?: string | null;
   modelName: string;

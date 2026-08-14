@@ -18,6 +18,7 @@ vi.mock('undici', () => ({
 
 vi.mock('./siteProxy.js', () => ({
   withSiteProxyRequestInit: (...args: unknown[]) => withSiteProxyRequestInitMock(...args),
+  withAccountProxyOverride: (_proxyUrl: unknown, run: () => unknown) => run(),
 }));
 
 import { fetchModelPricingCatalog } from './modelPricingService.js';
@@ -62,7 +63,7 @@ describe('modelPricingService anyrouter pricing', () => {
       },
       account: {
         id: 77,
-        accessToken: 'challenge-seed',
+        credential: 'challenge-seed',
       },
       modelName: 'claude-haiku-4-5-20251001',
       totalTokens: 0,
@@ -116,7 +117,7 @@ describe('modelPricingService anyrouter pricing', () => {
       account: {
         id: 78,
         extraConfig: JSON.stringify({ platformUserId: 42 }),
-        accessToken: 'session-token',
+        credential: 'session-token',
       },
       modelName: 'gpt-4o-mini',
       totalTokens: 0,

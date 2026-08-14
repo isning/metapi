@@ -45,6 +45,31 @@ describe('upstreamEndpointDerivation', () => {
     expect(order).toEqual(['responses']);
   });
 
+  it.each(['new-api', 'sub2api'])('keeps native Responses requirements on /responses for %s', async (platform) => {
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform },
+      },
+      'gpt-5.4',
+      'responses',
+      undefined,
+      undefined,
+      {
+        runtimeCapabilityRequirement: {
+          sourceFormat: 'responses',
+          surface: 'create',
+          acceptableApiTypes: ['openai_responses', 'newapi_responses'],
+          requiredFeatures: [],
+          lossPolicy: 'native_required',
+          fallbackPolicy: 'single_native_variant',
+        },
+      },
+    );
+
+    expect(order).toEqual(['responses']);
+  });
+
   it('derives codex oauth openai requests as responses-first without surface-local reordering', async () => {
     const order = await resolveUpstreamEndpointCandidates(
       baseContext,

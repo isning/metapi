@@ -31,8 +31,7 @@ type ChannelContext = {
   account: {
     id: number;
     username?: string | null;
-    accessToken?: string | null;
-    apiToken?: string | null;
+    credential?: string | null;
     extraConfig?: string | Record<string, unknown> | null;
   };
 };
@@ -341,8 +340,7 @@ export async function resolveUpstreamEndpointCandidates(
       account: {
         id: context.account.id,
         username: context.account.username ?? null,
-        accessToken: context.account.accessToken ?? null,
-        apiToken: context.account.apiToken ?? null,
+        credential: context.account.credential ?? null,
         extraConfig: context.account.extraConfig ?? null,
       },
       modelName,

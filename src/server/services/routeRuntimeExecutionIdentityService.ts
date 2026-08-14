@@ -1,11 +1,11 @@
 import { and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { listAccountTokensByIds, type AccountTokenRow } from './accountTokenService.js';
 
 type RuntimeExecutionTargetRow = typeof schema.runtimeExecutionTargets.$inferSelect;
 type RuntimeExecutionTargetStateRow = typeof schema.runtimeExecutionTargetState.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
 type SiteRow = typeof schema.sites.$inferSelect;
-type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type RuntimeExecutionTargetIdentityRow = Pick<
   RuntimeExecutionTargetRow,
   'id' | 'accountId' | 'tokenId' | 'oauthRouteUnitId' | 'upstreamModelName' | 'enabled'
@@ -110,9 +110,7 @@ async function loadIdentityRows(executionTargetIds: number[]): Promise<Map<numbe
     const accountRows: Promise<AccountRow[]> = accountIds.length > 0
       ? db.select().from(schema.accounts).where(inArray(schema.accounts.id, accountIds)).all()
       : Promise.resolve([]);
-    const tokenRows: Promise<AccountTokenRow[]> = tokenIds.length > 0
-      ? db.select().from(schema.accountTokens).where(inArray(schema.accountTokens.id, tokenIds)).all()
-      : Promise.resolve([]);
+    const tokenRows = listAccountTokensByIds(tokenIds);
     const stateRows: Promise<RuntimeExecutionTargetStateRow[]> = db.select().from(schema.runtimeExecutionTargetState)
       .where(inArray(schema.runtimeExecutionTargetState.executionTargetId, batch))
       .all();

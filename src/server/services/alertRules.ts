@@ -15,16 +15,10 @@ function isEndpointDispatchDeniedMessage(message?: string | null): boolean {
   );
 }
 
-function containsHttpStatus(message: string | null | undefined, status: number): boolean {
-  if (!message) return false;
-  return new RegExp(`(?:^|\\b)(?:http\\s*)?${status}(?:\\b|:)`, 'i').test(message);
-}
-
 export function isTokenExpiredError(input: { status?: number; message?: string | null }): boolean {
   const rawMessage = input.message || '';
   const text = (input.message || '').toLowerCase();
   if (isEndpointDispatchDeniedMessage(rawMessage)) return false;
-  if (input.status === 401 || containsHttpStatus(rawMessage, 401)) return true;
   if (!text) return false;
 
   // NewAPI-like sites may return this when session context is missing for an action,
@@ -34,13 +28,15 @@ export function isTokenExpiredError(input: { status?: number; message?: string |
   const tokenPhrase = text.includes('token') || text.includes('令牌') || text.includes('访问令牌');
   const hasInvalid = text.includes('invalid') || text.includes('无效');
   const hasExpired = text.includes('expired') || text.includes('过期');
+  const hasMissing = text.includes('required') || text.includes('missing') || text.includes('未提供');
 
   return (
     text.includes('jwt expired') ||
     text.includes('token expired') ||
-    (tokenPhrase && (hasInvalid || hasExpired)) ||
+    (tokenPhrase && (hasInvalid || hasExpired || hasMissing)) ||
     /invalid\s+access\s+token/.test(text) ||
-    /access\s+token\s+is\s+invalid/.test(text)
+    /access\s+token\s+is\s+invalid/.test(text) ||
+    /(?:invalid|expired|revoked)[_-]?token\b/.test(text)
   );
 }
 

@@ -32,8 +32,7 @@ interface ProxyUsageFallbackInput {
     proxyUrl?: string | null;
   };
   account: {
-    accessToken?: string | null;
-    apiToken?: string | null;
+    credential?: string | null;
     username?: string | null;
     extraConfig?: string | null;
     platformUserId?: number | null;
@@ -335,9 +334,8 @@ function parseSelfLogBillingMeta(rawOther: unknown): SelfLogBillingMeta | null {
 
 function buildTokenCandidates(input: ProxyUsageFallbackInput): string[] {
   const candidates = [
-    input.account.accessToken,
+    input.account.credential,
     input.tokenValue,
-    input.account.apiToken,
   ]
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .filter(Boolean);

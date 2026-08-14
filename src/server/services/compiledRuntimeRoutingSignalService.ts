@@ -55,6 +55,7 @@ export type RuntimeRoutingSignalContext = {
   order: number;
   accountBalance: number | null;
   accountExtraConfig?: string | null;
+  accountCredentialMode?: string | null;
   accountOauthProvider?: string | null;
   siteGlobalWeight: number | null;
   health: RuntimeHealthSummary | null;
@@ -714,7 +715,7 @@ export async function buildRuntimeRoutingSignalMap(input: {
     const targetId = Math.trunc(Number(context.executionTargetId));
     const loadSnapshot = proxyTargetCoordinator.getTargetLoadSnapshot({
       targetId: Number.isSafeInteger(targetId) && targetId > 0 ? targetId : 0,
-      accountExtraConfig: context.accountExtraConfig,
+      accountCredentialMode: context.accountCredentialMode,
       accountOauthProvider: context.accountOauthProvider,
     });
     const runtimeLoadMultiplier = resolveRuntimeLoadMultiplier(loadSnapshot);

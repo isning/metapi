@@ -454,9 +454,9 @@ function resolveTokenValue(identity: ExecutionTargetIdentity): string | null {
     return asText(identity.token.token) || null;
   }
   if (getOauthInfoFromAccount(identity.account)) {
-    return asText(identity.account.accessToken) || null;
+    return asText(identity.account.credential) || null;
   }
-  return asText(identity.account.apiToken) || null;
+  return null;
 }
 
 async function ensureExecutionTargetState(executionTargetId: number): Promise<void> {

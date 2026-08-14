@@ -42,6 +42,7 @@ export type RuntimeCredentialIdentity = {
   accountUsername: string | null;
   accountBalance: number | null;
   accountExtraConfig: string | null;
+  accountCredentialMode: string;
   accountOauthProvider: string | null;
   tokenId: number | null;
   tokenName: string | null;
@@ -119,6 +120,7 @@ function credentialIdentitiesFromTargetContexts(
       accountUsername: context.account.username ?? null,
       accountBalance: typeof context.account.balance === 'number' ? context.account.balance : null,
       accountExtraConfig: context.account.extraConfig ?? null,
+      accountCredentialMode: context.account.credentialMode,
       accountOauthProvider: context.account.oauthProvider ?? null,
       tokenId: context.token?.id ?? null,
       tokenName: context.token?.name ?? null,
@@ -265,6 +267,7 @@ export async function buildCompiledRuntimeRoutingSignalContexts(input: {
       order: attempt.order ?? index,
       accountBalance: identity.accountBalance,
       accountExtraConfig: identity.accountExtraConfig,
+      accountCredentialMode: identity.accountCredentialMode,
       accountOauthProvider: identity.accountOauthProvider,
       siteGlobalWeight: identity.siteGlobalWeight,
       health,

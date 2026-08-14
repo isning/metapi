@@ -96,8 +96,7 @@ describe('proxyUsageFallbackService sub2api', () => {
         platform: 'sub2api',
       },
       account: {
-        accessToken: 'jwt-access-token',
-        apiToken: 'sk-account-level',
+        credential: 'jwt-access-token',
       },
       tokenValue: 'sk-route',
       tokenName: 'local-token-name',
@@ -137,7 +136,7 @@ describe('proxyUsageFallbackService sub2api', () => {
         platform: 'new-api',
       },
       account: {
-        accessToken: 'jwt-access-token',
+        credential: 'jwt-access-token',
       },
       modelName: 'gpt-5.4',
       requestStartedAtMs: Date.parse('2026-03-07T06:12:07.000Z'),
