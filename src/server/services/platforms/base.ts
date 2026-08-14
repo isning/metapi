@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
-import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { withAccountProxyOverride, withSiteProxyRequestInit } from '../siteProxy.js';
 import {
   getPlatformCredentialCapabilities,
   type PlatformCredentialCapabilities,
@@ -106,6 +106,7 @@ export interface CreateApiTokenOptions {
 export interface PlatformAdapter {
   readonly platformName: string;
   readonly credentialCapabilities: PlatformCredentialCapabilities;
+  runWithProxyOverride<T>(proxyUrl: string | null | undefined, operation: () => Promise<T>): Promise<T>;
   detect(url: string): Promise<boolean>;
   login(baseUrl: string, username: string, password: string): Promise<LoginResult>;
   getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
@@ -127,6 +128,13 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
 
   get credentialCapabilities(): PlatformCredentialCapabilities {
     return getPlatformCredentialCapabilities(this.platformName);
+  }
+
+  runWithProxyOverride<T>(
+    proxyUrl: string | null | undefined,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return withAccountProxyOverride(proxyUrl, operation);
   }
 
   abstract detect(url: string): Promise<boolean>;

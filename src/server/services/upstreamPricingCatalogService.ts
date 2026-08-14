@@ -2,7 +2,6 @@ import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { resolvePlatformUserId, resolveProxyUrlFromExtraConfig } from './accountExtraConfig.js';
 import { refreshAccountSessionFromAutoRelogin } from './accountAutoReloginService.js';
 import { getAdapter } from './platforms/index.js';
-import { withAccountProxyOverride } from './siteProxy.js';
 import type {
   UpstreamPricingCatalog,
   UpstreamPricingCredential,
@@ -88,12 +87,10 @@ export async function fetchUpstreamPricingCatalogWithMetadata(
   const baseUrl = normalizeUrl(input.site.url);
   const failures: PricingCatalogCredentialFailure[] = [];
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(input.account.extraConfig);
-  const fetchCatalog = async (credential: UpstreamPricingCredential) => (
-    await withAccountProxyOverride(
-      accountProxyUrl,
-      () => adapter.getPricingCatalog!(baseUrl, credential),
-    )
-  );
+  const fetchCatalog = async (credential: UpstreamPricingCredential) => {
+    const operation = () => adapter.getPricingCatalog!(baseUrl, credential);
+    return adapter.runWithProxyOverride(accountProxyUrl, operation);
+  };
   for (const credential of buildCredentialCandidates(input)) {
     try {
       const catalog = await fetchCatalog(credential);

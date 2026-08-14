@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getAdapterMock } = vi.hoisted(() => ({
+const { getAdapterMock, runWithProxyOverrideMock } = vi.hoisted(() => ({
   getAdapterMock: vi.fn(),
+  runWithProxyOverrideMock: vi.fn(async (_proxyUrl: string | null | undefined, operation: () => Promise<unknown>) => operation()),
 }));
 const { refreshAccountSessionFromAutoReloginMock } = vi.hoisted(() => ({
   refreshAccountSessionFromAutoReloginMock: vi.fn(),
@@ -26,6 +27,7 @@ import {
 describe('upstreamPricingCatalogService', () => {
   beforeEach(() => {
     getAdapterMock.mockReset();
+    runWithProxyOverrideMock.mockClear();
     refreshAccountSessionFromAutoReloginMock.mockReset();
     refreshAccountSessionFromAutoReloginMock.mockResolvedValue(null);
   });
@@ -44,7 +46,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -64,6 +66,7 @@ describe('upstreamPricingCatalogService', () => {
 
     expect(catalog?.models.size).toBe(1);
     expect(getAdapterMock).toHaveBeenCalledWith('new-api');
+    expect(runWithProxyOverrideMock).toHaveBeenCalledTimes(2);
     expect(getPricingCatalog).toHaveBeenNthCalledWith(1, 'https://newapi.example.com', {
       token: 'api-token',
       tokenKind: 'api_token',
@@ -90,7 +93,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -136,7 +139,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -163,7 +166,7 @@ describe('upstreamPricingCatalogService', () => {
       .mockRejectedValueOnce(new Error('api key rejected'))
       .mockRejectedValueOnce(new Error('session expired'))
       .mockResolvedValueOnce(null);
-    getAdapterMock.mockReturnValue({ getPricingCatalog });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
 
     await expect(fetchUpstreamPricingCatalog({
       site: {
@@ -198,7 +201,7 @@ describe('upstreamPricingCatalogService', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(catalog);
-    getAdapterMock.mockReturnValue({ getPricingCatalog });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
     refreshAccountSessionFromAutoReloginMock.mockResolvedValue('fresh-session-token');
 
     const input = {
