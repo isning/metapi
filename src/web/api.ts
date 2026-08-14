@@ -1516,7 +1516,7 @@ export const api = {
     modelDetails: Array<{ name: string; available: boolean; latencyMs: number | null; checkedAt: string | null; disabled: boolean }>;
     models: string[];
   }>(`/api/account-tokens/${id}/models`),
-  refreshAccountTokenModels: (id: number) => request<{
+  refreshAccountTokenModels: (id: number) => requestJson<{
     success: boolean;
     models: {
       token: { id: number; accountId: number; name: string; tokenGroup?: string | null; enabled?: boolean; isDefault?: boolean };
@@ -1526,7 +1526,7 @@ export const api = {
       modelDetails: Array<{ name: string; available: boolean; latencyMs: number | null; checkedAt: string | null; disabled: boolean }>;
       models: string[];
     };
-  }>(`/api/account-tokens/${id}/models/refresh`, { method: 'POST' }),
+  }>(`/api/account-tokens/${id}/models/refresh`, { method: 'POST', body: {} }),
   updateAccountTokenDisabledModels: (id: number, models: string[]) =>
     requestJson(`/api/account-tokens/${id}/models/disabled`, { method: 'PUT', body: { models } }),
   addAccountTokenAvailableModels: (id: number, models: string[]) =>

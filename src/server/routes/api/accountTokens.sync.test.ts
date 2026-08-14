@@ -1264,6 +1264,8 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     const response = await app.inject({
       method: 'POST',
       url: `/api/account-tokens/${token.id}/models/refresh`,
+      headers: { 'content-type': 'application/json' },
+      payload: {},
     });
 
     expect(response.statusCode).toBe(200);

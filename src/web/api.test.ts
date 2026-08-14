@@ -109,7 +109,7 @@ describe("api proxy test timeout handling", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
-  it("keeps management JSON writes on the explicit JSON request variant", () => {
+  it("keeps every management write on the explicit JSON request variant", () => {
     const source = readFileSync(resolve(process.cwd(), "src/web/api.ts"), "utf8");
     const sourceFile = ts.createSourceFile("api.ts", source, ts.ScriptTarget.Latest, true);
     const directRequestWrites: number[] = [];
@@ -140,15 +140,23 @@ describe("api proxy test timeout handling", () => {
     };
     visit(sourceFile);
 
-    // This endpoint explicitly has no JSON request body. All other management
-    // writes must use requestJson so Content-Type and payload stay in sync.
-    expect(directRequestWrites).toHaveLength(1);
-    expect(source.slice(directRequestWrites[0], directRequestWrites[0] + 180)).toContain(
-      'request<{'
+    expect(directRequestWrites).toEqual([]);
+  });
+
+  it("sends an explicit JSON body when refreshing token models", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
     );
-    expect(source.slice(directRequestWrites[0], directRequestWrites[0] + 900)).toContain(
-      '`/api/account-tokens/${id}/models/refresh`, { method: \'POST\' }',
-    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.refreshAccountTokenModels(42);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init).toMatchObject({ method: "POST", body: "{}" });
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
   afterEach(() => {
