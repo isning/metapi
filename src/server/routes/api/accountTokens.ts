@@ -32,6 +32,8 @@ import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
   type CoverageBatchRebuildResult,
   convergeAccountMutation,
+  rebuildAccountRoutes,
+  refreshAccountModelsAndRoutes,
   refreshAccountCoverageBatch,
 } from '../../services/accountMutationWorkflow.js';
 import {
@@ -509,12 +511,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const before = await getAvailableModelsForAccountToken(tokenId);
     if (!before) return reply.code(404).send({ success: false, message: '令牌不存在' });
 
-    const result = await convergeAccountMutation({
-      accountId: before.account.id,
-      refreshModels: true,
-      rebuildRoutes: true,
-      continueOnError: false,
-    });
+    const result = await refreshAccountModelsAndRoutes(before.account.id);
     const models = await getAvailableModelsForAccountToken(tokenId);
     return {
       success: true,
@@ -540,7 +537,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await tx.insert(schema.tokenDisabledModels).values(models.map((modelName) => ({ tokenId, modelName }))).run();
       }
     });
-    const convergence = await convergeAccountMutation({ accountId: token.accountId, rebuildRoutes: true });
+    const convergence = await rebuildAccountRoutes(token.accountId);
     return { success: true, rebuild: convergence.rebuildResult };
   });
 
@@ -577,7 +574,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         }
       }
     });
-    const convergence = await convergeAccountMutation({ accountId: token.accountId, rebuildRoutes: true });
+    const convergence = await rebuildAccountRoutes(token.accountId);
     return { success: true, rebuild: convergence.rebuildResult };
   });
 
@@ -809,9 +806,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!owner) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
-    if (isApiKeyConnection(owner)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
-    }
+    const apiKeyConnection = isApiKeyConnection(owner);
 
     const body = parsedBody.data;
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
@@ -833,6 +828,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       updates.valueStatus = nextValueStatus;
     }
 
+    if (apiKeyConnection && nextValueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY) {
+      return reply.code(400).send({ success: false, message: 'API Key 必须填写完整明文，不能保存脱敏占位值' });
+    }
+    if (apiKeyConnection && (body.enabled === false || body.isDefault === false)) {
+      return reply.code(400).send({ success: false, message: 'API Key 连接的唯一 Key 必须保持启用并设为默认' });
+    }
+
     if (body.group !== undefined) {
       updates.tokenGroup = (body.group || '').trim() || null;
     }
@@ -840,6 +842,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
       updates.enabled = false;
       updates.isDefault = false;
+    } else if (apiKeyConnection) {
+      updates.enabled = true;
+      updates.isDefault = true;
     } else {
       if (body.enabled !== undefined) updates.enabled = body.enabled;
       if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
@@ -913,10 +918,6 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const row = await getAccountTokenWithOwner(tokenId);
     if (!row) {
       return reply.code(404).send({ success: false, message: '令牌不存在' });
-    }
-
-    if (isApiKeyConnection(row.account)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
     }
 
     if (isMaskedPendingAccountToken(row.token) || isMaskedTokenValue(row.token.token)) {

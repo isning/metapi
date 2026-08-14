@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
-import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
 import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getApiTokensMock = vi.fn();
@@ -45,7 +44,12 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     return seedId;
   };
 
-  const seedAccount = async (input: { siteStatus?: 'active' | 'disabled'; accountStatus?: string; accessToken?: string | null }) => {
+  const seedAccount = async (input: {
+    siteStatus?: 'active' | 'disabled';
+    accountStatus?: string;
+    credential?: string | null;
+    credentialMode?: 'session' | 'apikey';
+  }) => {
     const id = nextSeed();
     const site = await db.insert(schema.sites).values({
       name: `site-${id}`,
@@ -59,7 +63,9 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `user-${id}`,
-      accessToken: input.accessToken ?? `access-token-${id}`,
+      credentialMode: input.credentialMode ?? 'session',
+      credential: input.credential ?? (input.credentialMode === 'apikey' ? '' : `access-token-${id}`),
+      credentialKind: input.credentialMode === 'apikey' ? 'none' : 'adapter_default',
       status: input.accountStatus ?? 'active',
     }).returning().get();
 
@@ -491,16 +497,8 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     expect((maskedRow as any)?.valueStatus).toBe('masked_pending');
   });
 
-  it('rejects sync and token management for apikey connections', async () => {
-    const { account } = await seedAccount({ siteStatus: 'active', accessToken: '' });
-    await db.update(schema.accounts)
-      .set({
-        apiToken: 'sk-proxy-only',
-        checkinEnabled: false,
-        extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
-      })
-      .where(eq(schema.accounts.id, account.id))
-      .run();
+  it('rejects sync and creation for apikey connections', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active', credentialMode: 'apikey' });
 
     const syncResponse = await app.inject({
       method: 'POST',
@@ -537,24 +535,15 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     });
   });
 
-  it('hides migrated mirrored tokens for apikey connections from list API', async () => {
-    const { account } = await seedAccount({ siteStatus: 'active', accessToken: '' });
-    await db.update(schema.accounts)
-      .set({
-        apiToken: 'sk-hidden-migrated',
-        checkinEnabled: false,
-        extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
-      })
-      .where(eq(schema.accounts.id, account.id))
-      .run();
-
-    await db.insert(schema.accountTokens).values({
+  it('lists and updates the unique model key for an apikey connection', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active', credentialMode: 'apikey' });
+    const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
       name: 'default',
-      token: 'sk-hidden-migrated',
+      token: 'sk-original-key',
       enabled: true,
       isDefault: true,
-    }).run();
+    }).returning().get();
 
     const response = await app.inject({
       method: 'GET',
@@ -562,7 +551,36 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual([]);
+    expect(response.json()).toEqual([
+      expect.objectContaining({
+        id: token.id,
+        accountId: account.id,
+        tokenMasked: maskToken('sk-original-key'),
+      }),
+    ]);
+
+    const valueResponse = await app.inject({
+      method: 'GET',
+      url: `/api/account-tokens/${token.id}/value`,
+    });
+    expect(valueResponse.statusCode).toBe(200);
+    expect(valueResponse.json()).toMatchObject({ success: true, token: 'sk-original-key' });
+
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${token.id}`,
+      payload: { token: 'replacement-opaque-key', enabled: true, isDefault: true },
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      success: true,
+      token: expect.objectContaining({
+        id: token.id,
+        token: 'replacement-opaque-key',
+        enabled: true,
+        isDefault: true,
+      }),
+    });
   });
 
   it('sync-all skips disabled-site accounts and syncs active-site accounts', async () => {
@@ -742,7 +760,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     });
     expect(createApiTokenMock).toHaveBeenCalledTimes(1);
     expect(createApiTokenMock.mock.calls[0][0]).toBe(site.url);
-    expect(createApiTokenMock.mock.calls[0][1]).toBe(account.accessToken);
+    expect(createApiTokenMock.mock.calls[0][1]).toBe(account.credential);
 
     const tokenRows = await db.select()
       .from(schema.accountTokens)
@@ -953,7 +971,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     expect(response.statusCode).toBe(200);
     expect(deleteApiTokenMock).toHaveBeenCalledTimes(1);
     expect(deleteApiTokenMock.mock.calls[0][0]).toBe(site.url);
-    expect(deleteApiTokenMock.mock.calls[0][1]).toBe(account.accessToken);
+    expect(deleteApiTokenMock.mock.calls[0][1]).toBe(account.credential);
     expect(deleteApiTokenMock.mock.calls[0][2]).toBe('sk-upstream-token');
 
     const removed = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();

@@ -24,6 +24,19 @@ export async function rebuildRoutesBestEffort(): Promise<boolean> {
   return routeRefreshWorkflow.rebuildRoutesBestEffort();
 }
 
+export async function rebuildAccountRoutes(accountId: number) {
+  return convergeAccountMutation({ accountId, rebuildRoutes: true });
+}
+
+export async function refreshAccountModelsAndRoutes(accountId: number) {
+  return convergeAccountMutation({
+    accountId,
+    refreshModels: true,
+    rebuildRoutes: true,
+    continueOnError: false,
+  });
+}
+
 export async function convergeAccountMutation(input: {
   accountId: number;
   preferredApiToken?: string | null;
