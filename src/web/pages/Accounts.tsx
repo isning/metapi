@@ -146,14 +146,14 @@ function createRebindForm(platformUserId = "") {
   };
 }
 
-function sessionCredentialPlaceholderForPlatform(platform?: string | null): string {
+function sessionCredentialPlaceholderKeyForPlatform(platform?: string | null): string {
   const kind = getPlatformCredentialCapabilities(platform).sessionCredentialKind;
   if (kind === "session_cookie_or_api_token") {
-    return "粘贴 Session Cookie 或 API Token";
+    return "pages.accounts.credentialPlaceholderCookieOrApiToken";
   }
-  if (kind === "session_cookie") return "粘贴 Session Cookie";
-  if (kind === "access_token") return "粘贴 Access Token";
-  return "粘贴连接凭据";
+  if (kind === "session_cookie") return "pages.accounts.credentialPlaceholderCookie";
+  if (kind === "access_token") return "pages.accounts.credentialPlaceholderAccessToken";
+  return "pages.accounts.credentialPlaceholderDefault";
 }
 
 function usesNewApiApiTokenCredential(platform?: string | null): boolean {
@@ -527,7 +527,7 @@ export default function Accounts() {
     (selectedTokenSite?.platform || "").toLowerCase() === "sub2api";
   const usesNewApiApiToken = usesNewApiApiTokenCredential(selectedTokenSite?.platform);
   const sessionCredentialPlaceholder = useMemo(
-    () => sessionCredentialPlaceholderForPlatform(selectedTokenSite?.platform),
+    () => tr(sessionCredentialPlaceholderKeyForPlatform(selectedTokenSite?.platform)),
     [selectedTokenSite?.platform],
   );
   const activeAddCredentialMode =
@@ -2683,7 +2683,7 @@ export default function Accounts() {
                       </p>
                     </div>
                     <Input
-                      placeholder={sessionCredentialPlaceholderForPlatform(editingAccount?.site?.platform)}
+                      placeholder={tr(sessionCredentialPlaceholderKeyForPlatform(editingAccount?.site?.platform))}
                       value={editForm.cred}
                       onChange={(e) =>
                         setEditForm((prev) => ({ ...prev, cred: e.target.value }))

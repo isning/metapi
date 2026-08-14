@@ -251,7 +251,7 @@ export default function Settings() {
     systemProxyUrl: '',
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
-    proxyExecutionAttemptsExhaustedMessage: '所有执行尝试均不可用，请稍后重试',
+    proxyExecutionAttemptsExhaustedMessage: tr('pages.settings.executionAttemptsExhaustedMessagePlaceholder'),
   });
   const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
@@ -420,7 +420,7 @@ export default function Settings() {
         proxyEmptyContentFailEnabled: !!runtimeInfo.proxyEmptyContentFailEnabled,
         proxyExecutionAttemptsExhaustedMessage: typeof runtimeInfo.proxyExecutionAttemptsExhaustedMessage === 'string' && runtimeInfo.proxyExecutionAttemptsExhaustedMessage.trim()
           ? runtimeInfo.proxyExecutionAttemptsExhaustedMessage.trim()
-          : '所有执行尝试均不可用，请稍后重试',
+          : tr('pages.settings.executionAttemptsExhaustedMessagePlaceholder'),
         proxyTokenMasked: runtimeInfo.proxyTokenMasked || '',
         adminIpAllowlist: Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.filter((item: unknown) => typeof item === 'string')

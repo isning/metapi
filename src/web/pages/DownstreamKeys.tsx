@@ -638,7 +638,7 @@ export default function DownstreamKeys() {
           siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
           accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
           label: tr('pages.downstreamKeys.defaultApiKey'),
-          detail: '使用账号当前默认模型 Key',
+          detail: tr('pages.downstreamKeys.defaultApiKeyDetail'),
         });
       }
 
