@@ -56,7 +56,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'manual',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
@@ -124,7 +124,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'manual-cache',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
@@ -191,7 +191,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'catalog-disabled',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
@@ -273,7 +273,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'direct-catalog',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     fetchUpstreamPricingCatalogMock.mockResolvedValue({
       models: new Map([['direct-cache-model', {
@@ -326,7 +326,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'sub2api-group-catalog',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     fetchUpstreamPricingCatalogMock.mockResolvedValue({
       models: new Map([['sub2api-model', {
@@ -379,7 +379,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'missing-cache-catalog',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     fetchUpstreamPricingCatalogMock.mockResolvedValue({
       models: new Map([['missing-cache-model', {
@@ -416,7 +416,7 @@ describe('modelPricingService upstream cost integration', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'zero-cache-catalog',
-      accessToken: 'access-token',
+      credential: 'access-token',
     }).returning().get();
     fetchUpstreamPricingCatalogMock.mockResolvedValue({
       models: new Map([['zero-cache-model', {

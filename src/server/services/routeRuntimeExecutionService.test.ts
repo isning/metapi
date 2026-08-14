@@ -120,8 +120,8 @@ describe('routeRuntimeExecutionService', () => {
       const account = await db.insert(schema.accounts).values({
         siteId: site.id,
         username: `${candidateInput.siteName}-user`,
-        accessToken: `${candidateInput.siteName}-access`,
-        apiToken: `${candidateInput.siteName}-api`,
+        credential: `${candidateInput.siteName}-access`,
+
         status: 'active',
       }).returning().get();
       const token = await db.insert(schema.accountTokens).values({

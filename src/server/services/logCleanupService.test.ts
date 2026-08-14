@@ -67,8 +67,8 @@ describe('logCleanupService', () => {
     return await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'cleanup-user',
-      accessToken: 'cleanup-access-token',
-      apiToken: 'cleanup-api-token',
+      credential: 'cleanup-access-token',
+
       status: 'active',
     }).returning().get();
   }

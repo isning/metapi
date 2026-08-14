@@ -44,8 +44,8 @@ describe('sites endpoint bindings API', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'api-account',
-      accessToken: 'access-token',
-      apiToken: 'sk-account',
+      credential: 'access-token',
+
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,

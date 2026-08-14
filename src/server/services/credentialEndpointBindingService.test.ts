@@ -42,8 +42,8 @@ describe('credentialEndpointBindingService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'primary',
-      accessToken: 'access-token',
-      apiToken: 'sk-account',
+      credential: 'access-token',
+
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,

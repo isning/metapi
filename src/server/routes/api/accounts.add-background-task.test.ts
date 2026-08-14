@@ -124,7 +124,7 @@ describe('accounts background initialization', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'session-token',
+        credential: 'session-token',
       },
     });
 
@@ -144,13 +144,11 @@ describe('accounts background initialization', () => {
         queued?: boolean;
         jobId?: string;
         usernameDetected?: boolean;
-        apiTokenFound?: boolean;
       };
 
       expect(body).toMatchObject({
         queued: true,
         usernameDetected: true,
-        apiTokenFound: true,
       });
       expect(body.jobId).toBeTruthy();
 

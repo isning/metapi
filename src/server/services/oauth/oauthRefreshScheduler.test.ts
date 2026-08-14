@@ -201,8 +201,8 @@ describe('oauthRefreshScheduler', () => {
       const inserted = await db.insert(schema.accounts).values({
         siteId: account.siteId,
         username: `${account.key}@example.com`,
-        accessToken: `${account.key}-access-token`,
-        apiToken: null,
+        credential: `${account.key}-access-token`,
+
         status: account.status,
         oauthProvider: account.provider,
         oauthAccountKey: `${account.key}@example.com`,
@@ -252,8 +252,8 @@ describe('oauthRefreshScheduler', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'scheduler-user@example.com',
-      accessToken: 'scheduler-access-token',
-      apiToken: null,
+      credential: 'scheduler-access-token',
+
       status: 'active',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'scheduler-user@example.com',
@@ -301,8 +301,8 @@ describe('oauthRefreshScheduler', () => {
     await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'scheduler-user@example.com',
-      accessToken: 'scheduler-access-token',
-      apiToken: null,
+      credential: 'scheduler-access-token',
+
       status: 'active',
       oauthProvider: 'antigravity',
       oauthAccountKey: 'scheduler-user@example.com',

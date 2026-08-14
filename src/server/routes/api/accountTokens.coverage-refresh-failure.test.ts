@@ -68,7 +68,7 @@ describe('account token coverage refresh failure handling', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'user-1',
-      accessToken: 'acc-token-1',
+      credential: 'acc-token-1',
       status: 'active',
     }).returning().get();
 

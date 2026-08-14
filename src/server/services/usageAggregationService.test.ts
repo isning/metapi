@@ -84,7 +84,7 @@ describe("usageAggregationService", () => {
       .values({
         siteId: site.id,
         username: "agg-user",
-        accessToken: "agg-token",
+        credential: "agg-token",
         status: "active",
       })
       .returning()
@@ -366,7 +366,7 @@ describe("usageAggregationService", () => {
       .values({
         siteId: site.id,
         username: "runtime-model-source-user",
-        accessToken: "runtime-model-source-token",
+        credential: "runtime-model-source-token",
         status: "active",
       })
       .returning()
@@ -437,7 +437,7 @@ describe("usageAggregationService", () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "late-terminal-user",
-      accessToken: "late-terminal-token",
+      credential: "late-terminal-token",
       status: "active",
     }).returning().get();
     const completedAt = formatUtcSqlDateTime(new Date("2026-04-09T03:10:00.000Z"));
@@ -515,7 +515,7 @@ describe("usageAggregationService", () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "fallback-user",
-      accessToken: "fallback-token",
+      credential: "fallback-token",
       status: "active",
     }).returning().get();
     const completedAt = formatUtcSqlDateTime(new Date("2026-04-10T02:10:00.000Z"));
@@ -583,7 +583,7 @@ describe("usageAggregationService", () => {
       .values({
         siteId: site.id,
         username: "leased-user",
-        accessToken: "leased-token",
+        credential: "leased-token",
         status: "active",
       })
       .returning()

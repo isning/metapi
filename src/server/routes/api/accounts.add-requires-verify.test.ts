@@ -73,7 +73,7 @@ describe('accounts add requires token verification success', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'invalid-token',
+        credential: 'invalid-token',
       },
     });
 
@@ -98,7 +98,7 @@ describe('accounts add requires token verification success', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'invalid-token',
+        credential: 'invalid-token',
       },
     });
 
@@ -127,17 +127,18 @@ describe('accounts add requires token verification success', () => {
       url: '/api/accounts',
       payload: {
         siteId: site.id,
-        accessToken: 'sk-valid-key',
+        credential: 'sk-valid-key',
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { tokenType?: string; apiTokenFound?: boolean };
+    const body = response.json() as { tokenType?: string };
     expect(body.tokenType).toBe('apikey');
-    expect(body.apiTokenFound).toBe(true);
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
-    expect((accounts[0]?.apiToken || '').startsWith('sk-')).toBe(true);
+    const tokens = await db.select().from(schema.accountTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.token).toBe('sk-valid-key');
   });
 });

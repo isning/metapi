@@ -101,7 +101,7 @@ describe('upstreamCostPricingService', () => {
     const otherAccount = await db.insert(schema.accounts).values({
       siteId: otherSite.id,
       username: 'other-cost-account',
-      accessToken: 'other-access-token',
+      credential: 'other-access-token',
     }).returning().get();
 
     await expect(service.createUpstreamCostPricing({
@@ -225,9 +225,12 @@ describe('upstreamCostPricingService', () => {
       account: {
         id: account.id,
         username: account.username,
-        accessToken: account.accessToken,
-        apiToken: account.apiToken,
+        credential: account.credential,
         extraConfig: account.extraConfig,
+      },
+      upstreamCredential: {
+        token: 'sk-premium',
+        tokenKind: 'api_token',
       },
     });
     expect(result).toMatchObject({
@@ -609,7 +612,7 @@ async function seedSupply(db: DbModule['db'], schema: DbModule['schema']) {
   const account = await db.insert(schema.accounts).values({
     siteId: site.id,
     username: 'cost-account',
-    accessToken: 'access-token',
+    credential: 'access-token',
   }).returning().get();
   const token = await db.insert(schema.accountTokens).values({
     accountId: account.id,

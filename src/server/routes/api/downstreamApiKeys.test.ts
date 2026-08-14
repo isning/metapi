@@ -248,15 +248,15 @@ describe('downstream api keys routes', () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: siteA.id,
       username: 'account-a',
-      accessToken: 'access-a',
-      apiToken: 'sk-default-a',
+      credential: 'access-a',
+
       status: 'active',
     }).returning().get();
     const accountB = await db.insert(schema.accounts).values({
       siteId: siteB.id,
       username: 'account-b',
-      accessToken: 'access-b',
-      apiToken: 'sk-default-b',
+      credential: 'access-b',
+
       status: 'active',
     }).returning().get();
 
@@ -268,6 +268,14 @@ describe('downstream api keys routes', () => {
       isDefault: true,
       valueStatus: 'ready',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: accountB.id,
+      name: 'default',
+      token: 'sk-token-b',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const createRes = await app.inject({
       method: 'POST',
@@ -358,15 +366,15 @@ describe('downstream api keys routes', () => {
     const accountA = await db.insert(schema.accounts).values({
       siteId: siteA.id,
       username: 'account-a',
-      accessToken: 'access-a',
-      apiToken: 'sk-default-a',
+      credential: 'access-a',
+
       status: 'active',
     }).returning().get();
     const accountB = await db.insert(schema.accounts).values({
       siteId: siteB.id,
       username: 'account-b',
-      accessToken: 'access-b',
-      apiToken: null,
+      credential: 'access-b',
+
       status: 'active',
     }).returning().get();
     const tokenA = await db.insert(schema.accountTokens).values({

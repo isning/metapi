@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const serverRoot = new URL('../', import.meta.url).pathname;
+const repositoryRoot = new URL('../../../', import.meta.url).pathname;
 
 function productionTypeScriptFiles(directory = serverRoot): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -68,5 +69,18 @@ describe('account credential migration ownership', () => {
     expect(oauthBackfill).toContain('ensureOauthIdentityBackfill');
     expect(oauthService).toContain('await ensureOauthIdentityBackfill()');
     expect(serverIndex).toContain('await ensureOauthIdentityBackfill()');
+  });
+
+  it('keeps runtime fixtures on the current account credential schema', () => {
+    const fixturePaths = [
+      'scripts/dev/routeRuntimePerformanceFixture.ts',
+      'src/testing/proxyRelayHarness.ts',
+    ];
+    const violations = fixturePaths.filter((path) => {
+      const source = readFileSync(join(repositoryRoot, path), 'utf8');
+      return /\b(?:accessToken|apiToken|modelApiKey)\s*:/.test(source);
+    });
+
+    expect(violations).toEqual([]);
   });
 });

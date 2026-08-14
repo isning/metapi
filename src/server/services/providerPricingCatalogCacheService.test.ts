@@ -159,8 +159,8 @@ async function seedSubject(db: DbModule['db'], schema: DbModule['schema']) {
   const account = await db.insert(schema.accounts).values({
     siteId: site.id,
     username: 'cache-account',
-    accessToken: 'access-token',
-    apiToken: 'api-token',
+    credential: 'access-token',
+
   }).returning().get();
   return { site, account };
 }

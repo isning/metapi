@@ -73,7 +73,7 @@ describe('stats dashboard filters disabled sites', () => {
     await db.insert(schema.accounts).values({
       siteId: activeSite.id,
       username: 'active-user',
-      accessToken: 'active-token',
+      credential: 'active-token',
       balance: 100,
       status: 'active',
     }).run();
@@ -81,7 +81,7 @@ describe('stats dashboard filters disabled sites', () => {
     await db.insert(schema.accounts).values({
       siteId: disabledSite.id,
       username: 'disabled-user',
-      accessToken: 'disabled-token',
+      credential: 'disabled-token',
       balance: 900,
       status: 'active',
     }).run();
@@ -118,7 +118,7 @@ describe('stats dashboard filters disabled sites', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'checkin-user',
-      accessToken: 'token',
+      credential: 'token',
       balance: 10,
       status: 'active',
     }).returning().get();
@@ -186,7 +186,7 @@ describe('stats dashboard filters disabled sites', () => {
     const activeAccount = await db.insert(schema.accounts).values({
       siteId: activeSite.id,
       username: 'active-performance-user',
-      accessToken: 'active-performance-token',
+      credential: 'active-performance-token',
       balance: 100,
       status: 'active',
     }).returning().get();
@@ -194,7 +194,7 @@ describe('stats dashboard filters disabled sites', () => {
     const disabledAccount = await db.insert(schema.accounts).values({
       siteId: disabledSite.id,
       username: 'disabled-performance-user',
-      accessToken: 'disabled-performance-token',
+      credential: 'disabled-performance-token',
       balance: 100,
       status: 'active',
     }).returning().get();
@@ -275,7 +275,7 @@ describe('stats dashboard filters disabled sites', () => {
     const activeAccount = await db.insert(schema.accounts).values({
       siteId: activeSite.id,
       username: 'availability-user',
-      accessToken: 'availability-token',
+      credential: 'availability-token',
       balance: 20,
       status: 'active',
     }).returning().get();
@@ -283,7 +283,7 @@ describe('stats dashboard filters disabled sites', () => {
     const disabledAccount = await db.insert(schema.accounts).values({
       siteId: disabledSite.id,
       username: 'disabled-availability-user',
-      accessToken: 'disabled-availability-token',
+      credential: 'disabled-availability-token',
       balance: 20,
       status: 'active',
     }).returning().get();

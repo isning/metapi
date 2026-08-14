@@ -101,8 +101,8 @@ describe("routeGroupCandidateService", () => {
       .values({
         siteId: site.id,
         username: "exact-source-user",
-        accessToken: "access-exact-source",
-        apiToken: "sk-exact-source",
+        credential: "access-exact-source",
+
         status: "active",
       })
       .returning()
@@ -146,15 +146,15 @@ describe("routeGroupCandidateService", () => {
     const firstAccount = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "atomic-first",
-      accessToken: "atomic-first-access",
-      apiToken: "atomic-first-api",
+      credential: "atomic-first-access",
+
       status: "active",
     }).returning().get();
     const secondAccount = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "atomic-second",
-      accessToken: "atomic-second-access",
-      apiToken: "atomic-second-api",
+      credential: "atomic-second-access",
+
       status: "active",
     }).returning().get();
     const group = await createRouteGroupFromPayload({
@@ -214,8 +214,8 @@ describe("routeGroupCandidateService", () => {
             .values({
               siteId: site.id,
               username: `candidate-catalog-${name}`,
-              accessToken: `access-candidate-catalog-${name}`,
-              apiToken: `sk-candidate-catalog-${name}`,
+              credential: `access-candidate-catalog-${name}`,
+
               status: "active",
             })
             .returning()
@@ -312,8 +312,8 @@ describe("routeGroupCandidateService", () => {
             .values({
               siteId: site.id,
               username: `automatic-flow-${name}`,
-              accessToken: `access-automatic-flow-${name}`,
-              apiToken: `sk-automatic-flow-${name}`,
+              credential: `access-automatic-flow-${name}`,
+
               status: "active",
             })
             .returning()

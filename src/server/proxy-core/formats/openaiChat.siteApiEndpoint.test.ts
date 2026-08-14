@@ -184,8 +184,8 @@ describe('chat proxy site api endpoint rotation', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'nihao-user',
-      accessToken: '',
-      apiToken: 'sk-nihao',
+      credential: '',
+
       status: 'active',
       checkinEnabled: false,
       extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
@@ -279,8 +279,8 @@ describe('chat proxy site api endpoint rotation', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'custom-prefix-user',
-      accessToken: '',
-      apiToken: 'sk-custom-prefix',
+      credential: '',
+
       status: 'active',
       checkinEnabled: false,
       extraConfig: JSON.stringify({ credentialMode: 'apikey' }),

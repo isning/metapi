@@ -76,8 +76,8 @@ describe('settings database migration api', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'u1',
-      accessToken: 'token-1',
-      apiToken: null,
+      credential: 'token-1',
+
       status: 'active',
       checkinEnabled: true,
       createdAt: new Date().toISOString(),

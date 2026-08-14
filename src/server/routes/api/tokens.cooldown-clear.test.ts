@@ -39,7 +39,7 @@ describe('route group failure-state clearing', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `cooldown-user-${id}`,
-      accessToken: `cooldown-access-token-${id}`,
+      credential: `cooldown-access-token-${id}`,
       status: 'active',
     }).returning().get();
 

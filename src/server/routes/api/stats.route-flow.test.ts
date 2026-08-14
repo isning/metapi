@@ -234,8 +234,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'flow-user',
-      apiToken: 'sk-flow',
-      accessToken: 'access-flow',
+
+      credential: 'access-flow',
       status: 'active',
       balance: 42,
     }).returning().get();
@@ -364,8 +364,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'missing-identity-account',
-      apiToken: 'sk-missing-identity',
-      accessToken: 'access-missing-identity',
+
+      credential: 'access-missing-identity',
       status: 'active',
       balance: 100,
     }).returning().get();
@@ -424,8 +424,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'observability-user',
-      apiToken: 'sk-observability',
-      accessToken: 'access-observability',
+
+      credential: 'access-observability',
       status: 'active',
       balance: 10,
     }).returning().get();
@@ -676,8 +676,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'minute-history-user',
-      apiToken: 'sk-minute-history',
-      accessToken: 'access-minute-history',
+
+      credential: 'access-minute-history',
       status: 'active',
       balance: 10,
     }).returning().get();
@@ -768,8 +768,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'terminal-trace-user',
-      apiToken: 'sk-terminal-trace',
-      accessToken: 'access-terminal-trace',
+
+      credential: 'access-terminal-trace',
       status: 'active',
       balance: 10,
     }).returning().get();
@@ -906,8 +906,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'shared-attempt-user',
-      apiToken: 'sk-shared-attempt',
-      accessToken: 'access-shared-attempt',
+
+      credential: 'access-shared-attempt',
       status: 'active',
       balance: 10,
     }).returning().get();
@@ -1013,8 +1013,8 @@ describe('/api/models/route-flow', () => {
       await db.insert(schema.accounts).values({
         siteId: site.id,
         username: `multi-${index + 1}`,
-        apiToken: `sk-multi-${index + 1}`,
-        accessToken: `access-multi-${index + 1}`,
+
+        credential: `access-multi-${index + 1}`,
         status: 'active',
         balance: index === 0 ? 100 : 1,
         unitCost: index === 0 ? 0.01 : (index === 1 ? 0.5 : 0.2),
@@ -1077,8 +1077,8 @@ describe('/api/models/route-flow', () => {
       db.insert(schema.accounts).values({
         siteId: site.id,
         username: 'pricing-flow-a',
-        apiToken: 'sk-pricing-flow-a',
-        accessToken: 'access-pricing-flow-a',
+
+        credential: 'access-pricing-flow-a',
         status: 'active',
         balance: 100,
         unitCost: 2,
@@ -1086,8 +1086,8 @@ describe('/api/models/route-flow', () => {
       db.insert(schema.accounts).values({
         siteId: site.id,
         username: 'pricing-flow-b',
-        apiToken: 'sk-pricing-flow-b',
-        accessToken: 'access-pricing-flow-b',
+
+        credential: 'access-pricing-flow-b',
         status: 'active',
         balance: 100,
         unitCost: 6,
@@ -1185,8 +1185,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'advanced-pricing-flow',
-      apiToken: 'sk-advanced-pricing-flow',
-      accessToken: 'access-advanced-pricing-flow',
+
+      credential: 'access-advanced-pricing-flow',
       status: 'active',
       balance: 100,
       unitCost: 1,
@@ -1293,8 +1293,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'default-cost-flow',
-      apiToken: 'sk-default-cost-flow',
-      accessToken: 'access-default-cost-flow',
+
+      credential: 'access-default-cost-flow',
       status: 'active',
       balance: 100,
     }).returning().get();
@@ -1374,8 +1374,8 @@ describe('/api/models/route-flow', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'catalog-flow',
-      apiToken: 'sk-catalog-flow',
-      accessToken: 'access-catalog-flow',
+
+      credential: 'access-catalog-flow',
       status: 'active',
       balance: 100,
     }).returning().get();

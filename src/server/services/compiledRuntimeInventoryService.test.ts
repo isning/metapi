@@ -175,8 +175,8 @@ describe('compiledRuntimeInventoryService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'inventory-account',
-      accessToken: 'access-token',
-      apiToken: 'sk-inventory',
+      credential: 'access-token',
+
       status: 'active',
     }).returning().get();
     const goodSupply = await db.insert(schema.runtimeExecutionTargets).values({

@@ -56,7 +56,7 @@ describe('account token batch routes', () => {
       id: 1,
       siteId: 1,
       username: 'alpha',
-      accessToken: 'session-alpha',
+      credential: 'session-alpha',
       status: 'active',
     }).run();
 

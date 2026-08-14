@@ -58,8 +58,8 @@ describe("PUT /api/route-groups/:id/candidates/stages", () => {
         .insert(schema.accounts)
         .values({
           siteId: site!.id,
-          accessToken: `access-token-${id}`,
-          apiToken: `api-token-${id}`,
+          credential: `access-token-${id}`,
+
         })
         .returning()
         .get());

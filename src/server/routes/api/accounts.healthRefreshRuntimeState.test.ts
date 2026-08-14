@@ -69,7 +69,7 @@ describe('accounts health refresh runtime state', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'ld6jl3djexjf',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
       extraConfig: JSON.stringify({
         runtimeHealth: {
@@ -143,7 +143,7 @@ describe('accounts health refresh runtime state', () => {
     await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'tester',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 
@@ -190,7 +190,7 @@ describe('accounts health refresh runtime state', () => {
       const account = await db.insert(schema.accounts).values({
         siteId: site.id,
         username: 'slow-user',
-        accessToken: 'token',
+        credential: 'token',
         status: 'active',
       }).returning().get();
 
@@ -241,11 +241,10 @@ describe('accounts health refresh runtime state', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: null,
-      accessToken: 'api-key-token',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'expired',
-      extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
-      }),
     }).returning().get();
 
     const response = await app.inject({
@@ -290,7 +289,7 @@ describe('accounts health refresh runtime state', () => {
       await db.insert(schema.accounts).values({
         siteId: site.id,
         username: 'slow-user',
-        accessToken: 'token',
+        credential: 'token',
         status: 'active',
       }).returning().get();
 

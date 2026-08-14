@@ -74,10 +74,10 @@ describe('search routes', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: '',
-      accessToken: '',
-      apiToken: 'sk-searchable-key',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
     }).returning().get();
 
     await db.insert(schema.accountTokens).values({
@@ -131,10 +131,10 @@ describe('search routes', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: '',
-      accessToken: '',
-      apiToken: 'sk-only-key',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
     }).returning().get();
 
     const response = await app.inject({
@@ -229,8 +229,8 @@ describe('search routes', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credential: 'oauth-access-token',
+
       status: 'active',
       extraConfig: mergeAccountExtraConfig(null, {
         credentialMode: 'session',

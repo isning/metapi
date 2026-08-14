@@ -90,7 +90,7 @@ describe("Route Group management source projection", () => {
       .insert(schema.accounts)
       .values({
         siteId: site.id,
-        accessToken: "test-access",
+        credential: "test-access",
         status: "active",
       })
       .returning()
@@ -175,7 +175,7 @@ describe("Route Group management source projection", () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "stable-account",
-      accessToken: "test-access",
+      credential: "test-access",
       status: "active",
     }).returning().get();
     const target = await upsertRuntimeExecutionTarget({
@@ -224,7 +224,7 @@ describe("Route Group management source projection", () => {
       .insert(schema.accounts)
       .values({
         siteId: site.id,
-        accessToken: "pattern-access",
+        credential: "pattern-access",
         status: "active",
       })
       .returning()
@@ -370,7 +370,7 @@ describe("Route Group management source projection", () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "before",
-      accessToken: "catalog-access",
+      credential: "catalog-access",
       status: "active",
     }).returning().get();
     const source = await upsertRuntimeExecutionTarget({

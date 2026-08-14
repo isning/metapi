@@ -109,7 +109,7 @@ describe('backupService graph-native route runtime', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'backup-user',
-      accessToken: 'backup-access',
+      credential: 'backup-access',
       status: 'active',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
@@ -264,23 +264,32 @@ describe('backupService graph-native route runtime', () => {
     expect(accounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         username: 'legacy-api-key',
-        accessToken: '',
-        apiToken: 'legacy-api-key-value',
+        credentialMode: 'apikey',
+        credential: '',
+        credentialKind: 'none',
         checkinEnabled: false,
       }),
       expect.objectContaining({
         username: 'legacy-auth-type-api-key',
-        accessToken: '',
-        apiToken: 'legacy-auth-type-api-key-value',
+        credentialMode: 'apikey',
+        credential: '',
+        credentialKind: 'none',
         checkinEnabled: false,
       }),
       expect.objectContaining({
         username: 'session-account',
-        accessToken: 'session-value',
-        apiToken: 'session-default-api-key',
+        credentialMode: 'session',
+        credential: 'session-value',
+        credentialKind: 'adapter_default',
         checkinEnabled: true,
       }),
     ]));
+    const tokens = await db.select().from(schema.accountTokens).all();
+    expect(tokens.map((token) => token.token).sort()).toEqual([
+      'legacy-api-key-value',
+      'legacy-auth-type-api-key-value',
+      'session-default-api-key',
+    ]);
   });
 
   it('imports previous-version route backups into current route runtime tables', async () => {

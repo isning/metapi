@@ -99,7 +99,7 @@ describe('/api/models/marketplace compiled runtime inventory', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `${modelName}-user`,
-      accessToken: `${modelName}-access`,
+      credential: `${modelName}-access`,
       status: 'active',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
@@ -180,7 +180,7 @@ describe('/api/models/marketplace compiled runtime inventory', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'availability-user',
-      accessToken: 'availability-access',
+      credential: 'availability-access',
       status: 'inactive',
     }).returning().get();
     await db.insert(schema.modelAvailability).values({
@@ -206,7 +206,7 @@ describe('/api/models/marketplace compiled runtime inventory', () => {
     const availabilityOnlyAccount = await db.insert(schema.accounts).values({
       siteId: availabilityOnlySite.id,
       username: 'same-model-availability-user',
-      accessToken: 'same-model-availability-access',
+      credential: 'same-model-availability-access',
       status: 'inactive',
     }).returning().get();
     await db.insert(schema.modelAvailability).values({

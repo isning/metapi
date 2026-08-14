@@ -85,7 +85,7 @@ describe("accounts snapshot v2", () => {
       .values({
         siteId: site.id,
         username: "snapshot-user",
-        accessToken: "snapshot-token",
+        credential: "snapshot-token",
         status: "active",
         balance: 18.5,
         extraConfig: JSON.stringify({

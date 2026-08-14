@@ -111,11 +111,11 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `${model}-account`,
-      accessToken: `${model}-access`,
-      apiToken: `${model}-api-key`,
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
       extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
         ...(input.accountExtraConfig || {}),
       }),
     }).returning().get();

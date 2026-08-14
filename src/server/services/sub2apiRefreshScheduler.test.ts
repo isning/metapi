@@ -175,8 +175,8 @@ describe('sub2apiRefreshScheduler', () => {
       const inserted = await db.insert(schema.accounts).values({
         siteId: account.siteId,
         username: `${account.key}@example.com`,
-        accessToken: `${account.key}-access-token`,
-        apiToken: null,
+        credential: `${account.key}-access-token`,
+
         status: account.status,
         extraConfig: buildSub2ApiExtraConfig({
           refreshToken: account.refreshToken,
@@ -236,8 +236,8 @@ describe('sub2apiRefreshScheduler', () => {
       await db.insert(schema.accounts).values({
         siteId: activeSub2ApiSite.id,
         username: `${key}@example.com`,
-        accessToken: `${key}-access-token`,
-        apiToken: null,
+        credential: `${key}-access-token`,
+
         status: 'active',
         extraConfig: buildSub2ApiExtraConfig({
           refreshToken: `${key}-refresh-token`,

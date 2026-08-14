@@ -344,7 +344,7 @@ describe('downstreamApiKeyService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'quota-budget-account',
-      accessToken: 'quota-budget-token',
+      credential: 'quota-budget-token',
       status: 'active',
     }).returning().get();
     const key = await db.insert(schema.downstreamApiKeys).values({

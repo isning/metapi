@@ -45,7 +45,7 @@ describe('routeRuntimeExecutionIdentityService', () => {
     }).returning().get();
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'runtime-identity-access',
+      credential: 'runtime-identity-access',
       status: 'active',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({

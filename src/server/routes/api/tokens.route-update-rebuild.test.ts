@@ -151,7 +151,7 @@ describe("route group API graph-native updates", () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: "opaque-source-account",
-      accessToken: "opaque-source-access",
+      credential: "opaque-source-access",
       status: "active",
     }).returning().get();
     const target = await upsertRuntimeExecutionTarget({

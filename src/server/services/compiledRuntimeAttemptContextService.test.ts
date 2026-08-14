@@ -129,8 +129,8 @@ describe('compiledRuntimeAttemptContextService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'db-account',
-      apiToken: 'sk-db-account',
-      accessToken: 'access-db-account',
+
+      credential: 'access-db-account',
       status: 'active',
       balance: 42,
       unitCost: 0.5,

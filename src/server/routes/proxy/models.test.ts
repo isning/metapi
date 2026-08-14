@@ -92,7 +92,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'account-access-token',
+      credential: 'account-access-token',
       status: 'active',
     }).returning().get();
 
@@ -164,7 +164,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'global-access-token',
+      credential: 'global-access-token',
       status: 'active',
     }).returning().get();
 
@@ -220,7 +220,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'projection-models-access-token',
+      credential: 'projection-models-access-token',
       status: 'active',
     }).returning().get();
 
@@ -286,7 +286,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'account-access-token',
+      credential: 'account-access-token',
       status: 'active',
     }).returning().get();
 
@@ -367,7 +367,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'account-access-token',
+      credential: 'account-access-token',
       status: 'active',
     }).returning().get();
 
@@ -443,7 +443,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'deny-all-access-token',
+      credential: 'deny-all-access-token',
       status: 'active',
     }).returning().get();
 
@@ -495,7 +495,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'explicit-group-access-token',
+      credential: 'explicit-group-access-token',
       status: 'active',
     }).returning().get();
 
@@ -597,7 +597,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'explicit-source-policy-access-token',
+      credential: 'explicit-source-policy-access-token',
       status: 'active',
     }).returning().get();
 
@@ -696,7 +696,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'search-access-token',
+      credential: 'search-access-token',
       status: 'active',
     }).returning().get();
 
@@ -783,7 +783,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'single-model-access-token',
+      credential: 'single-model-access-token',
       status: 'active',
     }).returning().get();
 
@@ -838,7 +838,7 @@ describe('/v1/models route', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'gemini-openai-models-access-token',
+      credential: 'gemini-openai-models-access-token',
       status: 'active',
     }).returning().get();
 

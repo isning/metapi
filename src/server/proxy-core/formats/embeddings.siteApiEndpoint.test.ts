@@ -171,8 +171,8 @@ describe('/v1/embeddings usage source logging', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'usage-user',
-      accessToken: '',
-      apiToken: 'sk-usage',
+      credential: '',
+
       status: 'active',
       checkinEnabled: false,
       extraConfig: JSON.stringify({ credentialMode: 'apikey' }),

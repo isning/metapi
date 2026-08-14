@@ -86,7 +86,9 @@ describe('accounts skipModelFetch behavior', () => {
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.apiToken).toBe('sk-test-skip-fetch');
+    const tokens = await db.select().from(schema.accountTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.token).toBe('sk-test-skip-fetch');
     
     // Model availability should be empty initially (background task might not have populated it yet or failed)
     const models = await db.select().from(schema.modelAvailability).all();
@@ -118,7 +120,9 @@ describe('accounts skipModelFetch behavior', () => {
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.apiToken).toBe('sk-test-normal-fetch');
+    const tokens = await db.select().from(schema.accountTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.token).toBe('sk-test-normal-fetch');
 
     // Model availability should be populated since getModels was called (which refreshModels uses later or handled directly)
     // Actually our POST /api/accounts triggers rebuildManagedRouteGroupsFromAvailability and refreshModelsForAccount asynchronously, so models might not be populated synchronously, but the mock should be called.

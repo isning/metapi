@@ -280,8 +280,9 @@ export async function seedRouteRuntimeFixture(input: {
   const account = await db.insert(schema.accounts).values({
     siteId: site.id,
     username: 'perf-account',
-    accessToken: 'perf-access',
-    apiToken: 'perf-api',
+    credentialMode: 'apikey',
+    credential: '',
+    credentialKind: 'none',
     status: 'active',
   }).returning().get();
   const token = await db.insert(schema.accountTokens).values({

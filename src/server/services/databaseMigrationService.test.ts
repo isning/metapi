@@ -25,6 +25,7 @@ const CURRENT_SCHEMA_TABLES = [
   'checkinLogs',
   'modelAvailability',
   'tokenModelAvailability',
+  'tokenDisabledModels',
   'upstreamModelCostPricings',
   'providerPricingCatalogCaches',
   'walletAcquisitionProfiles',

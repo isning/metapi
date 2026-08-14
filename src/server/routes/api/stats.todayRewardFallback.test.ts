@@ -76,7 +76,7 @@ describe('stats dashboard today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'stats-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
       extraConfig: JSON.stringify({
         todayIncomeSnapshot: {
@@ -115,7 +115,7 @@ describe('stats dashboard today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'stats-iso-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 
@@ -147,7 +147,7 @@ describe('stats dashboard today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'stats-spend-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 
@@ -184,7 +184,7 @@ describe('stats dashboard today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'stats-iso-spend-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 

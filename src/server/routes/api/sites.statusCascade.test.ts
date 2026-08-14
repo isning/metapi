@@ -47,7 +47,7 @@ describe('sites status cascade', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'status-user',
-      accessToken: 'access-token',
+      credential: 'access-token',
       status: 'active',
     }).returning().get();
 

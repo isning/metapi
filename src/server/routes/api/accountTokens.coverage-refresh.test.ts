@@ -50,7 +50,7 @@ describe('account token coverage refresh', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `user-${id}`,
-      accessToken: `acc-token-${id}`,
+      credential: `acc-token-${id}`,
       status: 'active',
     }).returning().get();
 

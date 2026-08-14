@@ -79,33 +79,25 @@ describe('rebuildManagedRouteGroupsFromAvailability graph-native output', () => 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `user-${modelName}`,
-      accessToken: `access-${modelName}`,
-      apiToken: options.token ? null : `sk-account-${modelName}`,
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: options.token ? null : JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
-    if (options.token) {
-      const token = await db.insert(schema.accountTokens).values({
-        accountId: account.id,
-        name: `token-${modelName}`,
-        token: `sk-token-${modelName}`,
-        enabled: true,
-        isDefault: true,
-      }).returning().get();
-      await db.insert(schema.tokenModelAvailability).values({
-        tokenId: token.id,
-        modelName,
-        available: true,
-      }).run();
-      return { site, account, token };
-    }
-
-    await db.insert(schema.modelAvailability).values({
+    const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
+      name: `token-${modelName}`,
+      token: `sk-token-${modelName}`,
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
       modelName,
       available: true,
-    });
-    return { site, account, token: null };
+    }).run();
+    return { site, account, token };
   }
 
   async function routeGroupForModel(modelName: string) {
@@ -132,7 +124,7 @@ describe('rebuildManagedRouteGroupsFromAvailability graph-native output', () => 
     expect(endpoint).toMatchObject({
       upstreamModelName: 'gpt-5.2-codex',
       accountId: seeded.account.id,
-      tokenId: null,
+      tokenId: seeded.token.id,
     });
 
     const candidates = (await listRouteGroupCandidatesByGroupKeys([group!.id])).get(group!.id) || [];

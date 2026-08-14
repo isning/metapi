@@ -146,12 +146,10 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'probe-user',
-      accessToken: '',
-      apiToken: 'sk-account-probe',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
-      }),
     }).returning().get();
 
     const token = await db.insert(schema.accountTokens).values({
@@ -163,16 +161,13 @@ describe('modelAvailabilityProbeService', () => {
       valueStatus: 'ready',
     }).returning().get();
 
-    await db.insert(schema.modelAvailability).values([
+    await db.insert(schema.tokenModelAvailability).values([
       {
-        accountId: account.id,
+        tokenId: token.id,
         modelName: 'gpt-real',
         available: true,
         checkedAt: '2026-03-20T00:00:00.000Z',
       },
-    ]).run();
-
-    await db.insert(schema.tokenModelAvailability).values([
       {
         tokenId: token.id,
         modelName: 'gpt-ghost',
@@ -197,17 +192,12 @@ describe('modelAvailabilityProbeService', () => {
       rebuiltRoutes: false,
     });
 
-    const accountRows = await db.select().from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, account.id))
-      .all();
-    expect(accountRows).toHaveLength(1);
-    expect(accountRows[0]?.available).toBe(true);
-
     const tokenRows = await db.select().from(schema.tokenModelAvailability)
       .where(eq(schema.tokenModelAvailability.tokenId, token.id))
       .all();
-    expect(tokenRows).toHaveLength(1);
-    expect(tokenRows[0]?.available).toBe(false);
+    expect(tokenRows).toHaveLength(2);
+    expect(tokenRows.find((row) => row.modelName === 'gpt-real')?.available).toBe(true);
+    expect(tokenRows.find((row) => row.modelName === 'gpt-ghost')?.available).toBe(false);
   });
 
   it('skips probing obvious non-conversation models', async () => {
@@ -221,17 +211,23 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'probe-user',
-      accessToken: '',
-      apiToken: 'sk-account-probe',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
-      }),
     }).returning().get();
 
-    await db.insert(schema.modelAvailability).values([
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-skip',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+    await db.insert(schema.tokenModelAvailability).values([
       {
-        accountId: account.id,
+        tokenId: token.id,
         modelName: 'text-embedding-3-large',
         available: true,
         checkedAt: '2026-03-20T00:00:00.000Z',
@@ -299,18 +295,26 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'probe-user',
-      accessToken: '',
-      apiToken: 'sk-account-probe',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({
-        credentialMode: 'apikey',
-      }),
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-flaky',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const checkedAt = '2026-03-20T00:00:00.000Z';
-    await db.insert(schema.modelAvailability).values([
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).get();
+    await db.insert(schema.tokenModelAvailability).values([
       {
-        accountId: account.id,
+        tokenId: token!.id,
         modelName: 'gpt-flaky',
         available: true,
         checkedAt,
@@ -332,8 +336,8 @@ describe('modelAvailabilityProbeService', () => {
       updatedRows: 0,
     });
 
-    const accountRows = await db.select().from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, account.id))
+    const accountRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token!.id))
       .all();
     expect(accountRows).toHaveLength(1);
     expect(accountRows[0]?.available).toBe(true);
@@ -351,13 +355,24 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'stable-user',
-      accessToken: '',
-      apiToken: 'sk-stable',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
+    await db.insert(schema.accountTokens).values({
       accountId: account.id,
+      name: 'default',
+      token: 'sk-stable',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
+
+    const stableToken = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: stableToken!.id,
       modelName: 'gpt-stable',
       available: true,
       checkedAt: '2026-03-20T00:00:00.000Z',
@@ -385,13 +400,24 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'changed-user',
-      accessToken: '',
-      apiToken: 'sk-changed',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
+    await db.insert(schema.accountTokens).values({
       accountId: account.id,
+      name: 'default',
+      token: 'sk-changed',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
+
+    const changedToken = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: changedToken!.id,
       modelName: 'gpt-changed',
       available: false,
       checkedAt: '2026-03-20T00:00:00.000Z',
@@ -418,8 +444,8 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'inactive-user',
-      accessToken: '',
-      apiToken: 'sk-inactive',
+      credential: '',
+
       status: 'disabled',
     }).returning().get();
 
@@ -451,13 +477,22 @@ describe('modelAvailabilityProbeService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'leased-user',
-      accessToken: '',
-      apiToken: 'sk-leased',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
+    const leasedToken = await db.insert(schema.accountTokens).values({
       accountId: account.id,
+      name: 'default',
+      token: 'sk-leased',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: leasedToken.id,
       modelName: 'gpt-leased',
       available: true,
       checkedAt: '2026-03-20T00:00:00.000Z',

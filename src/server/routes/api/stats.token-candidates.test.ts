@@ -67,7 +67,7 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'alice',
-      accessToken: 'acc-token',
+      credential: 'acc-token',
       status: 'active',
     }).returning().get();
 
@@ -132,14 +132,21 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'shenmo-direct',
-      accessToken: '',
-      apiToken: 'sk-shenmo-direct',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
+    const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
+      name: 'default',
+      token: 'sk-direct',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
       modelName: 'gpt-5.2-codex',
       available: true,
     }).run();
@@ -170,9 +177,11 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'codex-user@example.com',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
+      credentialMode: 'oauth',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
       status: 'active',
+      oauthProvider: 'openai-codex',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
         oauth: {
@@ -216,7 +225,7 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'bob',
-      accessToken: 'acc-token-b',
+      credential: 'acc-token-b',
       status: 'active',
     }).returning().get();
 
@@ -298,7 +307,7 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'charlie',
-      accessToken: 'acc-token-c',
+      credential: 'acc-token-c',
       status: 'active',
     }).returning().get();
 
@@ -379,7 +388,7 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'david',
-      accessToken: 'acc-token-d',
+      credential: 'acc-token-d',
       status: 'active',
     }).returning().get();
 
@@ -462,10 +471,10 @@ describe('/api/models/token-candidates', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'erin',
-      accessToken: '',
-      apiToken: null,
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
     }).returning().get();
 
     const token = await db.insert(schema.accountTokens).values({
@@ -476,12 +485,6 @@ describe('/api/models/token-candidates', () => {
       enabled: true,
       isDefault: true,
     }).returning().get();
-
-    await db.insert(schema.modelAvailability).values({
-      accountId: account.id,
-      modelName: 'claude-opus-4-6',
-      available: true,
-    }).run();
 
     await db.insert(schema.tokenModelAvailability).values({
       tokenId: token.id,

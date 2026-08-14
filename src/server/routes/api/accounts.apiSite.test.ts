@@ -198,7 +198,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'session-token',
+        credential: 'session-token',
         credentialMode: 'session',
       },
     });
@@ -207,7 +207,6 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(response.json()).toMatchObject({
       success: true,
       tokenType: 'session',
-      apiToken: 'sk-derived',
     });
     expect(verifyTokenMock).toHaveBeenCalledWith('https://console.example.com', 'session-token', undefined);
     expect(getModelsMock).not.toHaveBeenCalled();
@@ -358,8 +357,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     ]));
 
     const accounts = await db.select().from(schema.accounts).all();
+    const tokens = await db.select().from(schema.accountTokens).all();
     expect(accounts).toHaveLength(2);
-    expect(accounts.map((item) => item.apiToken)).toEqual(['sk-batch-a', 'sk-batch-b']);
+    expect(tokens.map((item) => item.token).sort()).toEqual(['sk-batch-a', 'sk-batch-b']);
     expect(accounts.map((item) => item.username)).toEqual(['batch-key #1', 'batch-key #2']);
   });
 
@@ -408,8 +408,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     ]));
 
     const accounts = await db.select().from(schema.accounts).all();
+    const tokens = await db.select().from(schema.accountTokens).all();
     expect(accounts).toHaveLength(2);
-    expect(accounts.map((item) => item.apiToken)).toEqual(['sk-array-a', 'sk-array-b']);
+    expect(tokens.map((item) => item.token).sort()).toEqual(['sk-array-a', 'sk-array-b']);
     expect(accounts.map((item) => item.username)).toEqual(['array-key #1', 'array-key #2']);
   });
 

@@ -157,7 +157,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "proxy-user",
-        accessToken: "proxy-token",
+        credential: "proxy-token",
         status: "active",
       })
       .returning()
@@ -317,7 +317,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "detail-user",
-        accessToken: "detail-token",
+        credential: "detail-token",
         status: "active",
       })
       .returning()
@@ -757,7 +757,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "meta-user",
-        accessToken: "meta-token",
+        credential: "meta-token",
         status: "active",
       })
       .returning()
@@ -852,7 +852,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: alphaSite.id,
         username: "alpha-user",
-        accessToken: "alpha-token",
+        credential: "alpha-token",
         status: "active",
       })
       .returning()
@@ -862,7 +862,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: betaSite.id,
         username: "beta-user",
-        accessToken: "beta-token",
+        credential: "beta-token",
         status: "active",
       })
       .returning()
@@ -960,7 +960,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "client-filter-user",
-        accessToken: "client-filter-token",
+        credential: "client-filter-token",
         status: "active",
       })
       .returning()
@@ -1031,7 +1031,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "legacy-user",
-        accessToken: "legacy-token",
+        credential: "legacy-token",
         status: "active",
       })
       .returning()
@@ -1090,7 +1090,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "unknown-usage-user",
-        accessToken: "unknown-usage-token",
+        credential: "unknown-usage-token",
         status: "active",
       })
       .returning()
@@ -1149,7 +1149,7 @@ describe("stats proxy logs routes", () => {
       .values({
         siteId: site.id,
         username: "split-user",
-        accessToken: "split-token",
+        credential: "split-token",
         status: "active",
       })
       .returning()

@@ -182,7 +182,7 @@ describe('upstream cost pricing routes', () => {
     const otherAccount = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'other-route-cost-account',
-      accessToken: 'other-access-token',
+      credential: 'other-access-token',
     }).returning().get();
 
     const response = await app.inject({
@@ -668,7 +668,7 @@ async function seedSupply(db: DbModule['db'], schema: DbModule['schema']) {
   const account = await db.insert(schema.accounts).values({
     siteId: site.id,
     username: 'route-cost-account',
-    accessToken: 'access-token',
+    credential: 'access-token',
   }).returning().get();
   const token = await db.insert(schema.accountTokens).values({
     accountId: account.id,

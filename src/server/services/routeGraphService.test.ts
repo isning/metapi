@@ -124,7 +124,7 @@ describe('routeGraphService graph-native route runtime', () => {
     }).returning().get();
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: `access-${modelName}`,
+      credential: `access-${modelName}`,
       status: 'active',
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
@@ -372,7 +372,7 @@ describe('routeGraphService graph-native route runtime', () => {
     const otherAccount = await db.insert(schema.accounts).values({
       siteId: account.siteId,
       username: 'binding-mismatch-account',
-      accessToken: 'binding-mismatch-access',
+      credential: 'binding-mismatch-access',
       status: 'active',
     }).returning().get();
     await db.update(schema.runtimeExecutionTargets)

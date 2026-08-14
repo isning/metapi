@@ -142,11 +142,19 @@ describe('/v1/completions site api endpoint rotation', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'nihao-user',
-      accessToken: '',
-      apiToken: 'sk-nihao',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
       status: 'active',
       checkinEnabled: false,
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-nihao',
+      enabled: true,
+      isDefault: true,
     }).returning().get();
 
     await db.insert(schema.siteApiEndpoints).values([
@@ -171,7 +179,7 @@ describe('/v1/completions site api endpoint rotation', () => {
     await insertRouteGroupMember({
       groupId: route.id,
       accountId: account.id,
-      tokenId: null,
+      tokenId: token.id,
       sourceModel: 'gpt-4o-mini',
       priority: 0,
       weight: 10,

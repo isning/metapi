@@ -68,7 +68,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'linuxdo_1001',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
     }).returning().get();
 
@@ -76,7 +76,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-access-token',
+        credential: 'new-access-token',
       },
     });
 
@@ -86,11 +86,11 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     });
 
     const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
-    expect(latest?.accessToken).toBe('old-access-token');
+    expect(latest?.credential).toBe('old-access-token');
     expect(latest?.status).toBe('expired');
   });
 
-  it('rejects non-string accessToken payload before session rebind verification', async () => {
+  it('rejects non-string credential payload before session rebind verification', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Rebind Site',
       url: 'https://rebind.example.com',
@@ -100,7 +100,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'linuxdo_1001',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
     }).returning().get();
 
@@ -108,7 +108,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: { value: 'bad-token' },
+        credential: { value: 'bad-token' },
       },
     });
 
@@ -129,7 +129,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'linuxdo_1001',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
     }).returning().get();
 
@@ -137,7 +137,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-access-token',
+        credential: 'new-access-token',
       },
     });
 
@@ -152,7 +152,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',
       userInfo: { username: 'linuxdo_1002' },
-      apiToken: 'sk-rebound-token',
+      discoveredModelToken: 'sk-rebound-token',
     });
 
     const site = await db.insert(schema.sites).values({
@@ -164,7 +164,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'linuxdo_1001',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
       extraConfig: JSON.stringify({ platformUserId: 1001 }),
     }).returning().get();
@@ -173,18 +173,19 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-session-token',
+        credential: 'new-session-token',
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { success?: boolean; apiTokenFound?: boolean };
+    const body = response.json() as { success?: boolean };
     expect(body.success).toBe(true);
-    expect(body.apiTokenFound).toBe(true);
 
     const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
-    expect(latest?.accessToken).toBe('new-session-token');
-    expect(latest?.apiToken).toBe('sk-rebound-token');
+    expect(latest?.credential).toBe('new-session-token');
+    const reboundToken = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).get();
+    expect(reboundToken?.token).toBe('sk-rebound-token');
     expect(latest?.username).toBe('linuxdo_1002');
     expect(latest?.status).toBe('active');
   });
@@ -204,7 +205,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'sub2_user',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
       extraConfig: JSON.stringify({
         sub2apiAuth: {
@@ -218,7 +219,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-session-token',
+        credential: 'new-session-token',
         refreshToken: 'new-refresh-token',
         tokenExpiresAt: 1760000000000,
       },
@@ -249,7 +250,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'sub2_user',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
       extraConfig: JSON.stringify({
         sub2apiAuth: {
@@ -263,7 +264,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-session-token',
+        credential: 'new-session-token',
         refreshToken: '',
         tokenExpiresAt: 1760000000000,
       },
@@ -294,7 +295,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'linuxdo_1001',
-      accessToken: 'old-access-token',
+      credential: 'old-access-token',
       status: 'expired',
       extraConfig: JSON.stringify({ platformUserId: 1001 }),
     }).returning().get();
@@ -303,7 +304,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       method: 'POST',
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
-        accessToken: 'new-session-token',
+        credential: 'new-session-token',
         refreshToken: 'should-be-ignored',
         tokenExpiresAt: 1760000000000,
       },

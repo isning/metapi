@@ -85,7 +85,7 @@ describe('settings factory reset api', () => {
 
     const accountInsert = await db.insert(schema.accounts).values({
       siteId,
-      accessToken: 'session-token',
+      credential: 'session-token',
       status: 'expired',
     }).run();
     const accountId = Number(accountInsert.lastInsertRowid);

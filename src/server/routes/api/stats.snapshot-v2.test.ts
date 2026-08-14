@@ -79,7 +79,7 @@ describe("stats snapshot v2 routes", () => {
       .values({
         siteId: site.id,
         username: "stats-user",
-        accessToken: "stats-token",
+        credential: "stats-token",
         balance: 42,
         status: "active",
       })

@@ -80,7 +80,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'session-or-cookie-token',
+        credential: 'session-or-cookie-token',
       },
     });
 
@@ -107,7 +107,7 @@ describe('accounts verify-token shield detection', () => {
         remoteAddress: '198.51.100.11',
         payload: {
           siteId: site.id,
-          accessToken: 'session-or-cookie-token',
+          credential: 'session-or-cookie-token',
         },
       });
       expect(response.statusCode).toBe(200);
@@ -119,7 +119,7 @@ describe('accounts verify-token shield detection', () => {
       remoteAddress: '198.51.100.11',
       payload: {
         siteId: site.id,
-        accessToken: 'session-or-cookie-token',
+        credential: 'session-or-cookie-token',
       },
     });
 
@@ -150,7 +150,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'session-or-cookie-token',
+        credential: 'session-or-cookie-token',
       },
     });
 
@@ -183,7 +183,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'session-or-cookie-token',
+        credential: 'session-or-cookie-token',
       },
     });
 
@@ -219,7 +219,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'session-or-cookie-token',
+        credential: 'session-or-cookie-token',
       },
     });
 
@@ -252,7 +252,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'slow-session-token',
+        credential: 'slow-session-token',
       },
     });
 
@@ -293,7 +293,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'token-without-user-id',
+        credential: 'token-without-user-id',
       },
     });
 
@@ -325,7 +325,7 @@ describe('accounts verify-token shield detection', () => {
       url: '/api/accounts/verify-token',
       payload: {
         siteId: site.id,
-        accessToken: 'token-with-wrong-user-id',
+        credential: 'token-with-wrong-user-id',
         platformUserId: 2,
       },
     });

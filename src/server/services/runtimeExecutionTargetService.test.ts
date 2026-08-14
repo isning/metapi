@@ -37,7 +37,7 @@ describe('runtimeExecutionTargetService', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'target-account',
-      accessToken: 'target-access',
+      credential: 'target-access',
       status: 'active',
     }).returning().get();
 

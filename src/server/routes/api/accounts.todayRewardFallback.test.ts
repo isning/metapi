@@ -76,7 +76,7 @@ describe('accounts api today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'reward-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
       extraConfig: JSON.stringify({
         todayIncomeSnapshot: {
@@ -121,7 +121,7 @@ describe('accounts api today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'iso-reward-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 
@@ -160,7 +160,7 @@ describe('accounts api today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'reward-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
       extraConfig: JSON.stringify({
         todayIncomeSnapshot: {
@@ -205,7 +205,7 @@ describe('accounts api today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'spend-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 
@@ -248,7 +248,7 @@ describe('accounts api today reward fallback', () => {
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
       username: 'iso-spend-user',
-      accessToken: 'token',
+      credential: 'token',
       status: 'active',
     }).returning().get();
 

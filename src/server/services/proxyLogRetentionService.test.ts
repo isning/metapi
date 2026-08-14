@@ -54,8 +54,8 @@ describe('proxyLogRetentionService', () => {
     return await db.insert(schema.accounts).values({
       siteId: site.id,
       username: `retention-${platform}`,
-      accessToken: `access-${platform}`,
-      apiToken: `api-${platform}`,
+      credential: `access-${platform}`,
+
       status: 'active',
     }).returning().get();
   }
