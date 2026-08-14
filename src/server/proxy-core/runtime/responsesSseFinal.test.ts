@@ -5,6 +5,36 @@ import { Response } from 'undici';
 import { collectResponsesFinalPayloadFromSse } from './responsesSseFinal.js';
 
 describe('collectResponsesFinalPayloadFromSse', () => {
+  it('uses a complete terminal payload once instead of appending prior SSE deltas', async () => {
+    const upstream = {
+      async text() {
+        return [
+          'event: response.output_text.delta',
+          'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_terminal","delta":"hello"}',
+          '',
+          'event: response.completed',
+          'data: {"type":"response.completed","response":{"id":"resp_terminal","model":"gpt-5.4","status":"completed","output":[{"id":"msg_terminal","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello"}]}],"output_text":"hello"}}',
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n');
+      },
+    };
+
+    await expect(collectResponsesFinalPayloadFromSse(upstream, 'gpt-5.4'))
+      .resolves
+      .toMatchObject({
+        payload: {
+          id: 'resp_terminal',
+          output_text: 'hello',
+          output: [{
+            id: 'msg_terminal',
+            content: [{ text: 'hello' }],
+          }],
+        },
+      });
+  });
+
   it('treats event:error payloads as upstream failures', async () => {
     const upstream = {
       async text() {

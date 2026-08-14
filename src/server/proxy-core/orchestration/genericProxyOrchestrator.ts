@@ -131,26 +131,15 @@ const EMPTY_PROXY_USAGE = {
 const INTERNAL_RUNTIME_REQUEST_ID_HEADER = 'x-metapi-runtime-request-id';
 const RESPONSES_WEBSOCKET_TRANSPORT_HEADER = 'x-metapi-responses-websocket-transport';
 
-function finalizeRetryAsUpstreamFailure(status: number, message: string) {
+function finalizeExecutionAttemptsUnavailable(status = 502) {
+  const message = config.proxyExecutionAttemptsExhaustedMessage.trim()
+    || '所有执行尝试均不可用，请稍后重试';
   return {
     action: 'respond' as const,
     status,
     payload: {
       error: {
         message,
-        type: 'upstream_error' as const,
-      },
-    },
-  };
-}
-
-function finalizeRetryAsExecutionFailure(message: string) {
-  return {
-    action: 'respond' as const,
-    status: 502,
-    payload: {
-      error: {
-        message: `Upstream error: ${message}`,
         type: 'upstream_error' as const,
       },
     },
@@ -376,7 +365,9 @@ export async function handleGenericSurfaceRequest(
       const selected = decision?.kind === 'execution_attempt' ? decision.attempt : null;
 
       if (!selected) {
-        const noTargetMessage = buildForcedExecutionAttemptUnavailableMessage(forcedExecutionAttemptId);
+        const noTargetMessage = forcedExecutionAttemptId
+          ? buildForcedExecutionAttemptUnavailableMessage(forcedExecutionAttemptId)
+          : config.proxyExecutionAttemptsExhaustedMessage;
         await reportProxyAllFailed({
           model: requestedModel,
           reason: forcedExecutionAttemptId ? noTargetMessage : 'No available execution attempts after retries',
@@ -494,7 +485,6 @@ export async function handleGenericSurfaceRequest(
       const targetLease = leaseResult.lease;
       try {
         await markSurfaceExecutionAttemptStarted({ selected });
-        const debugAttemptIndex = attempt;
 
       const finalizeDebugSuccess = async (
         status: number,
@@ -512,9 +502,6 @@ export async function handleGenericSurfaceRequest(
       };
 
       const finalizeDebugFailure = async (status: number, body: unknown, upstreamPath: string | null) => {
-        await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptIndex, {
-          rawErrorText: typeof body === 'string' ? body : JSON.stringify(body),
-        });
         if (attempt === maxRetries - 1) {
           await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
             finalStatus: 'failure',
@@ -847,6 +834,7 @@ export async function handleGenericSurfaceRequest(
             stickyPreferredTargetId,
             oauthProvider: oauth?.provider || null,
             isCodexSite,
+            upstreamTransport: 'http',
             isCompactRequest,
             credentialKey,
             runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement ?? null,
@@ -1160,12 +1148,11 @@ export async function handleGenericSurfaceRequest(
             retryCount += 1;
             continue;
           }
-          await finalizeDebugFailure(
-            failureOutcome.status,
-            failureOutcome.payload,
-            null,
-          );
-          return reply.code(failureOutcome.status).send(failureOutcome.payload);
+          const outcome = failureStatus >= 500
+            ? finalizeExecutionAttemptsUnavailable()
+            : failureOutcome;
+          await finalizeDebugFailure(outcome.status, outcome.payload, null);
+          return reply.code(outcome.status).send(outcome.payload);
         }
 
         const failureOutcome = await failureToolkit.handleUpstreamFailure({
@@ -1180,7 +1167,6 @@ export async function handleGenericSurfaceRequest(
           retryCount,
           willContinue: await willContinueAfterFailure(502, err.message || 'Upstream request failed'),
         });
-        const outcome = finalizeRetryAsExecutionFailure(err.message);
         if (
           failureOutcome.action === 'retry'
           && canRetryExecutionAttemptSelection(retryCount, forcedExecutionAttemptId)
@@ -1188,6 +1174,7 @@ export async function handleGenericSurfaceRequest(
           retryCount += 1;
           continue;
         }
+        const outcome = finalizeExecutionAttemptsUnavailable();
         await finalizeDebugFailure(outcome.status, outcome.payload, null);
         return reply.code(outcome.status).send(outcome.payload);
       }
@@ -1212,14 +1199,11 @@ export async function handleGenericSurfaceRequest(
           retryCount += 1;
           continue;
         }
-        const payload = {
-          error: {
-            message: endpointResult!.errText || 'Upstream request failed',
-            type: status === 503 ? 'server_error' as const : 'upstream_error' as const,
-          },
-        };
-        await finalizeDebugFailure(failureOutcome.status, failureOutcome.payload || payload, null);
-        return reply.code(failureOutcome.status).send(failureOutcome.payload || payload);
+        const outcome = status >= 500
+          ? finalizeExecutionAttemptsUnavailable()
+          : failureOutcome;
+        await finalizeDebugFailure(outcome.status, outcome.payload, null);
+        return reply.code(outcome.status).send(outcome.payload);
       }
       const upstream = endpointResult!.upstream;
       const successfulUpstreamPath = endpointResult!.upstreamPath;
@@ -1305,10 +1289,17 @@ export async function handleGenericSurfaceRequest(
         throw new Error(`Downstream protocol adapter ${adapter.format} must implement createStreamSession for streaming`);
       }
 
+      const streamOutputOwnership = adapter.resolveStreamOutputOwnership?.({
+        downstreamHeaders: request.headers as Record<string, unknown>,
+        upstreamContentType,
+        upstreamPath: successfulUpstreamPath,
+      }) ?? 'converted';
+
       const streamSession = adapter.createStreamSession({
         downstreamFormat: adapter.format.startsWith('openai') ? 'openai' : (adapter.format.startsWith('claude') || adapter.format.startsWith('anthropic') ? 'claude' : adapter.format),
         modelName,
         successfulUpstreamPath,
+        streamOutputOwnership,
         getUsage: () => parsedUsage,
         onParsedPayload: (payload: unknown) => {
           if (payload && typeof payload === 'object') {
@@ -1735,7 +1726,8 @@ export async function handleGenericSurfaceRequest(
       targetLease.release();
     }
   }
-      const exhaustedMessage = 'Upstream execution attempts were exhausted';
+      const exhaustedMessage = config.proxyExecutionAttemptsExhaustedMessage.trim()
+        || '所有执行尝试均不可用，请稍后重试';
       await completeCompiledRuntimeExecutionSession(executionSession, {
         status: 'failure',
         httpStatus: 502,

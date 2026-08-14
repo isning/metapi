@@ -88,6 +88,51 @@ describe('openai responses response bridge', () => {
     });
   });
 
+  it('converts a legacy Chat Completions function_call into a Responses function_call item', () => {
+    const payload = buildNormalizedFinalToOpenAiResponsesPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_legacy_function',
+        model: 'gpt-5',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            function_call: {
+              name: 'exec',
+              arguments: '{"cmd":"pwd"}',
+            },
+          },
+          finish_reason: 'function_call',
+        }],
+      },
+      normalized: {
+        id: 'chatcmpl_legacy_function',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'tool_calls',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 11,
+        completionTokens: 7,
+        totalTokens: 18,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^fc_/),
+        type: 'function_call',
+        call_id: expect.stringMatching(/^call_/),
+        name: 'exec',
+        arguments: '{"cmd":"pwd"}',
+      }),
+    ]);
+    expect(payload.output_text).toBe('');
+  });
+
   it('preserves function-call chains from response-like upstream payloads instead of flattening them into text', () => {
     const payload = buildNormalizedFinalToOpenAiResponsesPayload({
       upstreamPayload: {

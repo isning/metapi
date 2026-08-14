@@ -308,6 +308,8 @@ describe('responses proxy codex oauth refresh', () => {
       account: {
         id: 33,
         username: 'codex-user@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -328,6 +330,7 @@ describe('responses proxy codex oauth refresh', () => {
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
       accountId: 33,
+      oauthProvider: 'codex',
       accountKey: 'chatgpt-account-123',
     });
   });
@@ -394,6 +397,75 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondOptions.headers.Accept || secondOptions.headers.accept).toBe('text/event-stream');
     expect(secondOptions.headers.Connection || secondOptions.headers.connection).toBe('Keep-Alive');
     expect(response.json()?.output_text).toContain('ok after codex token refresh');
+  });
+
+  it.each([
+    ['new-api', undefined],
+    ['sub2api', false],
+  ])('keeps Responses-native tools and output items on the native endpoint for %s', async (platform, expectedStore) => {
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
+      site: { id: 44, name: `${platform}-site`, url: `https://${platform}.example.com`, platform },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
+      tokenName: 'default',
+      tokenValue: 'sk-native-responses',
+      actualModel: 'gpt-5.4',
+    });
+    const nativeOutput = {
+      id: 'mc_123',
+      type: 'mcp_call',
+      status: 'completed',
+      server_label: 'docs',
+      name: 'search',
+      arguments: '{"query":"Responses API"}',
+      output: 'matched documentation',
+    };
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      `event: response.completed\ndata: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'resp_native_tool',
+          object: 'response',
+          model: 'gpt-5.4',
+          status: 'completed',
+          output: [nativeOutput],
+          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+        },
+      })}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'find the protocol docs',
+        conversation: 'conv_123',
+        include: ['mcp_call.output'],
+        tools: [{ type: 'mcp', server_label: 'docs', server_url: 'https://mcp.example.com' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`https://${platform}.example.com/v1/responses`);
+    expect(url).not.toContain('/chat/completions');
+    expect(url).not.toContain('/messages');
+    const forwarded = JSON.parse(options.body);
+    expect(forwarded.conversation).toBe('conv_123');
+    expect(forwarded.include).toEqual(['mcp_call.output']);
+    expect(forwarded.tools).toEqual([{ type: 'mcp', server_label: 'docs', server_url: 'https://mcp.example.com' }]);
+    if (expectedStore === undefined) {
+      expect(forwarded.store).toBeUndefined();
+    } else {
+      expect(forwarded.store).toBe(expectedStore);
+    }
+    expect(response.body).toContain('"type":"mcp_call"');
+    expect(response.body).toContain('matched documentation');
   });
 
   it('refreshes codex oauth token and retries the same responses request on 403', async () => {
@@ -534,6 +606,8 @@ describe('responses proxy codex oauth refresh', () => {
       account: {
         id: 33,
         username: 'oauth-user@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -626,6 +700,47 @@ describe('responses proxy codex oauth refresh', () => {
         role: 'user',
         content: [{ type: 'input_text', text: 'hello codex' }],
       },
+    ]);
+  });
+
+  it('forwards Codex additional_tools in input without rewriting their scope', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_codex_additional_tools',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'ok with tools',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const exec = {
+      type: 'custom',
+      name: 'exec',
+      description: 'Run JavaScript.',
+      format: { type: 'grammar', syntax: 'lark', definition: 'start: SOURCE' },
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: [
+          { type: 'additional_tools', role: 'developer', tools: [exec] },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello codex' }] },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.tools).toBeUndefined();
+    expect(forwardedBody.input).toEqual([
+      { type: 'additional_tools', role: 'developer', tools: [exec] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello codex' }] },
     ]);
   });
 
@@ -992,6 +1107,8 @@ describe('responses proxy codex oauth refresh', () => {
       account: {
         id: 33,
         username: 'codex-user-a@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -1014,6 +1131,8 @@ describe('responses proxy codex oauth refresh', () => {
       account: {
         id: 34,
         username: 'codex-user-b@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-456',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -1443,6 +1562,8 @@ describe('responses proxy codex oauth refresh', () => {
       account: {
         id: 33,
         username: 'codex-user@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -1464,14 +1585,14 @@ describe('responses proxy codex oauth refresh', () => {
       'x-metapi-responses-websocket-transport': '1',
       session_id: 'session-sticky-fast-path-1',
     };
-    const ssePayload = createSseResponse([
+    const sseChunks = [
       'event: response.created\n',
       'data: {"type":"response.created","response":{"id":"resp_codex_fast_path","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
       'event: response.completed\n',
       'data: {"type":"response.completed","response":{"id":"resp_codex_fast_path","model":"gpt-5.4","status":"completed","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
       'data: [DONE]\n\n',
-    ]);
-    fetchMock.mockResolvedValue(ssePayload);
+    ];
+    fetchMock.mockImplementation(() => createSseResponse(sseChunks));
 
     const firstResponse = await app.inject({
       method: 'POST',
@@ -1504,6 +1625,36 @@ describe('responses proxy codex oauth refresh', () => {
       requestedModel: 'gpt-5.4',
       stickyExecutionTargetId: 11,
     }));
+  });
+
+  it('relays native Codex Responses SSE without rebuilding its event stream', async () => {
+    const upstreamSse = [
+      ': retain upstream comments and exact payload spacing\n',
+      'event: response.output_text.delta\n',
+      'data: { "type": "response.output_text.delta", "delta": "hello" }\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_byte_exact","model":"gpt-5.4","status":"completed"}}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    fetchMock.mockResolvedValue(createSseResponse([
+      upstreamSse.slice(0, 47),
+      upstreamSse.slice(47, 131),
+      upstreamSse.slice(131),
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { 'openai-beta': 'responses=experimental' },
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(upstreamSse);
   });
 
   it('decodes zstd-compressed codex responses SSE before relaying native downstream streams', async () => {

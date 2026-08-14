@@ -15,6 +15,7 @@ type ProxyStreamLifecycleInput<TEvent> = {
   pullEvents(buffer: string): PulledEventBatch<TEvent>;
   handleEvent(event: TEvent): Promise<boolean | void> | boolean | void;
   onEof?: () => Promise<void> | void;
+  onChunk?: (chunk: Uint8Array) => Promise<void> | void;
   maxBufferBytes?: number;
   onLimitExceeded?: (message: string) => Promise<void> | void;
 };
@@ -62,6 +63,8 @@ export function createProxyStreamLifecycle<TEvent>(input: ProxyStreamLifecycleIn
           const { done, value } = await reader.read();
           if (done) break;
           if (!value) continue;
+
+          await input.onChunk?.(value);
 
           sseBuffer += decoder.decode(value, { stream: true });
           if (input.maxBufferBytes && byteLength(sseBuffer) > input.maxBufferBytes) {

@@ -211,6 +211,7 @@ describe('chat proxy stream behavior', () => {
     (config as any).openAiServiceTierRules = undefined;
     config.proxyEmptyContentFailEnabled = false;
     config.proxyErrorKeywords = [];
+    config.proxyExecutionAttemptsExhaustedMessage = 'All execution attempts are unavailable';
   });
 
   afterAll(async () => {
@@ -1957,6 +1958,52 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('response.completed');
   });
 
+  it('converts legacy Chat Completions function_call SSE to one stable Responses function_call', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/chat/completions'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-legacy-fc","model":"upstream-gpt","choices":[{"delta":{"role":"assistant","function_call":{"name":"exec"}},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-legacy-fc","model":"upstream-gpt","choices":[{"delta":{"function_call":{"arguments":"{\\"cmd\\":\\"pwd\\"}"}},"finish_reason":"function_call"}]}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'run pwd',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const callIds = [...response.body.matchAll(/"call_id":"(call_[^"]+)"/g)].map((match) => match[1]);
+    expect(callIds.length).toBeGreaterThan(1);
+    expect(new Set(callIds).size).toBe(1);
+    expect(response.body).toContain('"type":"function_call"');
+    expect(response.body).toContain('"name":"exec"');
+    expect(response.body).toContain('response.function_call_arguments.delta');
+    expect(response.body).toContain('"delta":"{\\"cmd\\":\\"pwd\\"}"');
+  });
+
   it('emits response.failed without synthetic response.completed when upstream stream fails on /v1/responses', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [
@@ -2378,9 +2425,12 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(502);
     const body = response.json();
     expect(body.error?.type).toBe('upstream_error');
-    expect(body.error?.message).toContain('[upstream:');
-    expect(body.error?.message).toContain('Cloudflare 502: Bad gateway');
-    expect(body.error?.message).not.toContain('<!DOCTYPE html>');
+    expect(body).toEqual({
+      error: {
+        message: 'All execution attempts are unavailable',
+        type: 'upstream_error',
+      },
+    });
   });
 
   it('does not downgrade /v1/responses to /v1/chat/completions on generic 400 upstream_error without endpoint mismatch hints', async () => {
@@ -3474,7 +3524,7 @@ describe('chat proxy stream behavior', () => {
     expect(forwardedBody.include).toEqual(['reasoning.encrypted_content']);
   });
 
-  it('keeps explicit empty include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
+  it('keeps explicit empty include on claude-family codex-surface responses requests on the native Responses endpoint', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
       executionTargetId: 11,
@@ -3520,10 +3570,10 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
-    expect(targetUrl).toContain('/v1/messages');
+    expect(targetUrl).toContain('/v1/responses');
   });
 
-  it('keeps explicit custom include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
+  it('keeps explicit custom include on claude-family codex-surface responses requests on the native Responses endpoint', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
       executionTargetId: 11,
@@ -3569,7 +3619,7 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
-    expect(targetUrl).toContain('/v1/messages');
+    expect(targetUrl).toContain('/v1/responses');
   });
 
   it('forces anyrouter platform to prefer /v1/messages even when catalog says openai', async () => {
@@ -3827,7 +3877,12 @@ describe('chat proxy stream behavior', () => {
     const [firstUrl] = fetchMock.mock.calls[0] as [string, any];
     expect(firstUrl).toContain('/v1/messages');
     const body = response.json();
-    expect(body?.error?.message).toContain('/v1/messages');
+    expect(body).toEqual({
+      error: {
+        message: 'All execution attempts are unavailable',
+        type: 'upstream_error',
+      },
+    });
   });
 
   it('continues to /v1/responses when /v1/messages dispatch is denied for /v1/chat/completions', async () => {

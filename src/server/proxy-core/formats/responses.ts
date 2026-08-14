@@ -4,6 +4,7 @@ import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
 import { validateExternalResponsesHttpRequest } from '../responsesPreflight.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { analyzeResponsesRuntimeCapability } from './responsesCapabilityAnalysis.js';
 import {
   carriesResponsesFileUrlInput,
   summarizeConversationFileInputsInOpenAiBody,
@@ -156,6 +157,9 @@ export const responsesProtocolAdapter: DownstreamProtocolAdapter = {
         isStream: requestEnvelope.stream,
         openaiBody: openAiBody,
         responsesOriginalBody: requestEnvelope.parsed.normalizedBody,
+        runtimeCapabilityRequirement: analyzeResponsesRuntimeCapability(
+          requestEnvelope.parsed.normalizedBody,
+        ),
         surfaceCapabilityHints: (() => {
           const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(
             requestEnvelope.parsed.normalizedBody,
@@ -174,6 +178,18 @@ export const responsesProtocolAdapter: DownstreamProtocolAdapter = {
   },
   createStreamSession(options: any) {
     return openAiResponsesTransformer.proxyStream.createSession(options);
+  },
+  resolveStreamOutputOwnership({ downstreamHeaders, upstreamContentType, upstreamPath }) {
+    // Codex-native Responses events are already in the downstream protocol.
+    // They must have exactly one writer: the upstream byte stream itself.
+    if (
+      isCodexResponsesSurface(downstreamHeaders)
+      && upstreamContentType.toLowerCase().includes('text/event-stream')
+      && upstreamPath.endsWith('/responses')
+    ) {
+      return 'passthrough';
+    }
+    return 'converted';
   },
   transformResponse(options) {
     const normalized = openAiResponsesTransformer.transformFinalResponse(

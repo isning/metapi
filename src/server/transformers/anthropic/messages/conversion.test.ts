@@ -45,8 +45,42 @@ describe('sanitizeAnthropicMessagesBody', () => {
       { name: 'lookup_weather', input_schema: { type: 'object' } },
     ])).toEqual([
       { type: 'web_search', max_uses: 2, name: 'web_search' },
-      { name: 'lookup_weather', input_schema: { type: 'object' } },
+      {
+        type: 'function',
+        function: { name: 'lookup_weather', parameters: { type: 'object' } },
+      },
     ]);
+  });
+
+  it('maps Anthropic client tools to Chat Completions function tools and drops non-representable custom tools', () => {
+    expect(convertAnthropicToolsToOpenAi([
+      {
+        name: 'lookup_weather',
+        description: 'Looks up a forecast.',
+        input_schema: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          required: ['city'],
+        },
+      },
+    ])).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+          description: 'Looks up a forecast.',
+          parameters: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+          },
+        },
+      },
+    ]);
+
+    expect(convertOpenAiToolsToAnthropic([
+      { type: 'custom', name: 'exec', format: { type: 'grammar', syntax: 'lark' } },
+    ])).toEqual([]);
   });
 
   it('normalizes string system and message content before rebuilding cache anchors', () => {

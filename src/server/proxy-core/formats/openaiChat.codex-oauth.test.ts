@@ -196,6 +196,8 @@ describe('chat proxy codex oauth compatibility', () => {
       account: {
         id: 33,
         username: 'codex-user@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -214,6 +216,7 @@ describe('chat proxy codex oauth compatibility', () => {
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
       accountId: 33,
+      oauthProvider: 'codex',
       accountKey: 'chatgpt-account-123',
     });
   });
@@ -380,6 +383,8 @@ describe('chat proxy codex oauth compatibility', () => {
       account: {
         id: 33,
         username: 'oauth-user@example.com',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-123',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {

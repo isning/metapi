@@ -2,6 +2,7 @@ import type { Response as UndiciResponse } from 'undici';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDowngradeError,
+  isTransientUpstreamCapacityError,
   isUnsupportedMediaTypeError,
   type CompatibilityEndpoint,
 } from '../../shared/endpointCompatibility.js';
@@ -147,7 +148,7 @@ export function createResponsesEndpointStrategy(input: CreateResponsesEndpointSt
     shouldDowngrade(ctx: EndpointAttemptContext): boolean {
       if (input.requiresNativeResponsesFileUrl) return false;
       return (
-        ctx.response.status >= 500
+        (ctx.response.status >= 500 && !isTransientUpstreamCapacityError(ctx.rawErrText))
         || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
         || shouldDowngradeResponsesChatToMessages(
           ctx.request.path,

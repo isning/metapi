@@ -110,6 +110,66 @@ describe('normalizeCodexResponsesBodyForProxy', () => {
     });
   });
 
+  it('preserves Codex additional_tools input without changing its declaration scope', () => {
+    const exec = {
+      type: 'custom',
+      name: 'exec',
+      description: 'Run JavaScript.',
+      format: { type: 'grammar', syntax: 'lark', definition: 'start: SOURCE' },
+    };
+    const wait = {
+      type: 'function',
+      name: 'wait',
+      parameters: { type: 'object', properties: {} },
+    };
+
+    const body = normalizeCodexResponsesBodyForProxy({
+      input: [
+        { type: 'additional_tools', role: 'developer', tools: [exec, wait] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      ],
+      tools: [exec],
+    }, 'codex');
+
+    expect(body.tools).toEqual([exec]);
+    expect(body.input).toEqual([
+      { type: 'additional_tools', role: 'developer', tools: [exec, wait] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+
+  it('preserves legacy content-less message tool containers without rewriting them', () => {
+    const exec = { type: 'custom', name: 'exec', description: 'Run JavaScript.' };
+    const body = normalizeCodexResponsesBodyForProxy({
+      input: [
+        { type: 'message', role: 'developer', tools: [exec] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      ],
+    }, 'codex');
+
+    expect(body.tools).toBeUndefined();
+    expect(body.input).toEqual([
+      { type: 'message', role: 'developer', tools: [exec] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+
+  it('preserves legacy empty tool containers after generic normalization', () => {
+    const exec = { type: 'custom', name: 'exec', description: 'Run JavaScript.' };
+    const body = normalizeCodexResponsesBodyForProxy({
+      input: [
+        { type: 'message', role: 'developer', content: [], tools: [exec] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      ],
+    }, 'codex');
+
+    expect(body.tools).toBeUndefined();
+    expect(body.input).toEqual([
+      { type: 'message', role: 'developer', content: [], tools: [exec] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+
   it('leaves non-codex bodies untouched', () => {
     const source = {
       input: 'hello',

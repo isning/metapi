@@ -92,7 +92,7 @@ function extractToolCallsFromUpstream(payload: unknown): ResponsesToolCall[] {
     const choice = payload.choices[0];
     const message = isRecord((choice as any)?.message) ? (choice as any).message : {};
     const toolCalls = Array.isArray((message as any).tool_calls) ? (message as any).tool_calls : [];
-    return toolCalls
+    const normalizedToolCalls = toolCalls
       .map((item: unknown) => {
         if (!isRecord(item)) return null;
         const fn = isRecord(item.function) ? item.function : {};
@@ -107,6 +107,22 @@ function extractToolCallsFromUpstream(payload: unknown): ResponsesToolCall[] {
         };
       })
       .filter((item): item is ResponsesToolCall => !!item);
+    if (normalizedToolCalls.length > 0) return normalizedToolCalls;
+
+    // Legacy Chat Completions exposes one function call without an id. Responses
+    // requires call_id, so synthesize it at the protocol boundary.
+    const legacyFunctionCall = isRecord((message as any).function_call)
+      ? (message as any).function_call
+      : null;
+    const name = asTrimmedString(legacyFunctionCall?.name);
+    if (!name) return [];
+    return [{
+      id: ensureFunctionCallId(''),
+      name,
+      arguments: typeof legacyFunctionCall?.arguments === 'string'
+        ? legacyFunctionCall.arguments
+        : '',
+    }];
   }
 
   if (payload.type === 'message' && Array.isArray(payload.content)) {

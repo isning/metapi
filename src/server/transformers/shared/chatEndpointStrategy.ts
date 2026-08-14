@@ -4,6 +4,7 @@ import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDispatchDeniedError,
   isEndpointDowngradeError,
+  isTransientUpstreamCapacityError,
   isUnsupportedMediaTypeError,
   promoteResponsesCandidateAfterLegacyChatError,
   type CompatibilityEndpoint,
@@ -128,7 +129,7 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
         currentEndpoint: ctx.request.endpoint,
       });
       return (
-        ctx.response.status >= 500
+        (ctx.response.status >= 500 && !isTransientUpstreamCapacityError(ctx.rawErrText))
         || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
         || isMessagesRequiredError(ctx.rawErrText)
         || isEndpointDispatchDeniedError(ctx.response.status, ctx.rawErrText)

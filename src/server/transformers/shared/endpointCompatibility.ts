@@ -5,6 +5,7 @@ export {
   inferSuggestedEndpointFromUpstreamError,
   isEndpointDispatchDeniedError,
   isEndpointDowngradeError,
+  isTransientUpstreamCapacityError,
   isUnsupportedMediaTypeError,
   promoteRequiredEndpointCandidateAfterProtocolError,
   promoteResponsesCandidateAfterLegacyChatError,

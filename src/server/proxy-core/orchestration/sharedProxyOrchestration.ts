@@ -3,8 +3,9 @@ import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../se
 import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
-import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
+import { reportTokenExpired, reportProxyAllFailed } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
+import { resolveStoredAccountCredentialMode } from '../../services/accountExtraConfig.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import { resolveProxyLogBilling } from '../../services/proxyBilling.js';
@@ -50,7 +51,14 @@ type SurfaceWarningScope = string;
 type SurfaceSelectedExecutionAttempt = {
   executionAttemptId: string;
   target: { id: number; tokenId?: number | null };
-  account: { id: number; username?: string | null };
+  account: {
+    id: number;
+    username?: string | null;
+    credential?: string | null;
+    credentialMode?: string | null;
+    oauthProvider?: string | null;
+    extraConfig?: string | null;
+  };
   site: { id: number; name?: string | null };
   token?: { id?: number | null; tokenGroup?: string | null } | null;
   actualModel?: string | null;
@@ -60,6 +68,14 @@ type SurfaceSelectedExecutionAttempt = {
   executionTargetId: number;
   routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
 };
+
+function credentialFailureKindForAttempt(
+  selected: SurfaceSelectedExecutionAttempt,
+): 'session' | 'apikey' {
+  return resolveStoredAccountCredentialMode(selected.account) === 'apikey'
+    ? 'apikey'
+    : 'session';
+}
 
 type SurfaceFailureResponse = {
   action: 'respond';
@@ -79,8 +95,11 @@ type SurfaceFailureOutcome =
 type SurfaceOauthRefreshCredential = {
   account: {
     id: number;
-    accessToken?: string | null;
+    credential?: string | null;
     extraConfig?: string | null;
+    oauthProvider?: string | null;
+    oauthAccountKey?: string | null;
+    oauthProjectId?: string | null;
   };
   tokenValue: string;
 };
@@ -95,8 +114,9 @@ type SurfaceSuccessSelectedExecutionAttempt = SurfaceSelectedExecutionAttempt & 
   account: Record<string, unknown> & {
     id: number;
     username?: string | null;
-    accessToken?: string | null;
-    apiToken?: string | null;
+    credentialMode?: string | null;
+    credential?: string | null;
+    credentialKind?: string | null;
     extraConfig?: string | null;
     platformUserId?: number | null;
   };
@@ -283,7 +303,7 @@ export function bindSurfaceStickyTarget(input: {
   stickySessionKey?: string | null;
   selected: {
     target: { id: number };
-    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
+    account?: { credentialMode?: string | null; oauthProvider?: string | null } | null;
   };
 }): void {
   proxyTargetCoordinator.bindStickyTarget(
@@ -309,7 +329,7 @@ export async function acquireSurfaceTargetLease(input: {
   stickySessionKey?: string | null;
   selected: {
     target: { id: number };
-    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
+    account?: { credentialMode?: string | null; oauthProvider?: string | null } | null;
   };
 }) {
   return await proxyTargetCoordinator.acquireTargetLease({
@@ -317,7 +337,7 @@ export async function acquireSurfaceTargetLease(input: {
     // lease pool. Requests without a stable downstream session key should keep
     // the pre-sticky-session parallel behavior instead of contending globally.
     targetId: input.stickySessionKey ? input.selected.target.id : 0,
-    accountExtraConfig: input.selected.account?.extraConfig,
+    accountCredentialMode: input.selected.account?.credentialMode,
     accountOauthProvider: input.selected.account?.oauthProvider,
   });
 }
@@ -446,7 +466,10 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
     input.selected.tokenValue = refreshed.accessToken;
     input.selected.account = {
       ...input.selected.account,
-      accessToken: refreshed.accessToken,
+      credential: refreshed.accessToken,
+      oauthProvider: refreshed.oauthProvider,
+      oauthAccountKey: refreshed.accountKey || null,
+      oauthProjectId: refreshed.projectId || null,
       extraConfig: refreshed.extraConfig ?? input.selected.account.extraConfig,
     };
 
@@ -788,10 +811,11 @@ export function createSurfaceFailureToolkit(input: {
       }));
 
       if (isTokenExpiredError({ status: args.status, message: args.errText })) {
-        runBestEffort('report token expired', () => reportTokenExpired({
+        runBestEffort('report credential authentication failure', () => reportTokenExpired({
           accountId: args.selected.account.id,
           username: args.selected.account.username,
           siteName: args.selected.site.name,
+          credentialKind: credentialFailureKindForAttempt(args.selected),
           detail: `HTTP ${args.status}`,
         }));
       }

@@ -1004,6 +1004,11 @@ export function convertResponsesBodyToOpenAiBody(
     if (!isRecord(item)) return;
 
     const itemType = asTrimmedString(item.type).toLowerCase();
+    // `additional_tools` is a Responses input extension, not a chat message.
+    // Native-only capability routing prevents this bridge from being selected,
+    // but never serialize a declaration as prompt text if a caller bypasses it.
+    if (itemType === 'additional_tools') return;
+
     if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
       const toolCall = toResponsesMcpCompatToolCall(item);
       if (toolCall) {

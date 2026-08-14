@@ -606,12 +606,59 @@ describe('selectSurfaceExecutionAttempt', () => {
       accountId: 33,
       username: 'oauth-user',
       siteName: 'Codex OAuth',
+      credentialKind: 'session',
       detail: 'HTTP 401',
     });
     expect(reportProxyAllFailedMock).toHaveBeenCalledWith({
       model: 'gpt-5.2',
       reason: 'upstream returned HTTP 401',
     });
+  });
+
+  it('classifies an explicit API-key target separately from an access-token target', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(false);
+    isTokenExpiredErrorMock.mockReturnValue(true);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedProxyOrchestration.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'chat',
+      downstreamPath: '/v1/chat/completions',
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    await toolkit.handleUpstreamFailure({
+      selected: {
+        target: { id: 11, routeId: 22 },
+        account: {
+          id: 33,
+          username: 'apikey-user',
+          credential: '',
+          credentialMode: 'apikey',
+          credentialKind: 'none',
+          extraConfig: null,
+        },
+        site: { name: 'NewAPI' },
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 401,
+      errText: 'invalid token',
+      rawErrText: 'invalid token',
+      latencyMs: 900,
+      retryCount: 0,
+      willContinue: false,
+    });
+
+    expect(reportTokenExpiredMock).toHaveBeenCalledWith(expect.objectContaining({
+      credentialKind: 'apikey',
+    }));
   });
 
   it('returns terminal failures even when final alerting throws', async () => {
@@ -761,7 +808,7 @@ describe('selectSurfaceExecutionAttempt', () => {
     const selected = {
       account: {
         id: 33,
-        accessToken: 'old-access-token',
+        credential: 'old-access-token',
         extraConfig: '{"oauth":{"refreshToken":"refresh"}}',
       },
       tokenValue: 'old-access-token',
@@ -802,7 +849,7 @@ describe('selectSurfaceExecutionAttempt', () => {
 
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
     expect(selected.tokenValue).toBe('new-access-token');
-    expect(selected.account.accessToken).toBe('new-access-token');
+    expect(selected.account.credential).toBe('new-access-token');
     expect(selected.account.extraConfig).toBe('{"oauth":{"refreshToken":"refresh-next"}}');
     expect(dispatchRequest).toHaveBeenCalledWith(expect.objectContaining({
       headers: { authorization: 'Bearer new-access-token' },
@@ -843,7 +890,7 @@ describe('selectSurfaceExecutionAttempt', () => {
     const selected = {
       account: {
         id: 33,
-        accessToken: 'old-access-token',
+        credential: 'old-access-token',
         extraConfig: '{"oauth":{"refreshToken":"refresh"}}',
       },
       tokenValue: 'old-access-token',

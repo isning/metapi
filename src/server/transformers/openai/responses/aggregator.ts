@@ -829,7 +829,20 @@ function applyOriginalResponsesPayload(
         textPart.part.text = typeof payload.text === 'string' ? payload.text : String(payload.text ?? '');
         markTerminalMarker(textPart.part, outputTextDoneMarker);
       } else {
-        textPart.part.text = `${typeof textPart.part.text === 'string' ? textPart.part.text : ''}${typeof payload.delta === 'string' ? payload.delta : ''}`;
+        const currentText = typeof textPart.part.text === 'string' ? textPart.part.text : '';
+        const novelDelta = computeNovelDelta(
+          currentText,
+          typeof payload.delta === 'string' ? payload.delta : '',
+        );
+        textPart.part.text = `${currentText}${novelDelta}`;
+        if (!novelDelta) return lines;
+        return [
+          ...lines,
+          ...serializeOriginalResponsesEvent(eventType, {
+            ...payload,
+            delta: novelDelta,
+          }),
+        ];
       }
       return [
         ...lines,

@@ -850,16 +850,24 @@ export function convertOpenAiToolsToAnthropic(rawTools: unknown): unknown {
     })
     .filter((item): item is Record<string, unknown> => !!item);
 
-  return converted.length > 0 ? converted : rawTools;
+  return converted;
 }
 
 export function convertAnthropicToolsToOpenAi(rawTools: unknown): unknown {
   if (!Array.isArray(rawTools)) return rawTools;
 
-  return rawTools.map((item) => {
-    if (!isRecord(item)) return item;
-    if (isAnthropicWebSearchTool(item)) return convertAnthropicWebSearchToolToOpenAi(item);
-    return item;
+  return rawTools.flatMap((item): Record<string, unknown>[] => {
+    if (!isRecord(item)) return [];
+    if (isAnthropicWebSearchTool(item)) return [convertAnthropicWebSearchToolToOpenAi(item)];
+
+    const name = asTrimmedString(item.name);
+    if (!name || item.input_schema === undefined) return [];
+
+    const fn: Record<string, unknown> = { name, parameters: item.input_schema };
+    const description = asTrimmedString(item.description);
+    if (description) fn.description = description;
+    if (item.cache_control !== undefined) fn.cache_control = item.cache_control;
+    return [{ type: 'function', function: fn }];
   });
 }
 
@@ -1066,7 +1074,10 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
     body.stop_sequences = openaiBody.stop;
   }
 
-  if (openaiBody.tools !== undefined) body.tools = convertOpenAiToolsToAnthropic(openaiBody.tools);
+  if (openaiBody.tools !== undefined) {
+    const tools = convertOpenAiToolsToAnthropic(openaiBody.tools);
+    if (!Array.isArray(tools) || tools.length > 0) body.tools = tools;
+  }
 
   const parallelToolCalls = openaiBody.parallel_tool_calls;
   let anthropicToolChoice = convertOpenAiToolChoiceToAnthropic(openaiBody.tool_choice);

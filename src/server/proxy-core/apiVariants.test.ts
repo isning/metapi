@@ -484,6 +484,40 @@ describe('apiVariants', () => {
     expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('runtime_capability.api_type_unacceptable');
   });
 
+  it('never plans Chat Completions for native-only Responses requirements', () => {
+    const chatProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'chat' });
+    const responsesProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'responses' });
+    const requirement: RuntimeCapabilityRequirement = {
+      sourceFormat: 'responses',
+      surface: 'create',
+      acceptableApiTypes: ['openai_responses', 'newapi_responses'],
+      requiredFeatures: [],
+      lossPolicy: 'native_required',
+      fallbackPolicy: 'single_native_variant',
+    };
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'gpt-5.6-terra',
+      endpointProfiles: [chatProfile, responsesProfile],
+      credentialEndpointBindings: [chatProfile, responsesProfile].map((profile) => ({
+        id: `credential-endpoint:key-a:${profile.id}`,
+        siteId: 1,
+        credentialId: 'key-a',
+        apiEndpointProfileId: profile.id,
+        enabled: true,
+        support: 'supported' as const,
+        source: 'manual' as const,
+      })),
+      endpointCandidates: ['chat', 'responses'],
+      runtimeCapabilityRequirement: requirement,
+    });
+
+    expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['responses']);
+    expect(plan.attempts.map((attempt) => attempt.apiType)).toEqual(['openai_responses']);
+  });
+
   it('plans direct Gemini attempts for native Gemini requirements', () => {
     const requirement: RuntimeCapabilityRequirement = {
       sourceFormat: 'gemini',

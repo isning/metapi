@@ -55,6 +55,45 @@ function parseSseEvents(lines: string[]): Array<{ event: string | null; payload:
 }
 
 describe('serializeConvertedResponsesEvents', () => {
+  it('suppresses replayed long native Responses text deltas', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = { promptTokens: 1, completionTokens: 2, totalTokens: 3 };
+    const repeatedText = 'I will create an empty b.txt file in the current working directory.';
+
+    const first = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_text.delta',
+        responsesPayload: {
+          type: 'response.output_text.delta',
+          output_index: 0,
+          item_id: 'msg_replayed_delta',
+          delta: repeatedText,
+        },
+      },
+    });
+    const second = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_text.delta',
+        responsesPayload: {
+          type: 'response.output_text.delta',
+          output_index: 0,
+          item_id: 'msg_replayed_delta',
+          delta: repeatedText,
+        },
+      },
+    });
+
+    expect(parseSseEvents(first).filter((event) => event.event === 'response.output_text.delta')).toHaveLength(1);
+    expect(parseSseEvents(second).filter((event) => event.event === 'response.output_text.delta')).toHaveLength(0);
+  });
+
   it('aggregates reasoning summary events into the completed response payload', () => {
     const state = createOpenAiResponsesAggregateState('gpt-5');
     const streamContext = createStreamTransformContext('gpt-5');

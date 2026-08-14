@@ -521,6 +521,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 35,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
+        oauthProjectId: 'project-demo',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -794,6 +797,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 36,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
+        oauthProjectId: 'project-demo',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
           oauth: {
@@ -885,6 +891,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 36,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
+        oauthProjectId: 'project-before-refresh',
         accessToken: 'oauth-access-token',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
@@ -903,6 +912,9 @@ describe('gemini native proxy routes', () => {
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accountId: 36,
       accessToken: 'refreshed-access-token',
+      oauthProvider: 'gemini-cli',
+      accountKey: 'gemini-cli-user@example.com',
+      projectId: 'project-after-refresh',
       extraConfig: JSON.stringify({
         credentialMode: 'session',
         oauth: {
@@ -1003,6 +1015,8 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 36,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
         accessToken: 'oauth-access-token',
         extraConfig: JSON.stringify({
           credentialMode: 'session',
@@ -1420,6 +1434,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 39,
         username: 'antigravity-user@example.com',
+        oauthProvider: 'antigravity',
+        oauthAccountKey: 'antigravity-user@example.com',
+        oauthProjectId: 'project-demo',
         extraConfig: JSON.stringify({
           oauth: {
             provider: 'antigravity',
@@ -1517,6 +1534,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 40,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
+        oauthProjectId: 'project-demo',
         extraConfig: JSON.stringify({
           oauth: {
             provider: 'gemini-cli',
@@ -1576,6 +1596,9 @@ describe('gemini native proxy routes', () => {
       account: {
         id: 41,
         username: 'gemini-cli-user@example.com',
+        oauthProvider: 'gemini-cli',
+        oauthAccountKey: 'gemini-cli-user@example.com',
+        oauthProjectId: 'project-demo',
         extraConfig: JSON.stringify({
           oauth: {
             provider: 'gemini-cli',

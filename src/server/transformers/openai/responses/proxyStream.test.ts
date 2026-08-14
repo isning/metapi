@@ -3,6 +3,59 @@ import { describe, expect, it } from 'vitest';
 import { createResponsesProxyStreamSession } from './proxyStream.js';
 
 describe('createResponsesProxyStreamSession', () => {
+  it('passes native Responses SSE through byte-for-byte while retaining observability', async () => {
+    const rawChunks: Buffer[] = [];
+    const lines: string[] = [];
+    const payloads: unknown[] = [];
+    let ended = false;
+    let meaningfulOutputCount = 0;
+    const source = Buffer.from([
+      ': upstream keeps comments and field ordering\n',
+      'event: response.output_text.delta\n',
+      'data: { "type": "response.output_text.delta", "delta": "hello" }\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_native"}}\n\n',
+      'data: [DONE]\n\n',
+    ].join(''));
+    const chunks = [source.subarray(0, 19), source.subarray(19, 86), source.subarray(86)];
+    let index = 0;
+    const session = createResponsesProxyStreamSession({
+      modelName: 'gpt-5.6-terra',
+      successfulUpstreamPath: '/v1/responses',
+      streamOutputOwnership: 'passthrough',
+      getUsage: () => ({
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
+      }),
+      onParsedPayload: (payload) => payloads.push(payload),
+      onMeaningfulOutput: () => { meaningfulOutputCount += 1; },
+      writeLines: (nextLines) => lines.push(...nextLines),
+      writeRaw: (chunk) => rawChunks.push(Buffer.from(chunk)),
+    });
+
+    const result = await session.run({
+      async read() {
+        if (index >= chunks.length) return { done: true as const };
+        return { done: false as const, value: chunks[index++] };
+      },
+      async cancel() { return undefined; },
+      releaseLock() {},
+    }, {
+      end() { ended = true; },
+    });
+
+    expect(result).toEqual({ status: 'completed', errorMessage: null });
+    expect(Buffer.concat(rawChunks)).toEqual(source);
+    expect(lines).toEqual([]);
+    expect(payloads).toHaveLength(2);
+    expect(meaningfulOutputCount).toBe(1);
+    expect(ended).toBe(true);
+  });
+
   it('reports meaningful output when a response output delta is observed', async () => {
     const lines: string[] = [];
     let ended = false;

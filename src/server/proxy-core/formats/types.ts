@@ -104,6 +104,14 @@ export interface BodyConstraintsConfig {
   temperatureOverride?: number;
 }
 
+export type StreamOutputOwnership = 'converted' | 'passthrough';
+
+export interface ResolveStreamOutputOwnershipInput {
+  downstreamHeaders: Record<string, unknown>;
+  upstreamContentType: string;
+  upstreamPath: string;
+}
+
 export interface DownstreamProtocolAdapter {
   format: string;
   routes: string[];
@@ -145,6 +153,7 @@ export interface DownstreamProtocolAdapter {
   }): boolean;
   formatModelList?(models: Array<{ name: string; displayName: string }>): unknown;
   createStreamSession?(options: any): any;
+  resolveStreamOutputOwnership?(input: ResolveStreamOutputOwnershipInput): StreamOutputOwnership;
   transformResponse?(options: any): any;
   validateResponse?(options: {
     rawText: string;

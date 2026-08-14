@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { IncomingMessage } from 'node:http';
+import { request as createHttpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../runtime/codexWebsocketRuntime.js';
 import { buildCodexSessionResponseStoreKey } from '../runtime/codexSessionResponseStore.js';
 import {
@@ -208,76 +208,116 @@ async function forwardResponsesRequestViaHttp(input: {
   authToken: string;
   executionSession: CompiledRuntimeExecutionSession;
 }): Promise<unknown[] | null> {
-  const injectHeaders: Record<string, string | string[]> = {
+  const headers: Record<string, string | string[]> = {
     ...buildInjectHeaders(input.request),
     [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
     [INTERNAL_RUNTIME_REQUEST_ID_HEADER]: input.executionSession.requestId,
     ...(input.preserveIncrementalMode ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
   };
   if (
-    !headerValueToTrimmedString(injectHeaders.authorization)
-    && !headerValueToTrimmedString(injectHeaders['x-api-key'])
-    && !headerValueToTrimmedString(injectHeaders['x-goog-api-key'])
+    !headerValueToTrimmedString(headers.authorization)
+    && !headerValueToTrimmedString(headers['x-api-key'])
+    && !headerValueToTrimmedString(headers['x-goog-api-key'])
   ) {
-    injectHeaders.authorization = `Bearer ${input.authToken}`;
+    headers.authorization = `Bearer ${input.authToken}`;
   }
 
-  const response = await input.app.inject({
-    method: 'POST',
-    url: '/v1/responses',
-    headers: injectHeaders,
-    payload: input.payload,
+  // Fastify's inject() only resolves after the complete response body is available.
+  // The WebSocket fallback must use the live listener so SSE frames can reach the
+  // Codex client before the upstream response has completed.
+  const requestBody = JSON.stringify(input.payload);
+  delete headers['content-length'];
+  delete headers['transfer-encoding'];
+  headers['content-type'] = 'application/json';
+  headers['content-length'] = String(Buffer.byteLength(requestBody));
+
+  const address = input.app.server.address();
+  if (!address) {
+    throw new Error('HTTP responses fallback requires an active Fastify listener');
+  }
+  const requestOptions: RequestOptions = typeof address === 'string'
+    ? { socketPath: address, path: '/v1/responses', method: 'POST', headers }
+    : {
+        host: address.address === '::' ? '127.0.0.1' : address.address,
+        port: address.port,
+        path: '/v1/responses',
+        method: 'POST',
+        headers,
+      };
+
+  return await new Promise<unknown[] | null>((resolve, reject) => {
+    const downstreamRequest = createHttpRequest(requestOptions, (response) => {
+      const bufferedBodyChunks: Buffer[] = [];
+      const statusCode = response.statusCode || 502;
+      const statusMessage = response.statusMessage || 'Upstream error';
+      const contentType = String(response.headers['content-type'] || '').toLowerCase();
+      const forwardedPayloads: unknown[] = [];
+      let sseBuffer = '';
+      let sawTerminalPayload = false;
+
+      const forwardSseEvents = (source: string) => {
+        const pulled = protocolAdapters.responses.pullSseEvents(source);
+        sseBuffer = pulled.rest;
+        for (const event of pulled.events) {
+          if (event.data === '[DONE]') continue;
+          try {
+            const payload = JSON.parse(event.data);
+            forwardedPayloads.push(payload);
+            if (protocolAdapters.responses.websocket.isTerminalPayload(payload)) {
+              sawTerminalPayload = true;
+            }
+            if (input.socket.readyState === WebSocket.OPEN) {
+              input.socket.send(JSON.stringify(payload));
+            }
+          } catch {
+            // The HTTP surface already normalizes valid upstream SSE frames.
+          }
+        }
+      };
+
+      response.on('data', (chunk: Buffer) => {
+        if (statusCode >= 200 && statusCode < 300 && contentType.includes('text/event-stream')) {
+          forwardSseEvents(sseBuffer + chunk.toString('utf8'));
+          return;
+        }
+        bufferedBodyChunks.push(chunk);
+      });
+      response.once('error', reject);
+      response.once('end', () => {
+        const body = Buffer.concat(bufferedBodyChunks).toString('utf8');
+        if (statusCode < 200 || statusCode >= 300) {
+          let errorPayload: unknown = null;
+          try {
+            errorPayload = JSON.parse(body);
+          } catch {
+            // Keep the standardized error when the internal surface returned text.
+          }
+          writeResponsesWebsocketError(input.socket, statusCode, statusMessage, errorPayload);
+          resolve(null);
+          return;
+        }
+        if (!contentType.includes('text/event-stream')) {
+          try {
+            const payload = JSON.parse(body);
+            const output = protocolAdapters.responses.websocket.collectOutput([payload]);
+            if (input.socket.readyState === WebSocket.OPEN) input.socket.send(JSON.stringify(payload));
+            resolve(output);
+          } catch {
+            writeResponsesWebsocketError(input.socket, 502, 'Unexpected non-JSON websocket proxy response');
+            resolve(null);
+          }
+          return;
+        }
+        if (sseBuffer.trim()) forwardSseEvents(`${sseBuffer}\n\n`);
+        if (!sawTerminalPayload) {
+          writeResponsesWebsocketError(input.socket, 408, 'stream closed before response.completed');
+        }
+        resolve(protocolAdapters.responses.websocket.collectOutput(forwardedPayloads));
+      });
+    });
+    downstreamRequest.once('error', reject);
+    downstreamRequest.end(requestBody);
   });
-
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    let payload: unknown = null;
-    try {
-      payload = JSON.parse(response.body);
-    } catch {
-      payload = null;
-    }
-    writeResponsesWebsocketError(
-      input.socket,
-      response.statusCode,
-      response.statusMessage || 'Upstream error',
-      payload,
-    );
-    return null;
-  }
-
-  const contentType = String(response.headers['content-type'] || '').toLowerCase();
-  if (!contentType.includes('text/event-stream')) {
-    try {
-      const payload = JSON.parse(response.body);
-      const output = protocolAdapters.responses.websocket.collectOutput([payload]);
-      input.socket.send(JSON.stringify(payload));
-      return output;
-    } catch {
-      writeResponsesWebsocketError(input.socket, 502, 'Unexpected non-JSON websocket proxy response');
-      return null;
-    }
-  }
-
-  const pulled = protocolAdapters.responses.pullSseEvents(response.body);
-  const forwardedPayloads: unknown[] = [];
-  let sawTerminalPayload = false;
-  for (const event of pulled.events) {
-    if (event.data === '[DONE]') continue;
-    try {
-      const payload = JSON.parse(event.data);
-      forwardedPayloads.push(payload);
-      if (protocolAdapters.responses.websocket.isTerminalPayload(payload)) {
-        sawTerminalPayload = true;
-      }
-      input.socket.send(JSON.stringify(payload));
-    } catch {
-      // Ignore malformed SSE frames; the HTTP route already normalizes them.
-    }
-  }
-  if (!sawTerminalPayload) {
-    writeResponsesWebsocketError(input.socket, 408, 'stream closed before response.completed');
-  }
-  return protocolAdapters.responses.websocket.collectOutput(forwardedPayloads);
 }
 
 function buildInjectHeaders(request: IncomingMessage): Record<string, string | string[]> {

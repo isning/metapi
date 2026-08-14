@@ -597,7 +597,23 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
     });
   }
 
-  return toolCalls;
+  if (toolCalls.length > 0) return toolCalls;
+
+  // Legacy Chat Completions function_call has no call id. Keep its identity
+  // stable through normalization so downstream protocol adapters can emit a
+  // valid Responses call_id and pair later tool output with it.
+  const legacyFunctionCall = isRecord((message as any).function_call)
+    ? (message as any).function_call
+    : null;
+  const name = typeof legacyFunctionCall?.name === 'string'
+    ? legacyFunctionCall.name.trim()
+    : '';
+  if (!name) return [];
+  return [{
+    id: 'call_legacy_function_0',
+    name,
+    arguments: stringifyUnknownValue(legacyFunctionCall?.arguments),
+  }];
 }
 
 function collectToolCallsFromClaudeContent(content: unknown): Array<{ id: string; name: string; arguments: string }> {
@@ -1495,9 +1511,16 @@ export function normalizeUpstreamStreamEvent(
       ? ''
       : rawContentDelta;
 
+    const legacyFunctionCall = isRecord((delta as any).function_call)
+      ? (delta as any).function_call
+      : null;
     const rawToolCalls = Array.isArray((delta as any).tool_calls)
       ? ((delta as any).tool_calls as unknown[])
-      : [];
+      : (legacyFunctionCall ? [{
+        index: 0,
+        id: 'call_legacy_function_0',
+        function: legacyFunctionCall,
+      }] : []);
     const toolCallDeltas = rawToolCalls
       .map((item, itemIndex) => {
         if (!isRecord(item)) return null;

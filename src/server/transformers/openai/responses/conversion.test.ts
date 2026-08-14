@@ -78,6 +78,39 @@ describe('responses conversion single source of truth', () => {
     ]);
   });
 
+  it('drops content-less messages without a Codex tool container before they reach strict Responses providers', () => {
+    const result = sanitizeResponsesBodyForProxy({
+      input: [
+        { type: 'message', role: 'user' },
+        { type: 'message', role: 'user', content: 'hello' },
+      ],
+    }, 'gpt-5-codex', true);
+
+    expect(result.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('"role":"user"}');
+  });
+
+  it('preserves Codex additional_tools input for the Codex compatibility pass', () => {
+    const exec = { type: 'custom', name: 'exec', description: 'Run JavaScript.' };
+    const result = sanitizeResponsesBodyForProxy({
+      input: [
+        { type: 'additional_tools', role: 'developer', tools: [exec] },
+        { type: 'message', role: 'user', content: 'hello' },
+      ],
+    }, 'gpt-5-codex', true);
+
+    expect(result.input).toEqual([
+      { type: 'additional_tools', role: 'developer', tools: [exec] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+
   it('falls back to non-empty text and image sources when earlier compatibility fields are blank', () => {
     const normalized = normalizeResponsesInputForCompatibility([
       {
@@ -1191,6 +1224,29 @@ describe('convertOpenAiBodyToResponsesBody', () => {
 });
 
 describe('convertResponsesBodyToOpenAiBody', () => {
+  it('never turns Codex additional_tools input into a Chat Completions message', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5.6-terra',
+        input: [
+          {
+            type: 'additional_tools',
+            role: 'developer',
+            tools: [{ type: 'custom', name: 'exec', format: { type: 'grammar', syntax: 'lark' } }],
+          },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        ],
+      },
+      'gpt-5.6-terra',
+      true,
+    );
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages?.[0]).toMatchObject({ role: 'user' });
+    expect(JSON.stringify(result.messages)).not.toContain('additional_tools');
+    expect(JSON.stringify(result.messages)).not.toContain('exec');
+  });
+
   it('maps Responses input_file blocks back into OpenAI chat file blocks', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {

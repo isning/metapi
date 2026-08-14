@@ -2153,6 +2153,51 @@ describe('responses websocket transport', () => {
     ]);
   });
 
+  it('relays HTTP fallback SSE frames before the upstream stream closes', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    fetchMock.mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({
+      start(streamController) {
+        controller = streamController;
+        streamController.enqueue(encoder.encode(
+          'event: response.created\n'
+          + 'data: {"type":"response.created","response":{"id":"resp_http_stream","model":"gpt-5.4","status":"in_progress","output":[]}}\n\n',
+        ));
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const createdPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.created' && message?.response?.id === 'resp_http_stream',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    await expect(createdPromise).resolves.toMatchObject({ type: 'response.created' });
+
+    const completedPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_stream',
+    );
+    controller.enqueue(encoder.encode(
+      'event: response.completed\n'
+      + 'data: {"type":"response.completed","response":{"id":"resp_http_stream","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+      + 'data: [DONE]\n\n',
+    ));
+    controller.close();
+    await expect(completedPromise).resolves.toMatchObject({ type: 'response.completed' });
+    socket.close();
+  });
+
   it('disables codex websocket incremental transport when the selected account marks websockets as disabled', async () => {
     const selectedChannel = createSelectedExecutionAttempt({
       extraConfig: {

@@ -146,6 +146,7 @@ describe('proxy debug trace relay capture', () => {
     expect(routeRuntimeSummary).toMatchObject({
       downstreamFormat: 'openai/chat',
       stickySessionKey: 'key:1|codex|openai.chat_completions|debug-trace-model|trace-session-1',
+      upstreamTransport: 'http',
     });
     const candidates = runtimeTrace.protocol?.endpointCandidates || [];
     expect(candidates).toEqual(expect.arrayContaining(['responses', 'chat']));
@@ -252,5 +253,37 @@ describe('proxy debug trace relay capture', () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(await harness.db.select().from(harness.schema.proxyDebugTraces).all()).toEqual([]);
     expect(await harness.db.select().from(harness.schema.proxyDebugAttempts).all()).toEqual([]);
+  });
+
+  it('keeps each failed endpoint error attached to its own debug attempt', async () => {
+    const { managedKey } = await harness.seedRoute({ model: 'debug-final-error-model' });
+    config.proxyDebugTraceEnabled = true;
+    config.proxyDebugCaptureBodies = true;
+    harness.upstream.add({
+      method: 'POST',
+      path: '/v1/responses',
+      respond: { status: 404, json: { error: { message: 'responses unavailable' } } },
+      once: true,
+    }).add({
+      method: 'POST',
+      path: '/v1/chat/completions',
+      respond: { status: 404, json: { error: { message: 'chat unavailable' } } },
+      once: true,
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-api-key': managedKey.key, originator: 'codex_cli_rs' },
+      payload: { model: 'debug-final-error-model', messages: [{ role: 'user', content: 'capture failure' }] },
+    });
+
+    expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    const attempts = await harness.db.select().from(harness.schema.proxyDebugAttempts).all();
+    const responsesAttempt = attempts.find((entry: typeof attempts[number]) => entry.endpoint === 'responses');
+    const chatAttempt = attempts.find((entry: typeof attempts[number]) => entry.endpoint === 'chat');
+    expect(responsesAttempt?.rawErrorText).toContain('responses unavailable');
+    expect(responsesAttempt?.rawErrorText).not.toContain('/v1/chat/completions');
+    expect(chatAttempt?.rawErrorText).toContain('chat unavailable');
   });
 });

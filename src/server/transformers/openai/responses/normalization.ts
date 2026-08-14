@@ -217,6 +217,19 @@ function sanitizeResponsesInputToolLifecycle(items: unknown[]): unknown[] {
     }
 
     const type = asTrimmedString(item.type).toLowerCase();
+    // Codex carries tool declarations in an input extension item. Leave it
+    // intact for the Codex compatibility pass instead of coercing it into a
+    // message below.
+    if (type === 'additional_tools') {
+      sanitized.push(item);
+      continue;
+    }
+    // A content-less message is invalid for strict Responses providers, except
+    // for Codex's legacy tool declaration container. The latter is lifted to
+    // top-level tools by the Codex compatibility pass.
+    if (type === 'message' && item.content === undefined && !Array.isArray(item.tools)) {
+      continue;
+    }
     if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type)) {
       const normalized = normalizeResponsesToolLifecycleItem(item);
       if (!normalized) continue;
@@ -288,6 +301,7 @@ export function normalizeResponsesInputForCompatibility(input: unknown): unknown
         return normalized ? [toResponsesInputMessageFromText(normalized)] : [];
       }
       if (!isRecord(item)) return [item];
+      if (asTrimmedString(item.type).toLowerCase() === 'additional_tools') return [item];
       return [normalizeResponsesMessageItem(item)];
     });
     return sanitizeResponsesInputToolLifecycle(normalized);

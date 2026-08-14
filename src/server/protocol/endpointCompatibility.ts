@@ -344,3 +344,14 @@ export function isEndpointDowngradeError(status: number, upstreamErrorText?: str
     )
   );
 }
+
+export function isTransientUpstreamCapacityError(upstreamErrorText?: string | null): boolean {
+  const parsed = parseEndpointErrorShape(upstreamErrorText);
+  const combined = `${parsed.code}\n${parsed.type}\n${parsed.message}\n${parsed.text}`;
+  return (
+    parsed.code === 'get_channel_failed'
+    || parsed.code === 'rate_limit_exceeded'
+    || parsed.type === 'rate_limit_error'
+    || /(?:负载.*(?:达到|已达).*(?:上限|容量)|capacity\s*(?:is\s*)?(?:full|exceeded)|overload(?:ed)?|rate\s*limit|too\s*many\s*requests)/i.test(combined)
+  );
+}

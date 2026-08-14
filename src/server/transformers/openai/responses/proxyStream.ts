@@ -28,6 +28,7 @@ type ResponsesProxyStreamResult = {
 type ResponsesProxyStreamSessionInput = {
   modelName: string;
   successfulUpstreamPath: string;
+  streamOutputOwnership?: 'converted' | 'passthrough';
   strictTerminalEvents?: boolean;
   getUsage: () => {
     promptTokens: number;
@@ -40,7 +41,7 @@ type ResponsesProxyStreamSessionInput = {
   onParsedPayload?: (payload: unknown) => void;
   onMeaningfulOutput?: () => void;
   writeLines: (lines: string[]) => void;
-  writeRaw: (chunk: string) => void;
+  writeRaw: (chunk: string | Uint8Array) => void;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,6 +90,7 @@ function getResponsesStreamFailureMessage(payload: unknown, fallback = 'upstream
 }
 
 export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSessionInput) {
+  const passthroughNativeResponses = input.streamOutputOwnership === 'passthrough';
   const streamContext = openAiResponsesStream.createContext(input.modelName);
   const responsesState = createOpenAiResponsesAggregateState(input.modelName);
   const requiresExplicitTerminalEvent = input.strictTerminalEvents
@@ -100,6 +102,15 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
   let terminalResult: ResponsesProxyStreamResult = {
     status: 'completed',
     errorMessage: null,
+  };
+
+  const markNativeMeaningfulOutput = (eventName: string, payloadType: string) => {
+    if (
+      eventName.startsWith('response.output_')
+      || payloadType.startsWith('response.output_')
+    ) {
+      markMeaningfulOutput();
+    }
   };
 
   const markMeaningfulOutput = () => {
@@ -136,6 +147,15 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
   };
 
   const closeOut = () => {
+    if (passthroughNativeResponses) {
+      if (!terminalEventSeen) {
+        terminalResult = {
+          status: 'failed',
+          errorMessage: 'stream closed before response.completed',
+        };
+      }
+      return;
+    }
     if (finalized) return;
     if (terminalEventSeen) {
       finalize();
@@ -179,6 +199,25 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       || payloadType === 'error'
       || payloadType === 'response.failed'
     );
+    if (passthroughNativeResponses) {
+      markNativeMeaningfulOutput(eventBlock.event, payloadType);
+      if (isFailureEvent) {
+        terminalEventSeen = true;
+        terminalResult = {
+          status: 'failed',
+          errorMessage: getResponsesStreamFailureMessage(parsedPayload),
+        };
+      } else if (
+        eventBlock.event === 'response.completed'
+        || payloadType === 'response.completed'
+        || eventBlock.event === 'response.incomplete'
+        || payloadType === 'response.incomplete'
+      ) {
+        terminalEventSeen = true;
+        complete();
+      }
+      return false;
+    }
     if (isFailureEvent) {
       fail(parsedPayload);
       return true;
@@ -294,8 +333,18 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         pullEvents: (buffer) => openAiResponsesStream.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
         onEof: closeOut,
+        onChunk: passthroughNativeResponses
+          ? (chunk) => input.writeRaw(Buffer.from(chunk))
+          : undefined,
         maxBufferBytes: config.proxyStreamMaxSseBufferBytes,
         onLimitExceeded: (message) => {
+          if (passthroughNativeResponses) {
+            terminalResult = {
+              status: 'failed',
+              errorMessage: message,
+            };
+            return;
+          }
           fail({
             type: 'response.failed',
             error: {
