@@ -88,6 +88,7 @@ import {
   Network,
   Pin,
   PinOff,
+  RefreshCcw,
   Trash2,
   Wallet,
 } from 'lucide-react';
@@ -582,6 +583,8 @@ export default function Sites() {
   const [probeModel, setProbeModel] = useState('');
   const [probeScope, setProbeScope] = useState<'single' | 'all'>('single');
   const [probeSaving, setProbeSaving] = useState(false);
+  const [resettingEndpointHealth, setResettingEndpointHealth] = useState(false);
+  const [resettingEndpointId, setResettingEndpointId] = useState<number | null>(null);
   const [probeLatencyThreshold, setProbeLatencyThreshold] = useState('0');
   const [probing, setProbing] = useState(false);
   type ProbeLogEntry = { time: string; text: string; color?: string };
@@ -892,6 +895,43 @@ export default function Sites() {
       toast.error(e.message || tr('pages.accounts.saveFailed'));
     } finally {
       setProbeSaving(false);
+    }
+  };
+
+  const handleResetApiEndpointHealth = async () => {
+    if (!editor || editor.mode !== 'edit') return;
+    setResettingEndpointHealth(true);
+    try {
+      await api.resetSiteApiEndpointHealth(editor.editingSiteId);
+      setForm((previous) => ({
+        ...previous,
+        apiEndpoints: previous.apiEndpoints.map((endpoint) => ({
+          ...endpoint,
+          cooldownUntil: null,
+          lastFailureReason: null,
+        })),
+      }));
+      toast.success(tr('pages.sites.apiEndpointHealthReset'));
+    } catch (error: any) {
+      toast.error(error?.message || tr('pages.sites.apiEndpointHealthResetFailed'));
+    } finally {
+      setResettingEndpointHealth(false);
+    }
+  };
+
+  const handleResetSingleApiEndpointHealth = async (index: number) => {
+    if (!editor || editor.mode !== 'edit') return;
+    const endpoint = form.apiEndpoints[index];
+    if (!endpoint?.id) return;
+    setResettingEndpointId(endpoint.id);
+    try {
+      await api.resetSiteApiEndpointHealthById(editor.editingSiteId, endpoint.id);
+      updateApiEndpointRow(index, { cooldownUntil: null, lastFailureReason: null });
+      toast.success(tr('pages.sites.apiEndpointHealthReset'));
+    } catch (error: any) {
+      toast.error(error?.message || tr('pages.sites.apiEndpointHealthResetFailed'));
+    } finally {
+      setResettingEndpointId(null);
     }
   };
 
@@ -1761,13 +1801,28 @@ export default function Sites() {
             title={tr('pages.sites.apiRequest2')}
             description={tr('pages.sites.v1ModelApiKeyVerifyDefaultSites')}
             actions={(
-              <Button
-                variant="outline"
-                type="button"
-                onClick={addApiEndpointRow}
-              >
-                {tr('pages.sites.addApi')}
-              </Button>
+              <div className="flex items-center gap-2">
+                {editor?.mode === 'edit' && form.apiEndpoints.some((endpoint) => endpoint.cooldownUntil || endpoint.lastFailureReason) ? (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    type="button"
+                    title={tr('pages.sites.resetApiEndpointHealth')}
+                    aria-label={tr('pages.sites.resetApiEndpointHealth')}
+                    onClick={handleResetApiEndpointHealth}
+                    disabled={resettingEndpointHealth}
+                  >
+                    {resettingEndpointHealth ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={addApiEndpointRow}
+                >
+                  {tr('pages.sites.addApi')}
+                </Button>
+              </div>
             )}
           >
             {form.apiEndpoints.map((endpoint, index) => (
@@ -1809,6 +1864,20 @@ export default function Sites() {
                     <span>{tr('pages.sites.order')}{index + 1}</span>
                     {endpoint.cooldownUntil ? <span>{tr('pages.sites.coolingDownUntil')} {formatDateTimeLocal(endpoint.cooldownUntil)}</span> : null}
                     {endpoint.lastFailureReason ? <span>{tr('pages.sites.failed')} {endpoint.lastFailureReason}</span> : null}
+                    {editor?.mode === 'edit' && endpoint.id && (endpoint.cooldownUntil || endpoint.lastFailureReason) ? (
+                      <Button
+                        variant="ghostMuted"
+                        size="icon"
+                        className="size-6"
+                        type="button"
+                        title={tr('pages.sites.resetApiEndpointHealth')}
+                        aria-label={tr('pages.sites.resetApiEndpointHealth')}
+                        onClick={() => handleResetSingleApiEndpointHealth(index)}
+                        disabled={resettingEndpointId === endpoint.id}
+                      >
+                        {resettingEndpointId === endpoint.id ? <LoaderCircle className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
+                      </Button>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="ghostMuted" size="sm"

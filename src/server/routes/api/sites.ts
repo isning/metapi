@@ -992,6 +992,41 @@ export async function sitesRoutes(app: FastifyInstance) {
     return await loadSiteWithApiEndpoints(id);
   });
 
+  app.post<{ Params: { id: string } }>('/api/sites/:id/api-endpoints/reset-health', async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: 'Invalid site id.' });
+    const site = await db.select({ id: schema.sites.id }).from(schema.sites)
+      .where(eq(schema.sites.id, id)).get();
+    if (!site) return reply.code(404).send({ error: 'Site not found.' });
+
+    const result = await db.update(schema.siteApiEndpoints).set({
+      cooldownUntil: null,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.siteApiEndpoints.siteId, id)).run();
+    return { success: true, cleared: result.changes || 0 };
+  });
+
+  app.post<{ Params: { id: string; endpointId: string } }>('/api/sites/:id/api-endpoints/:endpointId/reset-health', async (request, reply) => {
+    const siteId = Number(request.params.id);
+    const endpointId = Number(request.params.endpointId);
+    if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(endpointId) || endpointId <= 0) {
+      return reply.code(400).send({ error: 'Invalid site or endpoint id.' });
+    }
+    const endpoint = await db.select({ id: schema.siteApiEndpoints.id }).from(schema.siteApiEndpoints)
+      .where(and(eq(schema.siteApiEndpoints.id, endpointId), eq(schema.siteApiEndpoints.siteId, siteId))).get();
+    if (!endpoint) return reply.code(404).send({ error: 'API endpoint not found.' });
+
+    await db.update(schema.siteApiEndpoints).set({
+      cooldownUntil: null,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.siteApiEndpoints.id, endpointId)).run();
+    return { success: true, cleared: 1 };
+  });
+
   // Delete a site
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async (request) => {
     const id = parseInt(request.params.id);

@@ -232,4 +232,52 @@ describe('sites api endpoints', () => {
       }),
     ]);
   });
+
+  it('clears API endpoint cooldown and failure metadata without replacing endpoint configuration', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'recoverable-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api.example.com',
+      enabled: true,
+      cooldownUntil: '2099-01-01T00:00:00.000Z',
+      lastFailedAt: '2026-08-14T00:00:00.000Z',
+      lastFailureReason: 'HTTP 502',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/sites/${site.id}/api-endpoints/reset-health`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ success: true, cleared: 1 });
+    const restored = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id)).get();
+    expect(restored).toMatchObject({
+      url: 'https://api.example.com',
+      enabled: true,
+      cooldownUntil: null,
+      lastFailedAt: null,
+      lastFailureReason: null,
+    });
+
+    await db.update(schema.siteApiEndpoints).set({
+      cooldownUntil: '2099-01-01T00:00:00.000Z',
+      lastFailureReason: 'HTTP 503',
+    }).where(eq(schema.siteApiEndpoints.id, endpoint.id)).run();
+    const singleResponse = await app.inject({
+      method: 'POST',
+      url: `/api/sites/${site.id}/api-endpoints/${endpoint.id}/reset-health`,
+    });
+    expect(singleResponse.statusCode).toBe(200);
+    expect((await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id)).get())).toMatchObject({
+      cooldownUntil: null,
+      lastFailureReason: null,
+    });
+  });
 });
