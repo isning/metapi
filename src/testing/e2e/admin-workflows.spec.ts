@@ -49,7 +49,26 @@ async function seedManualModelRoute(adminApi: AdminApi) {
       && route.presentation?.displayName === modelName
     ));
   }).toBe(true);
-  await adminApi.getJson('/api/models/marketplace?refresh=1&includePricing=1');
+  await expect.poll(async () => {
+    const marketplace = await adminApi.getJson<{
+      models?: Array<{ name?: string }>;
+      items?: Array<{ name?: string }>;
+    }>(`/api/models/marketplace?q=${encodeURIComponent(modelName)}&includePricing=1`);
+    const models = marketplace.models || marketplace.items || [];
+    return models.some((model) => model.name === modelName);
+  }).toBe(true);
+  await expect.poll(async () => {
+    const response = await adminApi.getJson<{
+      flow?: {
+        matched?: boolean;
+        compiledRuntime?: {
+          executionAttempts?: unknown[];
+        } | null;
+      };
+    }>(`/api/models/${encodeURIComponent(modelName)}/route-flow`);
+    return response.flow?.matched === true
+      && (response.flow.compiledRuntime?.executionAttempts?.length || 0) > 0;
+  }).toBe(true);
 
   return { modelName };
 }
@@ -122,6 +141,8 @@ test('renders seeded route graph data in the graph and export json modes', async
   const { modelName } = await seedManualModelRoute(adminApi);
 
   await adminPage.gotoAdminPage('/routes');
+  await adminPage.getByRole('tab', { name: /Public route groups|公开路由组/i }).click();
+  await adminPage.getByPlaceholder(/Search route groups|搜索路由组/i).fill(modelName);
   await expect(adminPage.getByText(modelName).first()).toBeVisible();
 
   await adminPage.getByRole('tab', { name: /^Route Graph$|^路由图$/i }).click();

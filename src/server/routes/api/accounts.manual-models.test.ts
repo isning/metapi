@@ -56,7 +56,7 @@ describe('accounts manual models endpoint', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'test-token',
+      credential: 'test-token',
     }).returning().get();
 
     const response = await app.inject({
@@ -74,11 +74,63 @@ describe('accounts manual models endpoint', () => {
     const models = await db.select().from(schema.modelAvailability).where(
       eq(schema.modelAvailability.accountId, account.id)
     ).all();
-    
+
     expect(models).toHaveLength(2);
     expect(models.map(m => m.modelName).sort()).toEqual(['claude-3-manual', 'gpt-4-manual']);
     expect(models[0]?.isManual).toBe(true);
     expect(models[1]?.isManual).toBe(true);
+  });
+
+  it('stores manual models on the unique model key for API Key accounts', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'API Key Site',
+      url: 'https://apikey.example.com',
+      platform: 'openai',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'opaque-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: { models: ['gpt-api-key-manual'] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      target: 'token',
+      tokenId: token.id,
+    });
+    expect(await db.select().from(schema.modelAvailability).all()).toEqual([]);
+    expect(await db.select().from(schema.tokenModelAvailability).all()).toEqual([
+      expect.objectContaining({
+        tokenId: token.id,
+        modelName: 'gpt-api-key-manual',
+        available: true,
+        isManual: true,
+      }),
+    ]);
+    expect(await db.select().from(schema.runtimeExecutionTargets).all()).toEqual([
+      expect.objectContaining({
+        accountId: account.id,
+        tokenId: token.id,
+        upstreamModelName: 'gpt-api-key-manual',
+        enabled: true,
+      }),
+    ]);
   });
 
   it('returns account token metadata with account model list for pricing scope selection', async () => {
@@ -90,7 +142,7 @@ describe('accounts manual models endpoint', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'test-token',
+      credential: 'test-token',
     }).returning().get();
 
     await db.insert(schema.accountTokens).values({
@@ -186,7 +238,7 @@ describe('accounts manual models endpoint', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'test-token',
+      credential: 'test-token',
     }).returning().get();
 
     // Already-synced model that is NOT manual
@@ -209,7 +261,7 @@ describe('accounts manual models endpoint', () => {
     const models = await db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))
       .all();
-    
+
     expect(models).toHaveLength(2);
     const existing = models.find(m => m.modelName === 'gpt-existing');
     const newModel = models.find(m => m.modelName === 'gpt-new');
@@ -239,7 +291,7 @@ describe('accounts manual models endpoint', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'test-token',
+      credential: 'test-token',
     }).returning().get();
 
     const response = await app.inject({
@@ -262,7 +314,7 @@ describe('accounts manual models endpoint', () => {
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'test-token',
+      credential: 'test-token',
     }).returning().get();
 
     const response = await app.inject({
@@ -287,7 +339,7 @@ describe('accounts manual models endpoint', () => {
     }).returning().get();
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      accessToken: 'session-token',
+      credential: 'session-token',
     }).returning().get();
     const [firstToken, secondToken] = await db.insert(schema.accountTokens).values([
       { accountId: account.id, name: 'first', token: 'sk-first', enabled: true, isDefault: true },

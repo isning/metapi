@@ -87,7 +87,9 @@ function installRuntimeIssueCollector(page: Page): PageRuntimeIssue[] {
   const issues: PageRuntimeIssue[] = [];
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
-    issues.push({ kind: 'console.error', message: message.text() });
+    const location = message.location();
+    const source = location.url ? ` (${location.url})` : '';
+    issues.push({ kind: 'console.error', message: `${message.text()}${source}` });
   });
   page.on('pageerror', (error) => {
     issues.push({ kind: 'pageerror', message: error.message });

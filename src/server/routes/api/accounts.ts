@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { db, schema, runtimeDbDialect } from "../../db/index.js";
+import { db, schema } from "../../db/index.js";
 import { insertAndGetById } from "../../db/insertHelpers.js";
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { refreshBalance } from "../../services/balanceService.js";
@@ -62,6 +62,7 @@ import {
   buildPricedModelRows,
   resolveAccountPricingToken,
 } from "../../services/accountModelCostSummaryService.js";
+import { saveManualModelsForAccount } from "../../services/manualModelAvailabilityService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1978,76 +1979,10 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       try {
-        await db.transaction(async (tx) => {
-          const checkedAt = new Date().toISOString();
-          for (const modelName of normalizedModels) {
-            if (runtimeDbDialect === "mysql") {
-              const existing = await tx
-                .select()
-                .from(schema.modelAvailability)
-                .where(
-                  and(
-                    eq(schema.modelAvailability.accountId, accountId),
-                    eq(schema.modelAvailability.modelName, modelName),
-                  ),
-                )
-                .get();
-
-              if (existing) {
-                await tx
-                  .update(schema.modelAvailability)
-                  .set({
-                    available: true,
-                    latencyMs: null,
-                    isManual: true,
-                    checkedAt,
-                  })
-                  .where(eq(schema.modelAvailability.id, existing.id))
-                  .run();
-              } else {
-                await tx
-                  .insert(schema.modelAvailability)
-                  .values({
-                    accountId,
-                    modelName,
-                    available: true,
-                    isManual: true,
-                    latencyMs: null,
-                    checkedAt,
-                  })
-                  .run();
-              }
-            } else {
-              // SQLite / PostgreSQL path
-              await (
-                tx.insert(schema.modelAvailability).values({
-                  accountId,
-                  modelName,
-                  available: true,
-                  isManual: true,
-                  latencyMs: null,
-                  checkedAt,
-                }) as any
-              )
-                .onConflictDoUpdate({
-                  target: [
-                    schema.modelAvailability.accountId,
-                    schema.modelAvailability.modelName,
-                  ],
-                  set: {
-                    available: true,
-                    isManual: true,
-                    latencyMs: null,
-                    checkedAt,
-                  },
-                })
-                .run();
-            }
-          }
-        });
+        const saved = await saveManualModelsForAccount(account, normalizedModels);
         await rebuildRoutesBestEffort();
 
-        return { success: true };
+        return { success: true, ...saved };
       } catch (err: any) {
         return reply
           .code(500)
