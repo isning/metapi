@@ -31,6 +31,18 @@ describe('failureReasonService', () => {
     expect(result.category).toBe('auth');
   });
 
+  it('keeps generic 401 and network failure detail out of token-expired classification', () => {
+    expect(classifyFailureReason({
+      message: 'Unauthorized',
+      status: 'failed',
+      httpStatus: 401,
+    })).toMatchObject({ code: 'unknown_error', category: 'unknown' });
+    expect(classifyFailureReason({
+      message: 'fetch failed: connect ECONNREFUSED 203.0.113.1:443',
+      status: 'failed',
+    })).toMatchObject({ code: 'unknown_error', category: 'unknown' });
+  });
+
   it('classifies already checked in as state info', () => {
     const result = classifyFailureReason({
       message: '今天已经签到过啦',

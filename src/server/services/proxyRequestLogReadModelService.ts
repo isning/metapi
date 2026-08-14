@@ -27,6 +27,7 @@ export type ProxyRequestAttemptJoinedRow = {
   proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
   accounts: { username?: string | null } | null;
   sites: { id?: number | null; name?: string | null; url?: string | null } | null;
+  account_tokens: { id?: number | null; name?: string | null; tokenGroup?: string | null } | null;
   downstream_api_keys: {
     id?: number | null;
     name?: string | null;
@@ -102,6 +103,11 @@ function attemptJoinQuery(fields: Record<string, unknown>) {
     proxy_logs: fields,
     accounts: { username: schema.accounts.username },
     sites: { id: schema.sites.id, name: schema.sites.name, url: schema.sites.url },
+    account_tokens: {
+      id: schema.accountTokens.id,
+      name: schema.accountTokens.name,
+      tokenGroup: schema.accountTokens.tokenGroup,
+    },
     downstream_api_keys: {
       id: schema.downstreamApiKeys.id,
       name: schema.downstreamApiKeys.name,
@@ -112,6 +118,8 @@ function attemptJoinQuery(fields: Record<string, unknown>) {
     .from(schema.proxyLogs)
     .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
     .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.runtimeExecutionTargets, eq(schema.proxyLogs.executionTargetId, schema.runtimeExecutionTargets.id))
+    .leftJoin(schema.accountTokens, eq(schema.runtimeExecutionTargets.tokenId, schema.accountTokens.id))
     .leftJoin(schema.downstreamApiKeys, eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id));
 }
 

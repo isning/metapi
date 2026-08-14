@@ -354,6 +354,21 @@ describe("stats proxy logs routes", () => {
     const runtimeEndpointId = "endpoint:gpt-5";
     const executionAttemptId = "attempt:gpt-5:primary";
     const requestId = "request:proxy-log-detail";
+    await db
+      .insert(schema.runtimeExecutionTargets)
+      .values({
+        id: executionTargetId,
+        executionKey: "detail:target:gpt-5",
+        siteId: site.id,
+        accountId: account.id,
+        tokenId: targetToken.id,
+        upstreamModelName: "gpt-5",
+        normalizedModelName: "gpt-5",
+        enabled: true,
+        discovered: false,
+        source: "test",
+      })
+      .run();
     const logFixture = {
         routeEntrypointId,
         runtimeEndpointId: runtimeEndpointId,
@@ -579,6 +594,10 @@ describe("stats proxy logs routes", () => {
     const detailAttempt = body.attempts[0]!;
     expect(detailAttempt.siteName).toBe("detail-site");
     expect(detailAttempt.username).toBe("detail-user");
+    expect(detailAttempt.tokenId).toBe(targetToken.id);
+    expect(detailAttempt.tokenName).toBe("mutated-token-name");
+    expect(detailAttempt.tokenGroup).toBe("mutated");
+    expect(JSON.stringify(detailAttempt)).not.toContain("sk-target-token");
     expect(detailAttempt.downstreamKeyName).toBe("detail-key");
     expect(detailAttempt.downstreamKeyGroupName).toBe("测试项目");
     expect(detailAttempt.downstreamKeyTags).toEqual(["回归", "日志"]);

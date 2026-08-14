@@ -151,7 +151,15 @@ export async function captureSurfaceProxyDebugSuccessResponseBody(
   const isStream = ctx.request.runtime?.stream === true
     || requestBody?.stream === true
     || contentType.includes('text/event-stream');
-  if (isStream) return null;
+  if (isStream) {
+    return {
+      stream: true,
+      streamChunksCaptured: session.options.captureStreamChunks,
+      note: session.options.captureStreamChunks
+        ? 'stream frames are captured after relay completion'
+        : 'stream frames are disabled; enable stream chunk capture to retain upstream frames',
+    };
+  }
 
   try {
     const rawText = await readRuntimeResponseText(ctx.response.clone());

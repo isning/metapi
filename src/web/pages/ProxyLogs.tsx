@@ -106,6 +106,9 @@ type ProxyLogRenderItem = ProxyRequestLog & {
   username: string | null;
   siteName: string | null;
   siteUrl: string | null;
+  tokenId: number | null;
+  tokenName: string | null;
+  tokenGroup: string | null;
   downstreamKeyId: number | null;
   downstreamKeyName: string | null;
   downstreamKeyGroupName: string | null;
@@ -139,6 +142,9 @@ function presentProxyRequestLog(request: ProxyRequestLog | ProxyRequestLogDetail
     username: finalAttempt?.username ?? null,
     siteName: finalAttempt?.siteName ?? null,
     siteUrl: finalAttempt?.siteUrl ?? null,
+    tokenId: finalAttempt?.tokenId ?? null,
+    tokenName: finalAttempt?.tokenName ?? null,
+    tokenGroup: finalAttempt?.tokenGroup ?? null,
     downstreamKeyId: finalAttempt?.downstreamKeyId ?? null,
     downstreamKeyName: finalAttempt?.downstreamKeyName ?? null,
     downstreamKeyGroupName: finalAttempt?.downstreamKeyGroupName ?? null,
@@ -1491,6 +1497,9 @@ function DebugTraceRouteRuntimeSnapshotFlow({
   const downstreamFormat = typeof routeRuntimeSummary?.downstreamFormat === "string"
     ? routeRuntimeSummary.downstreamFormat
     : null;
+  const upstreamTransport = typeof routeRuntimeSummary?.upstreamTransport === "string"
+    ? routeRuntimeSummary.upstreamTransport
+    : null;
   const stickyHitExecutionAttemptId = trace.stickyHitExecutionAttemptId || null;
   const apiAttemptPlan = asDebugRecord(routeRuntimeSummary?.apiAttemptPlan);
   const apiAttemptCount = Array.isArray(apiAttemptPlan?.attempts)
@@ -1573,6 +1582,12 @@ function DebugTraceRouteRuntimeSnapshotFlow({
           title={trace.finalUpstreamPath || "-"}
           meta={trace.finalHttpStatus ? `HTTP ${trace.finalHttpStatus}` : tr('pages.proxyLogs.notRecorded')}
         />
+      </div>
+
+      <div className="mt-3 proxy-trace-detail-grid">
+        <DetailField label={tr('pages.proxyLogs.upstreamTransport')}>
+          {upstreamTransport ? upstreamTransport.toUpperCase() : tr('pages.proxyLogs.notRecorded')}
+        </DetailField>
       </div>
 
       {runtimeCapabilityRequirement || capabilityDiagnostics.length > 0 ? (
@@ -3354,6 +3369,10 @@ export default function ProxyLogs() {
                           />
                         }
                       />
+                      <MobileField
+                        label={tr('pages.proxyLogs.credentialToken')}
+                        value={log.tokenName || log.tokenGroup || (log.tokenId != null ? `#${log.tokenId}` : '--')}
+                      />
                       {streamModeLabel ? (
                         <MobileField label={tr('pages.modelTester.mode')} value={streamModeLabel} />
                       ) : null}
@@ -3532,6 +3551,9 @@ export default function ProxyLogs() {
                             )}
                             siteName={log.siteName}
                           />
+                          <div className="text-xs text-muted-foreground">
+                            {tr('pages.proxyLogs.credentialToken')} {log.tokenName || log.tokenGroup || (log.tokenId != null ? `#${log.tokenId}` : '--')}
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             {renderProxyLogClientCell(detailLog)}
                           </div>

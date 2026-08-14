@@ -520,6 +520,9 @@ function mapProxyRequestAttempt(
     siteId: row.sites?.id || null,
     siteName: row.sites?.name || null,
     siteUrl: row.sites?.url || null,
+    tokenId: row.account_tokens?.id || null,
+    tokenName: row.account_tokens?.name || null,
+    tokenGroup: row.account_tokens?.tokenGroup || null,
     downstreamKeyId: row.downstream_api_keys?.id || null,
     downstreamKeyName: row.downstream_api_keys?.name || null,
     downstreamKeyGroupName: row.downstream_api_keys?.groupName || null,
@@ -826,6 +829,7 @@ export async function statsRoutes(app: FastifyInstance) {
             forcedExecutionAttemptId: forcedExecutionAttemptId || null,
             view: "full",
           });
+      reply.header('Cache-Control', 'no-store');
       return result.kind === "diagnostics"
         ? { success: true, diagnostics: result.diagnostics }
         : { success: true, flow: result.flow };

@@ -287,6 +287,7 @@ describe('/api/models/route-flow', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
     const body = response.json() as RouteFlowResponse;
     expect(body.success).toBe(true);
     expect(body.flow).toMatchObject({
