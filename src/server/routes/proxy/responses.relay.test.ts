@@ -532,10 +532,11 @@ describe('/v1/responses relay with scenario upstreams', () => {
     });
 
     expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      error: expect.objectContaining({
-        message: expect.stringContaining('responses upstream unavailable'),
-      }),
+    expect(response.json()).toEqual({
+      error: {
+        message: '所有执行尝试均不可用，请稍后重试',
+        type: 'upstream_error',
+      },
     });
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();

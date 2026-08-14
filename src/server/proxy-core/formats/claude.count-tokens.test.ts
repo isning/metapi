@@ -351,7 +351,7 @@ describe('claude count_tokens proxy route', () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({
       error: {
-        message: 'No available targets for this model',
+        message: '所有执行尝试均不可用，请稍后重试',
         type: 'upstream_error',
       },
     });

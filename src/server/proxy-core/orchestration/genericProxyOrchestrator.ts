@@ -1149,7 +1149,7 @@ export async function handleGenericSurfaceRequest(
             continue;
           }
           const outcome = failureStatus >= 500
-            ? finalizeExecutionAttemptsUnavailable()
+            ? finalizeExecutionAttemptsUnavailable(failureStatus)
             : failureOutcome;
           await finalizeDebugFailure(outcome.status, outcome.payload, null);
           return reply.code(outcome.status).send(outcome.payload);
@@ -1200,7 +1200,7 @@ export async function handleGenericSurfaceRequest(
           continue;
         }
         const outcome = status >= 500
-          ? finalizeExecutionAttemptsUnavailable()
+          ? finalizeExecutionAttemptsUnavailable(status)
           : failureOutcome;
         await finalizeDebugFailure(outcome.status, outcome.payload, null);
         return reply.code(outcome.status).send(outcome.payload);

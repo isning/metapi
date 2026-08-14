@@ -416,10 +416,11 @@ describe('OpenAI-compatible relay surfaces with scenario upstreams', () => {
     });
 
     expect(response.statusCode, response.body).toBe(502);
-    expect(response.json()).toMatchObject({
-      error: expect.objectContaining({
-        message: expect.stringContaining('embedding backend unavailable'),
-      }),
+    expect(response.json()).toEqual({
+      error: {
+        message: '所有执行尝试均不可用，请稍后重试',
+        type: 'upstream_error',
+      },
     });
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
