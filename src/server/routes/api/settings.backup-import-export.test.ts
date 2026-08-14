@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import { clearRouteGroupMemberTestData, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
@@ -254,6 +254,177 @@ describe('settings backup import/export api', () => {
     expect(JSON.parse(pricingReference?.value || '{}')).not.toHaveProperty('defaultReferenceMode');
     expect(JSON.parse(pricingReference?.value || '{}')).not.toHaveProperty('fallbackProfile');
     expect(dbUrl).toBeUndefined();
+  });
+
+  it('streams native gzip archives without requiring the client to expand the request body', async () => {
+    const payload = {
+      version: '3.0',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [
+          ...Array.from({ length: 256 }, (_, index) => ({
+            key: `streamed_backup_setting_${index}`,
+            value: 'x'.repeat(4_096),
+          })),
+        ],
+      },
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: {
+        ...app.adminHeaders(),
+        'content-type': 'application/gzip',
+      },
+      payload: gzipSync(JSON.stringify(payload)),
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      sections: { preferences: true },
+    });
+    const imported = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'streamed_backup_setting_255'))
+      .get();
+    expect(JSON.parse(imported?.value || 'null')).toHaveLength(4_096);
+  });
+
+  it('round-trips the native streamed accounts archive through every table-array path', async () => {
+    const exported = await app.inject({
+      method: 'GET',
+      url: '/api/settings/backup/export?type=accounts',
+      headers: app.adminHeaders(),
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: {
+        ...app.adminHeaders(),
+        'content-type': 'application/gzip',
+      },
+      payload: exported.rawPayload,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      sections: { accounts: true },
+    });
+  });
+
+  it('splits dense model availability rows below the database parameter budget', async () => {
+    const payload = {
+      version: '3.0',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'import-site', url: 'https://import-site.example.com', platform: 'new-api' }],
+        apiEndpointProfiles: Array.from({ length: 5 }, (_, index) => ({
+          id: index + 19,
+          siteId: 1,
+          profileKey: `import-profile-${index}`,
+          apiType: 'openai',
+          label: 'Import profile',
+        })),
+        // Canonical exports put bindings before accounts and tokens. The
+        // importer must defer this dependent table until both exist.
+        credentialEndpointBindings: Array.from({ length: 5 }, (_, index) => ({
+          id: index + 1,
+          siteId: 1,
+          accountId: 1,
+          credentialKey: 'account:1',
+          credentialKind: 'account',
+          apiEndpointProfileId: index + 19,
+        })),
+        accounts: [{ id: 1, siteId: 1, username: 'import-user', accessToken: 'import-access-token' }],
+        accountTokens: [{ id: 1, accountId: 1, name: 'import-token', token: 'import-token-value' }],
+        modelAvailability: Array.from({ length: 101 }, (_, index) => ({
+          id: index + 1,
+          accountId: 1,
+          modelName: `dense-model-${index}`,
+          available: true,
+          isManual: false,
+          latencyMs: 10,
+          checkedAt: '2026-08-14T00:00:00.000Z',
+        })),
+      },
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: {
+        ...app.adminHeaders(),
+        'content-type': 'application/gzip',
+      },
+      payload: gzipSync(JSON.stringify(payload)),
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(101);
+    expect(await db.select().from(schema.credentialEndpointBindings).all()).toHaveLength(5);
+  });
+
+  it('rolls back native rows already flushed while a later JSON token is malformed', async () => {
+    await db.insert(schema.sites).values({
+      name: 'existing-before-import',
+      url: 'https://existing-before-import.example.com',
+      platform: 'new-api',
+    }).run();
+    const payload = {
+      version: '3.0',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: Array.from({ length: 50 }, (_, index) => ({
+          id: index + 100,
+          name: `flushed-site-${index}`,
+          url: `https://flushed-site-${index}.example.com`,
+          platform: 'new-api',
+        })),
+      },
+    };
+    // Remove the closing objects after the 50th row. This reaches a batch
+    // flush before stream-json reports the malformed end of the document.
+    const malformed = JSON.stringify(payload).slice(0, -2);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: {
+        ...app.adminHeaders(),
+        'content-type': 'application/gzip',
+      },
+      payload: gzipSync(malformed),
+    });
+
+    expect(response.statusCode).toBe(400);
+    const sites = await db.select().from(schema.sites).all();
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ name: 'existing-before-import' });
+  });
+
+  it('rejects malformed gzip archives before touching backup state', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: {
+        ...app.adminHeaders(),
+        'content-type': 'application/gzip',
+      },
+      payload: Buffer.from('not a gzip archive'),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      success: false,
+      message: '压缩备份无效或解压后超过允许大小',
+    });
+    expect(await db.select().from(schema.settings).all()).toEqual([]);
   });
 
   it('imports full backups with current route runtime tables and rebuilds active graph when needed', async () => {

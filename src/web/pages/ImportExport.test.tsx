@@ -8,6 +8,7 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
   apiMock: {
     exportBackup: vi.fn(),
     importBackup: vi.fn(),
+    importCompressedBackup: vi.fn(),
     getBackupWebdavConfig: vi.fn(),
     saveBackupWebdavConfig: vi.fn(),
     exportBackupToWebdav: vi.fn(),
@@ -290,6 +291,11 @@ describe('ImportExport', () => {
       },
       warnings: ['跳过 ALL-API-Hub 账号 skipped-account：authType=none 不支持离线迁移'],
     });
+    apiMock.importCompressedBackup.mockResolvedValue({
+      allImported: true,
+      sections: { preferences: true },
+      appliedSettings: [],
+    });
   });
 
   afterEach(() => {
@@ -395,6 +401,57 @@ describe('ImportExport', () => {
       expect(toastMock.success).toHaveBeenCalledWith(
         expect.stringContaining('accounts.bookmarks、channelConfigs、tagStore'),
       );
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps a selected gzip archive compressed when submitting the previewed backup', async () => {
+    const PassThroughDecompressionStream = class {
+      readonly readable: ReadableStream<Uint8Array>;
+      readonly writable: WritableStream<Uint8Array>;
+
+      constructor(_format: string) {
+        const stream = new TransformStream<Uint8Array, Uint8Array>();
+        this.readable = stream.readable;
+        this.writable = stream.writable;
+      }
+    };
+    vi.stubGlobal('DecompressionStream', PassThroughDecompressionStream);
+    const archive = Object.assign(
+      new Blob([nativeMetapiPayload], { type: 'application/gzip' }),
+      { name: 'metapi-backup.json.gz' },
+    ) as File;
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ImportExport />
+          </MemoryRouter>,
+        );
+      });
+
+      const fileInput = root!.root.findAll((node) => node.type === 'input' && node.props.type === 'file')[0];
+      await act(async () => {
+        fileInput.props.onChange({ target: { files: [archive] } });
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      const importButton = root!.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('导入')
+      )).at(-1);
+      await act(async () => {
+        importButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.importCompressedBackup).toHaveBeenCalledWith(archive);
+      expect(apiMock.importBackup).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }

@@ -577,6 +577,7 @@ describe('settings and auth events', () => {
       payload: {
         proxyErrorKeywords: 'quota exceeded\nbad gateway,too many requests',
         proxyEmptyContentFailEnabled: true,
+        proxyExecutionAttemptsExhaustedMessage: 'All execution attempts are unavailable',
       },
     });
 
@@ -584,6 +585,7 @@ describe('settings and auth events', () => {
     const updated = updateResponse.json() as {
       proxyErrorKeywords?: string[];
       proxyEmptyContentFailEnabled?: boolean;
+      proxyExecutionAttemptsExhaustedMessage?: string;
     };
     expect(updated.proxyErrorKeywords).toEqual([
       'quota exceeded',
@@ -591,12 +593,14 @@ describe('settings and auth events', () => {
       'too many requests',
     ]);
     expect(updated.proxyEmptyContentFailEnabled).toBe(true);
+    expect(updated.proxyExecutionAttemptsExhaustedMessage).toBe('All execution attempts are unavailable');
     expect(config.proxyErrorKeywords).toEqual([
       'quota exceeded',
       'bad gateway',
       'too many requests',
     ]);
     expect(config.proxyEmptyContentFailEnabled).toBe(true);
+    expect(config.proxyExecutionAttemptsExhaustedMessage).toBe('All execution attempts are unavailable');
 
     const rows = await db.select().from(schema.settings).all();
     const settingsMap = new Map(rows.map((row) => [row.key, row.value]));
@@ -606,6 +610,7 @@ describe('settings and auth events', () => {
       'too many requests',
     ]));
     expect(settingsMap.get('proxy_empty_content_fail_enabled')).toBe(JSON.stringify(true));
+    expect(settingsMap.get('proxy_execution_attempts_exhausted_message')).toBe(JSON.stringify('All execution attempts are unavailable'));
 
     const getResponse = await app.inject({
       method: 'GET',
@@ -615,6 +620,7 @@ describe('settings and auth events', () => {
     const runtime = getResponse.json() as {
       proxyErrorKeywords?: string[];
       proxyEmptyContentFailEnabled?: boolean;
+      proxyExecutionAttemptsExhaustedMessage?: string;
     };
     expect(runtime.proxyErrorKeywords).toEqual([
       'quota exceeded',
@@ -622,6 +628,7 @@ describe('settings and auth events', () => {
       'too many requests',
     ]);
     expect(runtime.proxyEmptyContentFailEnabled).toBe(true);
+    expect(runtime.proxyExecutionAttemptsExhaustedMessage).toBe('All execution attempts are unavailable');
   });
 
   it('persists global model and brand filters as JSON arrays', async () => {

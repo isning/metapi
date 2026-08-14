@@ -90,6 +90,7 @@ type RuntimeSettings = {
   systemProxyUrl: string;
   proxyErrorKeywords: string[];
   proxyEmptyContentFailEnabled: boolean;
+  proxyExecutionAttemptsExhaustedMessage: string;
   proxyTokenMasked?: string;
   adminIpAllowlist?: string[];
   currentAdminIp?: string;
@@ -250,6 +251,7 @@ export default function Settings() {
     systemProxyUrl: '',
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
+    proxyExecutionAttemptsExhaustedMessage: '所有执行尝试均不可用，请稍后重试',
   });
   const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
@@ -416,6 +418,9 @@ export default function Settings() {
           ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string')
           : [],
         proxyEmptyContentFailEnabled: !!runtimeInfo.proxyEmptyContentFailEnabled,
+        proxyExecutionAttemptsExhaustedMessage: typeof runtimeInfo.proxyExecutionAttemptsExhaustedMessage === 'string' && runtimeInfo.proxyExecutionAttemptsExhaustedMessage.trim()
+          ? runtimeInfo.proxyExecutionAttemptsExhaustedMessage.trim()
+          : '所有执行尝试均不可用，请稍后重试',
         proxyTokenMasked: runtimeInfo.proxyTokenMasked || '',
         adminIpAllowlist: Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.filter((item: unknown) => typeof item === 'string')
@@ -694,6 +699,7 @@ export default function Settings() {
       const res = await api.updateRuntimeSettings({
         proxyErrorKeywords: keywords,
         proxyEmptyContentFailEnabled: runtime.proxyEmptyContentFailEnabled,
+        proxyExecutionAttemptsExhaustedMessage: runtime.proxyExecutionAttemptsExhaustedMessage,
       });
       const nextKeywords = Array.isArray(res?.proxyErrorKeywords)
         ? res.proxyErrorKeywords
@@ -704,6 +710,9 @@ export default function Settings() {
         proxyEmptyContentFailEnabled: typeof res?.proxyEmptyContentFailEnabled === 'boolean'
           ? res.proxyEmptyContentFailEnabled
           : prev.proxyEmptyContentFailEnabled,
+        proxyExecutionAttemptsExhaustedMessage: typeof res?.proxyExecutionAttemptsExhaustedMessage === 'string'
+          ? res.proxyExecutionAttemptsExhaustedMessage
+          : prev.proxyExecutionAttemptsExhaustedMessage,
       }));
       setProxyErrorKeywordsText(nextKeywords.join('\n'));
       toast.success(tr('pages.settings.proxyFailureRulesSaved'));
@@ -1251,6 +1260,18 @@ export default function Settings() {
             checked={runtime.proxyEmptyContentFailEnabled}
             onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: checked }))}
           />
+          <div className="space-y-2">
+            <Label htmlFor="proxy-execution-attempts-exhausted-message">
+              {tr('pages.settings.executionAttemptsExhaustedMessage')}
+            </Label>
+            <Input
+              id="proxy-execution-attempts-exhausted-message"
+              value={runtime.proxyExecutionAttemptsExhaustedMessage}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, proxyExecutionAttemptsExhaustedMessage: e.target.value }))}
+              maxLength={2000}
+              placeholder={tr('pages.settings.executionAttemptsExhaustedMessagePlaceholder')}
+            />
+          </div>
           <div>
             <Button type="button" onClick={saveProxyFailureRules} disabled={savingProxyFailureRules}>
               {savingProxyFailureRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveFailedrules')}

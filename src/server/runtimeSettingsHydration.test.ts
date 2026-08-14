@@ -27,6 +27,7 @@ describe('applyRuntimeSettings', () => {
       ['bark_enabled', JSON.stringify(false)],
       ['serverchan_enabled', JSON.stringify(false)],
       ['global_allowed_models', JSON.stringify(['gpt-5.4', ' claude-3.7-sonnet '])],
+      ['proxy_execution_attempts_exhausted_message', JSON.stringify('All routes are currently unavailable')],
     ]));
 
     expect(config.disableCrossProtocolFallback).toBe(true);
@@ -36,6 +37,7 @@ describe('applyRuntimeSettings', () => {
     expect(config.barkEnabled).toBe(false);
     expect(config.serverChanEnabled).toBe(false);
     expect(config.globalAllowedModels).toEqual(['gpt-5.4', 'claude-3.7-sonnet']);
+    expect(config.proxyExecutionAttemptsExhaustedMessage).toBe('All routes are currently unavailable');
   });
 
   it('normalizes smtpPort to a positive integer during hydration', () => {

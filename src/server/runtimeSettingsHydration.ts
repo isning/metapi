@@ -88,6 +88,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyEmptyContentFailEnabled = proxyEmptyContentFailEnabled;
   }
 
+  const proxyExecutionAttemptsExhaustedMessage = parseSettingFromMap<string>(settingsMap, 'proxy_execution_attempts_exhausted_message');
+  if (typeof proxyExecutionAttemptsExhaustedMessage === 'string' && proxyExecutionAttemptsExhaustedMessage.trim()) {
+    config.proxyExecutionAttemptsExhaustedMessage = proxyExecutionAttemptsExhaustedMessage.trim();
+  }
+
   const globalBlockedBrands = parseSettingFromMap<string[]>(settingsMap, 'global_blocked_brands');
   if (Array.isArray(globalBlockedBrands)) {
     config.globalBlockedBrands = globalBlockedBrands.filter((b): b is string => typeof b === 'string').map((b) => b.trim()).filter(Boolean);

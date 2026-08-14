@@ -613,6 +613,7 @@ export type RuntimeSettingsPayload = {
   dispatchPolicyRegistry?: DispatchPolicyRegistryPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
+  proxyExecutionAttemptsExhaustedMessage?: string;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
 };
@@ -984,6 +985,9 @@ export type ProxyExecutionAttemptLog = {
   username?: string | null;
   siteName?: string | null;
   siteUrl?: string | null;
+  tokenId?: number | null;
+  tokenName?: string | null;
+  tokenGroup?: string | null;
   errorMessage?: string | null;
   downstreamKeyId?: number | null;
   downstreamKeyName?: string | null;
@@ -1358,6 +1362,10 @@ export const api = {
     requestJson("/api/sites", { method: "POST", body: data }),
   updateSite: (id: number, data: any) =>
     requestJson(`/api/sites/${id}`, { method: "PUT", body: data }),
+  resetSiteApiEndpointHealth: (id: number) =>
+    requestJson(`/api/sites/${id}/api-endpoints/reset-health`, { method: "POST", body: {} }) as Promise<{ success: boolean; cleared: number }>,
+  resetSiteApiEndpointHealthById: (siteId: number, endpointId: number) =>
+    requestJson(`/api/sites/${siteId}/api-endpoints/${endpointId}/reset-health`, { method: "POST", body: {} }) as Promise<{ success: boolean; cleared: number }>,
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: "DELETE" }),
   batchUpdateSites: (data: any) =>
     requestJson("/api/sites/batch", { method: "POST", body: data }),
@@ -1457,7 +1465,8 @@ export const api = {
     }),
   verifyToken: (data: {
     siteId: number;
-    accessToken: string;
+    cred: string;
+    apiKey?: string;
     platformUserId?: number;
     credentialMode?: "auto" | "session" | "apikey";
   }) =>
@@ -1468,7 +1477,7 @@ export const api = {
   rebindAccountSession: (
     id: number,
     data: {
-      accessToken: string;
+      cred: string;
       platformUserId?: number;
       refreshToken?: string;
       tokenExpiresAt?: number;
@@ -2338,6 +2347,14 @@ export const api = {
     requestJson("/api/settings/backup/import", {
       method: "POST",
       body: { data },
+      timeoutMs: 300_000,
+    }),
+  importCompressedBackup: (data: Blob) =>
+    request("/api/settings/backup/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/gzip" },
+      body: data,
+      timeoutMs: 300_000,
     }),
   getBackupWebdavConfig: () => request("/api/settings/backup/webdav"),
   saveBackupWebdavConfig: (data: {
@@ -2450,6 +2467,9 @@ export const api = {
       `/api/models/${encodeURIComponent(model)}/route-flow${suffix ? `?${suffix}` : ""}`,
       {
         timeoutMs: 45_000,
+        // Route-flow labels are live credential identities. A cached GET can
+        // retain old IDs after an import, rebuild, or credential rename.
+        cache: 'no-store',
       },
     );
   },

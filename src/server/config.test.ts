@@ -20,6 +20,13 @@ describe('buildConfig', () => {
     expect(config.responsesUpstreamTransportMode).toBe('follow_downstream');
   });
 
+  it('uses a configurable generic message when execution attempts are unavailable', () => {
+    expect(buildConfig({}).proxyExecutionAttemptsExhaustedMessage)
+      .toBe('所有执行尝试均不可用，请稍后重试');
+    expect(buildConfig({ PROXY_EXECUTION_ATTEMPTS_EXHAUSTED_MESSAGE: 'Try another route' }).proxyExecutionAttemptsExhaustedMessage)
+      .toBe('Try another route');
+  });
+
   it('aligns desktop deployments with server deployments for listen host', () => {
     const config = buildConfig({
       HOST: '0.0.0.0',
@@ -73,6 +80,24 @@ describe('buildConfig', () => {
     });
 
     expect(config.codexResponsesWebsocketBeta).toBe('responses_websockets=2099-01-01');
+  });
+
+  it('uses a bounded, configurable request body limit for backup imports', () => {
+    expect(buildConfig({}).requestBodyLimit).toBe(100 * 1024 * 1024);
+    expect(buildConfig({ REQUEST_BODY_LIMIT_BYTES: '33554432' }).requestBodyLimit).toBe(32 * 1024 * 1024);
+    expect(buildConfig({ REQUEST_BODY_LIMIT_BYTES: 'not-a-number' }).requestBodyLimit).toBe(100 * 1024 * 1024);
+    expect(buildConfig({ REQUEST_BODY_LIMIT_BYTES: String(1024 * 1024 * 1024) }).requestBodyLimit)
+      .toBe(512 * 1024 * 1024);
+  });
+
+  it('uses a separate bounded limit for decompressed backup archives', () => {
+    expect(buildConfig({}).backupImportMaxUncompressedBytes).toBe(512 * 1024 * 1024);
+    expect(buildConfig({ BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES: '209715200' }).backupImportMaxUncompressedBytes)
+      .toBe(200 * 1024 * 1024);
+    expect(buildConfig({ BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES: 'not-a-number' }).backupImportMaxUncompressedBytes)
+      .toBe(512 * 1024 * 1024);
+    expect(buildConfig({ BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES: String(1024 * 1024 * 1024) }).backupImportMaxUncompressedBytes)
+      .toBe(512 * 1024 * 1024);
   });
 
   it('accepts JSON request bodies larger than Fastify default 1 MiB', async () => {

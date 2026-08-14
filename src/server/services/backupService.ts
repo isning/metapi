@@ -1,10 +1,15 @@
 import { asc, eq, gt } from 'drizzle-orm';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 import {
   CURRENT_CONFIG_VERSION,
   migratePublishedMainPreferenceSettings,
@@ -19,7 +24,13 @@ import {
   type BackupImportNotice,
   type BackupImportRouteRuntimeMigrationResult,
 } from './backupImportMigration.js';
+import {
+  migrateImportedAccountCredential,
+  reconcileImportedAccountCredentialTokens,
+  type ImportedAccountCredential,
+} from './backupAccountCredentialMigration.js';
 import { parseRouteGraphSource, type RouteGraphSource } from '../../shared/routeGraph.js';
+import { config as runtimeConfig } from '../config.js';
 
 const BACKUP_VERSION = CURRENT_CONFIG_VERSION;
 const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
@@ -29,6 +40,21 @@ const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
 // Some configuration rows contain arbitrary JSON or full route graphs. Keep
 // each database page to one row so no unbounded collection is resident.
 const BACKUP_EXPORT_PAGE_SIZE = 1;
+// Size batches by both rows and parameters. The parameter budget stays below
+// SQLite's common 999-variable limit while allowing narrow, high-volume rows
+// such as model availability to import efficiently.
+const BACKUP_IMPORT_MAX_ROWS = 100;
+const BACKUP_IMPORT_MAX_PARAMETERS = 900;
+
+const require = createRequire(import.meta.url);
+const { parser: createJsonParser } = require('stream-json') as {
+  parser: () => Transform;
+};
+const Assembler = require('stream-json/Assembler') as new () => {
+  current: unknown;
+  done: boolean;
+  consume(chunk: { name: string; value?: unknown }): unknown;
+};
 
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   'auth_token',
@@ -106,6 +132,7 @@ interface PreferencesBackupSection {
 
 type CoercedAccountsSection = {
   section: AccountsBackupSection;
+  importedAccountCredentials: ImportedAccountCredential[];
   warnings: string[];
   notices: BackupImportNotice[];
   graphSource?: RouteGraphSource;
@@ -160,36 +187,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function isLegacyApiKeyCredentialConfig(extraConfig: string | null | undefined): boolean {
-  if (typeof extraConfig !== 'string' || !extraConfig.trim()) return false;
-  try {
-    const parsed = JSON.parse(extraConfig) as unknown;
-    return isRecord(parsed) && String(parsed.authType || '').trim().toLowerCase() === 'api_key';
-  } catch {
-    return false;
-  }
-}
-
-function normalizeImportedAccountCredentials(
-  accounts: AccountsBackupSection['accounts'],
-): AccountsBackupSection['accounts'] {
-  return accounts.map((account) => {
-    const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
-    const isApiKeyConnection = credentialMode === 'apikey'
-      || (credentialMode === undefined && isLegacyApiKeyCredentialConfig(account.extraConfig));
-    const legacyAccessToken = asString(account.accessToken);
-
-    if (!isApiKeyConnection || !legacyAccessToken) return account;
-
-    return {
-      ...account,
-      accessToken: '',
-      apiToken: asString(account.apiToken) || legacyAccessToken,
-      checkinEnabled: false,
-    };
-  });
 }
 
 function parseSettingValue(raw: string | null): unknown {
@@ -597,6 +594,414 @@ export function createBackupExportStream(type: BackupExportType): Readable {
   return source.pipe(createGzip());
 }
 
+class ByteLimitTransform extends Transform {
+  private total = 0;
+
+  constructor(private readonly limit: number) {
+    super();
+  }
+
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: Buffer) => void) {
+    this.total += chunk.length;
+    if (this.total > this.limit) {
+      callback(new Error('压缩备份解压后超过允许大小'));
+      return;
+    }
+    callback(null, chunk);
+  }
+}
+
+const NATIVE_BACKUP_ARRAY_PATHS = [
+  'accounts.sites',
+  'accounts.siteApiEndpoints',
+  'accounts.modelCatalogSources',
+  'accounts.apiEndpointProfiles',
+  'accounts.accounts',
+  'accounts.accountTokens',
+  'accounts.credentialEndpointBindings',
+  'accounts.endpointModelObservations',
+  'accounts.modelAvailability',
+  'accounts.tokenModelAvailability',
+  'accounts.tokenDisabledModels',
+  'accounts.upstreamModelCostPricings',
+  'accounts.providerPricingCatalogCaches',
+  'accounts.walletAcquisitionProfiles',
+  'accounts.fxRateSnapshots',
+  'accounts.siteDisabledModels',
+  'accounts.oauthRouteUnits',
+  'accounts.oauthRouteUnitMembers',
+  'accounts.runtimeExecutionTargets',
+  'accounts.runtimeExecutionTargetState',
+  'accounts.downstreamApiKeys',
+  'accounts.siteAnnouncements',
+  'accounts.routeGraph.versions',
+  'accounts.routeGraph.drafts',
+  'accounts.routeGraph.operationBatches',
+  'preferences.settings',
+] as const;
+
+type NativeBackupArrayPath = typeof NATIVE_BACKUP_ARRAY_PATHS[number];
+
+// These arrays are emitted before one of their foreign-key parents in the
+// canonical export. Keep only these dependency inversions buffered until the
+// parent array has been consumed.
+const NATIVE_BACKUP_DEFERRED_ARRAY_PATHS = new Set<NativeBackupArrayPath>([
+  'accounts.credentialEndpointBindings',
+  'accounts.runtimeExecutionTargets',
+  'accounts.runtimeExecutionTargetState',
+]);
+
+function pathFromStack(stack: Array<string | number | null>): string {
+  return stack.filter((part): part is string | number => part !== null).join('.');
+}
+
+function resetImportedSiteApiEndpointHealth(row: unknown): unknown {
+  return isRecord(row) ? {
+    ...row,
+    cooldownUntil: null,
+    lastFailedAt: null,
+    lastFailureReason: null,
+  } : row;
+}
+
+function updateJsonPathStackBeforeToken(
+  stack: Array<string | number | null>,
+  previousToken: string,
+  chunk: { name: string; value?: unknown },
+): void {
+  switch (chunk.name) {
+    case 'startObject':
+    case 'startArray':
+    case 'startString':
+    case 'startNumber':
+    case 'nullValue':
+    case 'trueValue':
+    case 'falseValue':
+      if (typeof stack.at(-1) === 'number') stack[stack.length - 1] = Number(stack.at(-1)) + 1;
+      break;
+    case 'keyValue':
+      stack[stack.length - 1] = String(chunk.value);
+      break;
+    case 'numberValue':
+    case 'stringValue':
+      if (previousToken !== 'endNumber' && previousToken !== 'endString' && typeof stack.at(-1) === 'number') {
+        stack[stack.length - 1] = Number(stack.at(-1)) + 1;
+      }
+      break;
+  }
+}
+
+function updateJsonPathStackAfterToken(
+  stack: Array<string | number | null>,
+  chunk: { name: string },
+): void {
+  if (chunk.name === 'startObject') stack.push(null);
+  else if (chunk.name === 'startArray') stack.push(-1);
+  else if (chunk.name === 'endObject' || chunk.name === 'endArray') stack.pop();
+}
+
+async function streamNativeBackupJson(
+  filePath: string,
+  handlers: {
+    onArrayStart(path: NativeBackupArrayPath): Promise<void>;
+    onValue(path: NativeBackupArrayPath | string, value: unknown): Promise<void>;
+  },
+): Promise<void> {
+  const arrayPaths = new Set<string>(NATIVE_BACKUP_ARRAY_PATHS);
+  const directValuePaths = new Set(['version', 'timestamp', 'type', 'accounts.routeGraph.activeVersion']);
+  const parser = createJsonParser();
+  const stack: Array<string | number | null> = [];
+  let previousToken = '';
+  let capture: { path: string; assembler: InstanceType<typeof Assembler> } | null = null;
+
+  createReadStream(filePath).pipe(parser);
+  for await (const chunk of parser as AsyncIterable<{ name: string; value?: unknown }>) {
+    updateJsonPathStackBeforeToken(stack, previousToken, chunk);
+    const path = pathFromStack(stack);
+    if (chunk.name === 'startArray' && arrayPaths.has(path)) {
+      await handlers.onArrayStart(path as NativeBackupArrayPath);
+    }
+
+    if (capture) {
+      capture.assembler.consume(chunk);
+      if (capture.assembler.done) {
+        await handlers.onValue(capture.path, capture.assembler.current);
+        capture = null;
+      }
+    } else {
+      const arrayPath = typeof stack.at(-1) === 'number'
+        ? pathFromStack(stack.slice(0, -1))
+        : null;
+      const capturePath = arrayPath && arrayPaths.has(arrayPath)
+        ? arrayPath
+        : (directValuePaths.has(path) ? path : null);
+      if ((chunk.name === 'startObject' || chunk.name === 'startArray') && capturePath) {
+        const assembler = new Assembler();
+        assembler.consume(chunk);
+        capture = { path: capturePath, assembler };
+      } else if (
+        capturePath
+        && ['nullValue', 'trueValue', 'falseValue', 'stringValue', 'numberValue'].includes(chunk.name)
+      ) {
+        await handlers.onValue(capturePath, chunk.value);
+      }
+    }
+
+    updateJsonPathStackAfterToken(stack, chunk);
+    previousToken = chunk.name;
+  }
+}
+
+const NOT_NATIVE_BACKUP = Symbol('not-native-backup');
+
+async function importNativeBackupFromJsonFile(filePath: string): Promise<BackupImportResult | null> {
+  const values = new Map<string, unknown>();
+  const seenArrays = new Set<NativeBackupArrayPath>();
+  const rows = new Map<NativeBackupArrayPath, unknown[]>();
+  const routeGraphSources = new Map<unknown, string>();
+  const appliedSettings: Array<{ key: string; value: unknown }> = [];
+  let accountsCleared = false;
+  let graphSource: RouteGraphSource | null = null;
+  let sawPricingReferenceConfig = false;
+  let sawPlatformPricingConfig = false;
+  let sawConfigVersion = false;
+  let legacyRoutingFallbackUnitCost: number | null = null;
+  const importedAccountCredentials = new Map<number, ImportedAccountCredential>();
+
+  try {
+    await db.transaction(async (tx) => {
+      const ensureNativeHeader = () => {
+        if (values.get('version') !== BACKUP_VERSION) throw NOT_NATIVE_BACKUP;
+        if (values.get('timestamp') === undefined || values.get('timestamp') === null) {
+          throw new Error('导入数据格式错误：缺少 timestamp');
+        }
+      };
+      const flush = async (path: NativeBackupArrayPath, table: any, mapRow: (row: unknown) => unknown = (row) => row) => {
+        const batch = rows.get(path);
+        if (!batch?.length) return;
+        rows.set(path, []);
+        await tx.insert(table).values(batch.map(mapRow) as any).run();
+      };
+      const clearAccounts = async () => {
+        if (accountsCleared) return;
+        ensureNativeHeader();
+      await deleteAll(tx, schema.siteAnnouncements);
+      await deleteAll(tx, schema.downstreamApiKeys);
+      await restoreRouteGraph(tx, undefined);
+      await deleteAll(tx, schema.runtimeExecutionTargetState);
+      await deleteAll(tx, schema.runtimeExecutionTargets);
+      await deleteAll(tx, schema.oauthRouteUnitMembers);
+      await deleteAll(tx, schema.oauthRouteUnits);
+      await deleteAll(tx, schema.tokenModelAvailability);
+      await deleteAll(tx, schema.tokenDisabledModels);
+      await deleteAll(tx, schema.modelAvailability);
+      await deleteAll(tx, schema.endpointModelObservations);
+      await deleteAll(tx, schema.credentialEndpointBindings);
+      await deleteAll(tx, schema.accountTokens);
+      await deleteAll(tx, schema.accounts);
+      await deleteAll(tx, schema.apiEndpointProfiles);
+      await deleteAll(tx, schema.modelCatalogSources);
+      await deleteAll(tx, schema.siteApiEndpoints);
+      await deleteAll(tx, schema.siteDisabledModels);
+      await deleteAll(tx, schema.upstreamModelCostPricings);
+      await deleteAll(tx, schema.providerPricingCatalogCaches);
+      await deleteAll(tx, schema.walletAcquisitionProfiles);
+      await deleteAll(tx, schema.fxRateSnapshots);
+      await deleteAll(tx, schema.sites);
+        accountsCleared = true;
+      };
+      const tables = new Map<NativeBackupArrayPath, [any, (row: unknown) => unknown]>([
+        ['accounts.sites', [schema.sites, (row) => row]],
+        ['accounts.siteApiEndpoints', [schema.siteApiEndpoints, resetImportedSiteApiEndpointHealth]],
+        ['accounts.modelCatalogSources', [schema.modelCatalogSources, (row) => row]],
+        ['accounts.apiEndpointProfiles', [schema.apiEndpointProfiles, (row) => row]],
+        ['accounts.accounts', [schema.accounts, (row) => {
+          const normalized = migrateImportedAccountCredential(row);
+          importedAccountCredentials.set(normalized.importedCredential.accountId, normalized.importedCredential);
+          return normalized.account;
+        }]],
+        ['accounts.accountTokens', [schema.accountTokens, (row) => row]],
+        ['accounts.credentialEndpointBindings', [schema.credentialEndpointBindings, (row) => row]],
+        ['accounts.endpointModelObservations', [schema.endpointModelObservations, (row) => row]],
+        ['accounts.modelAvailability', [schema.modelAvailability, (row) => row]],
+        ['accounts.tokenModelAvailability', [schema.tokenModelAvailability, (row) => row]],
+        ['accounts.tokenDisabledModels', [schema.tokenDisabledModels, (row) => row]],
+        ['accounts.upstreamModelCostPricings', [schema.upstreamModelCostPricings, (row) => row]],
+        ['accounts.providerPricingCatalogCaches', [schema.providerPricingCatalogCaches, (row) => row]],
+        ['accounts.walletAcquisitionProfiles', [schema.walletAcquisitionProfiles, (row) => row]],
+        ['accounts.fxRateSnapshots', [schema.fxRateSnapshots, (row) => row]],
+        ['accounts.siteDisabledModels', [schema.siteDisabledModels, (row) => row]],
+        ['accounts.oauthRouteUnits', [schema.oauthRouteUnits, (row) => row]],
+        ['accounts.oauthRouteUnitMembers', [schema.oauthRouteUnitMembers, (row) => row]],
+        ['accounts.runtimeExecutionTargets', [schema.runtimeExecutionTargets, (row) => row]],
+        ['accounts.runtimeExecutionTargetState', [schema.runtimeExecutionTargetState, (row) => row]],
+        ['accounts.downstreamApiKeys', [schema.downstreamApiKeys, (row) => row]],
+        ['accounts.siteAnnouncements', [schema.siteAnnouncements, (row) => row]],
+        ['accounts.routeGraph.versions', [schema.routeGraphVersions, (row) => isRecord(row) ? ({ ...row, sourceGraphJson: migrateImportedRouteGraphSourceJson(String(row.sourceGraphJson || '')) }) : row]],
+        ['accounts.routeGraph.drafts', [schema.routeGraphDrafts, (row) => isRecord(row) ? ({ ...row, workingGraphJson: migrateImportedRouteGraphSourceJson(String(row.workingGraphJson || '')) }) : row]],
+        ['accounts.routeGraph.operationBatches', [schema.routeGraphWorkspaceOperationBatches, (row) => row]],
+      ]);
+      const flushPendingRows = async () => {
+        for (const [path, [table, mapRow]] of tables) {
+          if (!NATIVE_BACKUP_DEFERRED_ARRAY_PATHS.has(path)) await flush(path, table, mapRow);
+        }
+      };
+
+      await streamNativeBackupJson(filePath, {
+        onArrayStart: async (path) => {
+          seenArrays.add(path);
+          ensureNativeHeader();
+          if (path.startsWith('accounts.')) await clearAccounts();
+          // Native exports order arrays by foreign-key dependency. Commit the
+          // preceding array before accepting rows that may reference it.
+          await flushPendingRows();
+          if (
+            seenArrays.has('accounts.accountTokens')
+            && path !== 'accounts.accountTokens'
+          ) {
+            const binding = tables.get('accounts.credentialEndpointBindings')!;
+            await flush('accounts.credentialEndpointBindings', binding[0], binding[1]);
+          }
+        },
+        onValue: async (path, value) => {
+          if (!NATIVE_BACKUP_ARRAY_PATHS.includes(path as NativeBackupArrayPath)) {
+            values.set(path, value);
+            if (path === 'accounts.routeGraph.activeVersion' && isRecord(value)) {
+              await flush('accounts.routeGraph.versions', schema.routeGraphVersions, (row) => {
+                const sourceGraphJson = migrateImportedRouteGraphSourceJson(String((row as any)?.sourceGraphJson || ''));
+                return isRecord(row) ? { ...row, sourceGraphJson } : row;
+              });
+              await tx.insert(schema.routeGraphActiveVersion).values(value as any).run();
+              const sourceGraphJson = routeGraphSources.get(value.versionId);
+              if (sourceGraphJson) graphSource = parseRouteGraphSource(sourceGraphJson);
+            }
+            return;
+          }
+          if (path === 'preferences.settings') {
+            if (!isRecord(value)) return;
+            const key = typeof value.key === 'string' ? value.key.trim() : '';
+            if (!key || EXCLUDED_SETTING_KEYS.has(key)) return;
+            if (key === 'routing_fallback_unit_cost') {
+              const numeric = Number(value.value);
+              if (Number.isFinite(numeric) && numeric > 0) legacyRoutingFallbackUnitCost = numeric;
+              return;
+            }
+            const settingValue = key === 'metapi_config_version' ? CURRENT_CONFIG_VERSION : value.value;
+            if (key === 'pricing_reference_config_v1') sawPricingReferenceConfig = true;
+            if (key === 'platform_pricing_config_v1') sawPlatformPricingConfig = true;
+            if (key === 'metapi_config_version') sawConfigVersion = true;
+            await upsertSetting(key, settingValue, tx);
+            appliedSettings.push({ key, value: settingValue });
+            return;
+          }
+          await clearAccounts();
+          if (path === 'accounts.routeGraph.versions' && isRecord(value)) {
+            routeGraphSources.set(value.id, migrateImportedRouteGraphSourceJson(String(value.sourceGraphJson || '')));
+          }
+          const arrayPath = path as NativeBackupArrayPath;
+          const batch = rows.get(arrayPath) || [];
+          batch.push(value);
+          rows.set(arrayPath, batch);
+          const table = tables.get(arrayPath);
+          const columnCount = isRecord(value) ? Math.max(1, Object.keys(value).length) : 1;
+          const maxRows = Math.max(1, Math.min(
+            BACKUP_IMPORT_MAX_ROWS,
+            Math.floor(BACKUP_IMPORT_MAX_PARAMETERS / columnCount),
+          ));
+          if (
+            table
+            && !NATIVE_BACKUP_DEFERRED_ARRAY_PATHS.has(arrayPath)
+            && batch.length >= maxRows
+          ) await flush(arrayPath, table[0], table[1]);
+        },
+      });
+
+      ensureNativeHeader();
+      const type = typeof values.get('type') === 'string' ? values.get('type') : '';
+      const accountsRequested = type === 'accounts' || seenArrays.has('accounts.sites');
+      const preferencesRequested = type === 'preferences' || seenArrays.has('preferences.settings');
+      if (!accountsRequested && !preferencesRequested) throw new Error('导入数据中没有可识别的账号或设置数据');
+      if (accountsRequested && !['accounts.sites', 'accounts.accounts', 'accounts.accountTokens']
+        .every((path) => seenArrays.has(path as NativeBackupArrayPath))) {
+        throw new Error('导入数据格式错误：账号数据结构不正确');
+      }
+      if (preferencesRequested && !seenArrays.has('preferences.settings')) {
+        throw new Error('导入数据格式错误：设置数据结构不正确');
+      }
+      for (const [path, [table, mapRow]] of tables) await flush(path, table, mapRow);
+      if (accountsRequested) {
+        await reconcileImportedAccountCredentialTokens(tx, importedAccountCredentials.values());
+      }
+      if (preferencesRequested) {
+        const migrated = migratePublishedMainPreferenceSettings([]).settings.filter((row) => (
+      (row.key === 'pricing_reference_config_v1' && !sawPricingReferenceConfig)
+      || (row.key === 'platform_pricing_config_v1' && !sawPlatformPricingConfig)
+      || (row.key === 'metapi_config_version' && !sawConfigVersion)
+        ));
+        for (const row of migrated) {
+          const value = row.key === 'platform_pricing_config_v1' && legacyRoutingFallbackUnitCost !== null
+            ? { ...(row.value as Record<string, unknown>), upstreamDefaultPricing: { inputPerMillion: legacyRoutingFallbackUnitCost, outputPerMillion: legacyRoutingFallbackUnitCost } }
+            : row.value;
+          await upsertSetting(row.key, value, tx);
+          appliedSettings.push({ key: row.key, value });
+        }
+      }
+    });
+  } catch (error) {
+    if (error === NOT_NATIVE_BACKUP) return null;
+    throw error;
+  }
+
+  const accountsRequested = seenArrays.has('accounts.sites') || values.get('type') === 'accounts';
+  const preferencesRequested = seenArrays.has('preferences.settings') || values.get('type') === 'preferences';
+  if (accountsRequested) {
+    invalidateRouteGraphReadCaches('route-source-mutated');
+    if (graphSource) {
+      const published = await publishRouteGraphSource({ sourceGraph: graphSource, createdBy: 'backup-import' });
+      if (!published.ok) throw new Error(`导入的历史路由无法编译：${published.diagnostics.map((item) => item.message).join('；')}`);
+    }
+  }
+  return {
+    allImported: true,
+    sections: { accounts: accountsRequested, preferences: preferencesRequested },
+    appliedSettings,
+  };
+}
+
+export async function importBackupFromGzipStream(
+  input: Readable,
+  maxUncompressedBytes: number,
+): Promise<BackupImportResult> {
+  const directory = await mkdtemp(join(tmpdir(), 'metapi-backup-import-'));
+  const filePath = join(directory, 'backup.json');
+  try {
+    await pipeline(input, createGunzip(), new ByteLimitTransform(maxUncompressedBytes), createWriteStream(filePath));
+    return await importBackupFromJsonFilePath(filePath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function importBackupFromJsonFilePath(filePath: string): Promise<BackupImportResult> {
+  const nativeResult = await importNativeBackupFromJsonFile(filePath);
+  if (nativeResult) return nativeResult;
+  return importBackup(JSON.parse(await readFile(filePath, 'utf8')) as RawBackupData);
+}
+
+export async function importBackupFromJsonStream(
+  input: Readable,
+  maxUncompressedBytes: number,
+): Promise<BackupImportResult> {
+  const directory = await mkdtemp(join(tmpdir(), 'metapi-backup-import-'));
+  const filePath = join(directory, 'backup.json');
+  try {
+    await pipeline(input, new ByteLimitTransform(maxUncompressedBytes), createWriteStream(filePath));
+    return await importBackupFromJsonFilePath(filePath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
   const timestamp = Date.now();
   if (type === 'accounts') {
@@ -626,10 +1031,11 @@ export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
 function coerceAccountsSection(input: unknown): CoercedAccountsSection | null {
   if (!isRecord(input)) return null;
   const sites = Array.isArray(input.sites) ? input.sites as AccountsBackupSection['sites'] : null;
-  const rawAccounts = Array.isArray(input.accounts) ? input.accounts as AccountsBackupSection['accounts'] : null;
+  const rawAccounts = Array.isArray(input.accounts) ? input.accounts : null;
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountsBackupSection['accountTokens'] : null;
   if (!sites || !rawAccounts || !accountTokens) return null;
-  const accounts = normalizeImportedAccountCredentials(rawAccounts);
+  const normalizedAccounts = rawAccounts.map(migrateImportedAccountCredential);
+  const accounts = normalizedAccounts.map((item) => item.account);
   const section: AccountsBackupSection = {
     sites,
     siteApiEndpoints: Array.isArray(input.siteApiEndpoints) ? input.siteApiEndpoints as AccountsBackupSection['siteApiEndpoints'] : undefined,
@@ -665,6 +1071,7 @@ function coerceAccountsSection(input: unknown): CoercedAccountsSection | null {
   const migrated: BackupImportRouteRuntimeMigrationResult = migratePreviousRouteBackupToCurrentRuntime(section, input);
   return {
     section: migrated.section as AccountsBackupSection,
+    importedAccountCredentials: normalizedAccounts.map((item) => item.importedCredential),
     warnings: migrated.warnings,
     notices: migrated.notices,
     graphSource: migrated.graphSource,
@@ -743,7 +1150,10 @@ function activeSourceFromBackupRouteGraph(
 
 async function importAccountsSection(
   section: AccountsBackupSection,
-  options: { graphSource?: RouteGraphSource } = {},
+  options: {
+    graphSource?: RouteGraphSource;
+    importedAccountCredentials?: ImportedAccountCredential[];
+  } = {},
 ): Promise<void> {
   const graphSource = options.graphSource ?? activeSourceFromBackupRouteGraph(section.routeGraph);
   await db.transaction(async (tx) => {
@@ -774,11 +1184,12 @@ async function importAccountsSection(
     await deleteAll(tx, schema.sites);
 
     await insertRows(tx, schema.sites, section.sites);
-    await insertRows(tx, schema.siteApiEndpoints, section.siteApiEndpoints);
+    await insertRows(tx, schema.siteApiEndpoints, section.siteApiEndpoints?.map(resetImportedSiteApiEndpointHealth));
     await insertRows(tx, schema.modelCatalogSources, section.modelCatalogSources);
     await insertRows(tx, schema.apiEndpointProfiles, section.apiEndpointProfiles);
     await insertRows(tx, schema.accounts, section.accounts);
     await insertRows(tx, schema.accountTokens, section.accountTokens);
+    await reconcileImportedAccountCredentialTokens(tx, options.importedAccountCredentials || []);
     await insertRows(tx, schema.credentialEndpointBindings, section.credentialEndpointBindings);
     await insertRows(tx, schema.endpointModelObservations, section.endpointModelObservations);
     await insertRows(tx, schema.modelAvailability, section.modelAvailability);
@@ -848,6 +1259,7 @@ export async function importBackup(data: RawBackupData): Promise<BackupImportRes
     if (!accountsSection) throw new Error('导入数据格式错误：账号数据结构不正确');
     await importAccountsSection(accountsSection, {
       graphSource: accountsDetection?.graphSource,
+      importedAccountCredentials: accountsDetection?.importedAccountCredentials,
     });
     accountsImported = true;
   }
@@ -977,12 +1389,11 @@ export async function importBackupFromWebdav() {
       const text = await response.text().catch(() => '');
       throw new Error(`WebDAV 导入失败：HTTP ${response.status}${text ? ` ${text.slice(0, 120)}` : ''}`);
     }
-    const raw = response.headers.get('content-encoding') === 'gzip' || config.fileUrl.toLowerCase().endsWith('.gz')
-      ? Readable.fromWeb(response.body as any).pipe(createGunzip())
-      : response.body as any;
-    const chunks: Buffer[] = [];
-    for await (const chunk of raw as AsyncIterable<Buffer>) chunks.push(Buffer.from(chunk));
-    const result = await importBackup(JSON.parse(Buffer.concat(chunks).toString('utf8')) as RawBackupData);
+    const input = Readable.fromWeb(response.body as any);
+    const compressed = response.headers.get('content-encoding') === 'gzip' || config.fileUrl.toLowerCase().endsWith('.gz');
+    const result = compressed
+      ? await importBackupFromGzipStream(input, runtimeConfig.backupImportMaxUncompressedBytes)
+      : await importBackupFromJsonStream(input, runtimeConfig.backupImportMaxUncompressedBytes);
     const syncedAt = new Date().toISOString();
     await writeBackupWebdavState({ lastSyncAt: syncedAt, lastError: null });
     return {

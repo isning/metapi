@@ -109,7 +109,7 @@ describe("api proxy test timeout handling", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
   });
 
-  it("keeps every management write on the explicit JSON request variant", () => {
+  it("keeps management writes on the explicit JSON variant except compressed backup imports", () => {
     const source = readFileSync(resolve(process.cwd(), "src/web/api.ts"), "utf8");
     const sourceFile = ts.createSourceFile("api.ts", source, ts.ScriptTarget.Latest, true);
     const directRequestWrites: number[] = [];
@@ -140,7 +140,26 @@ describe("api proxy test timeout handling", () => {
     };
     visit(sourceFile);
 
-    expect(directRequestWrites).toEqual([]);
+    expect(directRequestWrites).toHaveLength(1);
+  });
+
+  it("uploads compressed backup archives without JSON serialization", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const archive = new Blob(["gzip bytes"], { type: "application/gzip" });
+
+    await api.importCompressedBackup(archive);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/settings/backup/import");
+    expect(init).toMatchObject({ method: "POST", body: archive });
+    expect(new Headers(init.headers).get("content-type")).toBe("application/gzip");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer token-1");
   });
 
   it("sends an explicit JSON body when refreshing token models", async () => {
@@ -197,6 +216,29 @@ describe("api proxy test timeout handling", () => {
       throw new Error("Expected image generation proxy test to time out");
     }
     expect(result.error.message).toBe("请求超时（150s）");
+  });
+
+  it("keeps large backup imports alive past the default request timeout", async () => {
+    installPendingFetch();
+
+    let settled = false;
+    const handled = api.importBackup({ version: "2.3" })
+      .then(() => ({ ok: true as const }))
+      .catch((error: Error) => ({ ok: false as const, error }))
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(270_000);
+    const result = await handled;
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected backup import to time out");
+    }
+    expect(result.error.message).toBe("请求超时（300s）");
   });
 
   it("still uses the default 30 second timeout for generic proxy tests", async () => {
@@ -812,5 +854,20 @@ describe("api paged route projection helpers", () => {
         },
       }),
     });
+  });
+
+  it("loads route-flow details without reusing an HTTP cache entry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, flow: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getModelRouteFlow("gpt-live");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/models/gpt-live/route-flow");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
   });
 });

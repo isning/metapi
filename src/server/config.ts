@@ -2,7 +2,10 @@ import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
 import { defaultDispatchPolicyRegistry } from './services/dispatchPolicyTypes.js';
 
-const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
+const DEFAULT_REQUEST_BODY_LIMIT = 100 * 1024 * 1024;
+const MAX_REQUEST_BODY_LIMIT = 512 * 1024 * 1024;
+const DEFAULT_BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+const MAX_BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
 const DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PROXY_STREAM_MAX_REASONING_BYTES = 128 * 1024 * 1024;
 const DEFAULT_PROXY_STREAM_MAX_CONTENT_BYTES = 128 * 1024 * 1024;
@@ -144,7 +147,17 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     dbType: parseDbType(env.DB_TYPE),
     dbUrl: (env.DB_URL || '').trim(),
     dbSsl: parseBoolean(env.DB_SSL, false),
-    requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
+    requestBodyLimit: Math.min(
+      MAX_REQUEST_BODY_LIMIT,
+      parsePositiveInteger(env.REQUEST_BODY_LIMIT_BYTES, DEFAULT_REQUEST_BODY_LIMIT),
+    ),
+    backupImportMaxUncompressedBytes: Math.min(
+      MAX_BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES,
+      parsePositiveInteger(
+        env.BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES,
+        DEFAULT_BACKUP_IMPORT_MAX_UNCOMPRESSED_BYTES,
+      ),
+    ),
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
     routeFailureCooldownMaxSec: normalizeRouteFailureCooldownMaxSec(
@@ -189,6 +202,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxyFileRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(env.PROXY_FILE_RETENTION_PRUNE_INTERVAL_MINUTES, 60))),
     proxyErrorKeywords: parseCsvList(env.PROXY_ERROR_KEYWORDS),
     proxyEmptyContentFailEnabled: parseBoolean(env.PROXY_EMPTY_CONTENT_FAIL, false),
+    proxyExecutionAttemptsExhaustedMessage: (env.PROXY_EXECUTION_ATTEMPTS_EXHAUSTED_MESSAGE || '所有执行尝试均不可用，请稍后重试').trim() || '所有执行尝试均不可用，请稍后重试',
     globalBlockedBrands: [] as string[],
     globalAllowedModels: [] as string[],
     codexResponsesWebsocketBeta: parseOptionalSecret(env.CODEX_RESPONSES_WEBSOCKET_BETA) || 'responses_websockets=2026-02-06',

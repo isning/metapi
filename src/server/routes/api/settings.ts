@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
+import { Readable } from 'node:stream';
 import { fetch } from 'undici';
 import { config, normalizeRouteFailureCooldownMaxSec, normalizeRouteRuntimeCacheTtlMs } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
@@ -14,6 +15,7 @@ import {
   exportBackupToWebdav,
   getBackupWebdavConfig,
   importBackup,
+  importBackupFromGzipStream,
   importBackupFromWebdav,
   reloadBackupWebdavScheduler,
   saveBackupWebdavConfig,
@@ -111,6 +113,7 @@ interface RuntimeSettingsBody {
   dispatchPolicyRegistry?: DispatchPolicyRegistry;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
+  proxyExecutionAttemptsExhaustedMessage?: string;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
 }
@@ -777,6 +780,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       }
       return;
     }
+    case 'proxy_execution_attempts_exhausted_message': {
+      if (typeof value !== 'string' || !value.trim()) return;
+      config.proxyExecutionAttemptsExhaustedMessage = value.trim();
+      return;
+    }
     case 'global_blocked_brands': {
       try {
         const parsed = typeof value === 'string' ? JSON.parse(value) : value;
@@ -1005,6 +1013,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     systemProxyUrl: config.systemProxyUrl,
     proxyErrorKeywords: config.proxyErrorKeywords,
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
+    proxyExecutionAttemptsExhaustedMessage: config.proxyExecutionAttemptsExhaustedMessage,
     proxyTokenMasked: maskSecret(config.proxyToken),
     globalBlockedBrands: config.globalBlockedBrands,
     globalAllowedModels: config.globalAllowedModels,
@@ -1080,6 +1089,10 @@ function buildRuntimeDatabaseState(saved: RuntimeDatabaseConfig | null) {
 }
 
 export async function settingsRoutes(app: FastifyInstance) {
+  app.addContentTypeParser('application/gzip', (_request, payload, done) => {
+    done(null, payload);
+  });
+
   await app.get('/api/settings/runtime', async (request) => {
     const currentAdminIp = extractClientIp(request.ip);
     return getRuntimeSettingsResponse(currentAdminIp);
@@ -1647,6 +1660,21 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('proxy_empty_content_fail_enabled', config.proxyEmptyContentFailEnabled);
     }
 
+    if (body.proxyExecutionAttemptsExhaustedMessage !== undefined) {
+      if (typeof body.proxyExecutionAttemptsExhaustedMessage !== 'string') {
+        return reply.code(400).send({ success: false, message: '执行尝试耗尽错误消息格式无效：需要 string' });
+      }
+      const nextValue = body.proxyExecutionAttemptsExhaustedMessage.trim();
+      if (!nextValue || nextValue.length > 2000) {
+        return reply.code(400).send({ success: false, message: '执行尝试耗尽错误消息不能为空且不能超过 2000 个字符' });
+      }
+      if (nextValue !== config.proxyExecutionAttemptsExhaustedMessage) {
+        changedLabels.push('执行尝试耗尽错误消息');
+      }
+      config.proxyExecutionAttemptsExhaustedMessage = nextValue;
+      upsertSetting('proxy_execution_attempts_exhausted_message', config.proxyExecutionAttemptsExhaustedMessage);
+    }
+
     if (body.globalBlockedBrands !== undefined) {
       if (!Array.isArray(body.globalBlockedBrands)) {
         return reply.code(400).send({ error: 'globalBlockedBrands must be an array of strings' });
@@ -2085,6 +2113,25 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Body: unknown }>('/api/settings/backup/import', async (request, reply) => {
+    if (request.body instanceof Readable) {
+      try {
+        const result = await importBackupFromGzipStream(request.body, config.backupImportMaxUncompressedBytes);
+        for (const item of result.appliedSettings) applyImportedSettingToRuntime(item.key, item.value);
+        if (result.appliedSettings.some((item) => item.key === 'backup_webdav_config_v1')) await reloadBackupWebdavScheduler();
+        await appendBackupImportEvent({ source: 'manual', result });
+        return { success: true, message: '导入完成', ...result };
+      } catch (err: any) {
+        await appendBackupImportFailureEvent({ source: 'manual', error: err });
+        const message = err?.code === 'Z_DATA_ERROR' || err?.message === '压缩备份解压后超过允许大小'
+          ? '压缩备份无效或解压后超过允许大小'
+          : err?.message || '压缩备份无效或解压后超过允许大小';
+        return reply.code(400).send({
+          success: false,
+          message,
+        });
+      }
+    }
+
     const parsedBody = parseBackupImportPayload(request.body);
     if (!parsedBody.success) {
       return reply.code(400).send({ success: false, message: '导入数据格式错误：需要 JSON 对象' });

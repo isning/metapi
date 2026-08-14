@@ -275,6 +275,7 @@ export default function ImportExport() {
   const [exportingType, setExportingType] = useState<BackupType | ''>('');
   const [importing, setImporting] = useState(false);
   const [importData, setImportData] = useState('');
+  const [compressedImportFile, setCompressedImportFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [webdavConfig, setWebdavConfig] = useState<WebdavConfigForm>(DEFAULT_WEBDAV_CONFIG);
@@ -373,13 +374,16 @@ export default function ImportExport() {
       return;
     }
     setSelectedFileName(file.name);
+    setCompressedImportFile(null);
     try {
       if (isGzip) {
         if (typeof DecompressionStream === 'undefined') throw new Error('Gzip decompression is not supported by this browser');
         const stream = file.stream().pipeThrough(new DecompressionStream('gzip'));
         setImportData(await new Response(stream).text());
+        setCompressedImportFile(file);
       } else {
         setImportData(await file.text());
+        setCompressedImportFile(null);
       }
     } catch {
       toast.error(tr('pages.importExport.failedReadFile'));
@@ -430,11 +434,13 @@ export default function ImportExport() {
 
     setImporting(true);
     try {
-      const parsed = JSON.parse(importData);
-      const result = await api.importBackup(parsed);
+      const result = compressedImportFile
+        ? await api.importCompressedBackup(compressedImportFile)
+        : await api.importBackup(JSON.parse(importData));
       toast.success(buildImportSuccessMessage(result));
       setImportData('');
       setSelectedFileName('');
+      setCompressedImportFile(null);
     } catch (err: any) {
       toast.error(err?.message || tr('pages.importExport.importFailed'));
     } finally {
@@ -564,7 +570,7 @@ export default function ImportExport() {
               <Input
                 ref={fileInputRef}
                 type="file"
-                accept=".json,application/json"
+                accept=".json,.json.gz,application/json,application/gzip"
                 onChange={handleImportFile}
                 className="hidden"
               />
@@ -587,7 +593,10 @@ export default function ImportExport() {
               tr('pages.importExport.preview'),
               <JsonCodeEditor
                 value={importData}
-                onChange={setImportData}
+                onChange={(value) => {
+                  setImportData(value);
+                  setCompressedImportFile(null);
+                }}
                 placeholder={tr('pages.importExport.pasteJsonDataImportViaDragArea')}
                 minHeight={260}
                 maxHeight={560}
