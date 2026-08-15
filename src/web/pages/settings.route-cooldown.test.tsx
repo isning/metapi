@@ -93,6 +93,9 @@ describe('Settings route cooldown cap', () => {
       });
       await flushMicrotasks();
 
+      expect(root.root.findAllByProps({ value: 4 })).not.toHaveLength(0);
+      expect(root.root.findAllByProps({ value: '0, 30, 120' })).not.toHaveLength(0);
+
       const cooldownInput = root.root.find((node) => (
         node.type === 'input'
         && node.props.type === 'number'
