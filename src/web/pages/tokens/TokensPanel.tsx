@@ -83,10 +83,13 @@ type SyncableAccount = {
 
 const ACCOUNT_SELECT_SEARCH_PLACEHOLDER = tr('pages.tokens.filteraccountsNameSites');
 
+const isAccountActive = (account: any) =>
+  account?.status === 'active'
+  && account?.site?.status !== 'disabled';
+
 const isAccountSyncable = (account: any) =>
   resolveAccountCredentialMode(account) === 'session'
-  && account?.status === 'active'
-  && account?.site?.status !== 'disabled';
+  && isAccountActive(account);
 
 const resolveSyncStatus = (result: AccountTokenSyncResult | null | undefined): SyncStatus => {
   const raw = String(result?.status || '').toLowerCase();
@@ -416,18 +419,28 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
   const allVisibleTokensSelected = accountClusteredTokens.length > 0
     && accountClusteredTokens.every((token) => selectedTokenIds.includes(token.id));
 
-  const activeAccounts = useMemo(() => accounts.filter(isAccountSyncable), [accounts]);
-  const activeAccountSelectOptions = useMemo(() => (
+  const activeAccounts = useMemo(() => accounts.filter(isAccountActive), [accounts]);
+  const syncableAccounts = useMemo(() => activeAccounts.filter(isAccountSyncable), [activeAccounts]);
+  const managementAccountSelectOptions = useMemo(() => (
     activeAccounts.map((account) => {
       const accountName = account.username || `account-${account.id}`;
       const siteName = account.site?.name || '-';
+      const isSyncable = isAccountSyncable(account);
       return {
         value: String(account.id),
-        label: `${accountName} @ ${siteName}`,
-        description: siteName,
+        label: `${accountName} @ ${siteName}${isSyncable ? '' : ' · API Key'}`,
+        description: isSyncable ? siteName : tr('pages.tokens.apiKeyAccountManagementOnly'),
       };
     })
   ), [activeAccounts]);
+  const syncableAccountSelectOptions = useMemo(() => (
+    syncableAccounts.map((account) => ({
+      value: String(account.id),
+      label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
+      description: account.site?.name || '-',
+    }))
+  ), [syncableAccounts]);
+  const selectedAccountIsSyncable = syncableAccounts.some((account) => account.id === syncingAccountId);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -436,8 +449,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
     const requestedModel = (params.get('model') || '').trim();
     if (!shouldOpenCreate || !requestedAccountId) return;
 
-    const preferredAccount = activeAccounts.find((account) => account.id === requestedAccountId);
-    const fallbackAccount = preferredAccount || activeAccounts[0] || null;
+    const preferredAccount = syncableAccounts.find((account) => account.id === requestedAccountId);
+    const fallbackAccount = preferredAccount || syncableAccounts[0] || null;
     if (!fallbackAccount) return;
 
     setShowAdd(true);
@@ -465,7 +478,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
       },
       { replace: true },
     );
-  }, [activeAccounts, location.pathname, location.search, navigate, toast]);
+  }, [location.pathname, location.search, navigate, syncableAccounts, toast]);
 
   useEffect(() => {
     const focusTokenId = readFocusTokenId(location.search);
@@ -789,7 +802,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
   };
 
   const handleSync = useCallback(async () => {
-    if (!syncingAccountId) return;
+    if (!syncingAccountId || !selectedAccountIsSyncable) return;
     setSyncing(true);
     try {
       const res = await api.syncAccountTokens(syncingAccountId) as AccountTokenSyncResult;
@@ -826,7 +839,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
     } finally {
       setSyncing(false);
     }
-  }, [focusTokenRow, load, openEditPanel, syncingAccountId, toast]);
+  }, [focusTokenRow, load, openEditPanel, selectedAccountIsSyncable, syncingAccountId, toast]);
 
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true);
@@ -930,7 +943,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
               options={[
                 { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
-                ...activeAccountSelectOptions,
+                ...managementAccountSelectOptions,
               ]}
               placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
               searchable
@@ -939,7 +952,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
           </div>
           <Button type="button" variant="outline"
             onClick={handleSync}
-            disabled={syncing || syncingAll || !syncingAccountId}
+            disabled={syncing || syncingAll || !selectedAccountIsSyncable}
 
 
           >
@@ -947,7 +960,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
           </Button>
           <Button type="button" variant="outline"
             onClick={handleSyncAll}
-            disabled={syncing || syncingAll || activeAccounts.length === 0}
+            disabled={syncing || syncingAll || syncableAccounts.length === 0}
 
 
           >
@@ -962,7 +975,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
         {showAdd ? tr('app.cancel') : tr('pages.tokens.newToken')}
       </Button>
     </div>
-  ), [activeAccountSelectOptions, activeAccounts.length, allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, showAdd, syncing, syncingAccountId, syncingAll]);
+  ), [allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, managementAccountSelectOptions, selectedAccountIsSyncable, showAdd, syncableAccounts.length, syncing, syncingAccountId, syncingAll]);
 
   useEffect(() => {
     if (!embedded || !onEmbeddedActionsChange) return;
@@ -995,7 +1008,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
                 options={[
                   { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
-                  ...activeAccountSelectOptions,
+                  ...managementAccountSelectOptions,
                 ]}
                 placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
                 searchable
@@ -1004,7 +1017,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
             </div>
             <Button type="button" variant="outline"
               onClick={handleSync}
-              disabled={syncing || syncingAll || !syncingAccountId}
+              disabled={syncing || syncingAll || !selectedAccountIsSyncable}
 
 
             >
@@ -1012,7 +1025,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
             </Button>
             <Button type="button" variant="outline"
               onClick={handleSyncAll}
-              disabled={syncing || syncingAll || activeAccounts.length === 0}
+              disabled={syncing || syncingAll || syncableAccounts.length === 0}
 
 
             >
@@ -1184,7 +1197,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
               }}
               options={[
                 { value: '0', label: tr('pages.tokens.selectAccount') },
-                ...activeAccountSelectOptions,
+                ...syncableAccountSelectOptions,
               ]}
               placeholder={tr('pages.tokens.selectAccount')}
               searchable

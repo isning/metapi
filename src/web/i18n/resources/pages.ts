@@ -3868,6 +3868,7 @@ export const pagesResources = {
     "pages.tokens.nonetoken": "暂无令牌",
     "pages.tokens.routesModel": "来自路由提醒：为模型",
     "pages.tokens.selectAccount": "选择账号",
+    "pages.tokens.apiKeyAccountManagementOnly": "已有唯一模型 Key，仅支持令牌管理",
     "pages.tokens.selectAccountSyncSiteTokens": "选择账号后同步站点令牌",
     "pages.tokens.selectGroup": "选择分组",
     "pages.tokens.setDefault": "设默认",
@@ -8055,6 +8056,8 @@ export const pagesResources = {
     "pages.tokens.selectAccount": "Select Account",
     "pages.tokens.selectAccountSyncSiteTokens":
       "Select an account to sync site tokens",
+    "pages.tokens.apiKeyAccountManagementOnly":
+      "Uses one existing model key and supports token management only",
     "pages.tokens.selectGroup": "Select group",
     "pages.tokens.setDefault": "Set default",
     "pages.tokens.sites": "Site",

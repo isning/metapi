@@ -177,6 +177,65 @@ describe('Tokens edit modal and row selection', () => {
     vi.clearAllMocks();
   });
 
+  it('includes API Key accounts in the account-token selector', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 2,
+        username: 'api-key-user',
+        credential: '',
+        status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { proxyOnly: true },
+        site: { id: 20, name: 'API Key Site', platform: 'openai', status: 'active', url: 'https://api-key.example.com' },
+      },
+    ]);
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 23,
+        name: 'default',
+        tokenMasked: 'sk-api****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: true,
+        accountId: 2,
+        account: { username: 'api-key-user' },
+        site: { name: 'API Key Site', url: 'https://api-key.example.com' },
+      },
+    ]);
+
+    let root!: ReturnType<typeof create>;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const selectors = root.root.findAll((node) => node.type === ModernSelect);
+      expect(selectors.some((selector) => (
+        selector.props.options as Array<{ value: string }>
+      ).some((option) => option.value === '2'))).toBe(true);
+
+      const syncButton = root.root.findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步站点令牌');
+      expect(syncButton?.props.disabled).toBe(true);
+
+      const addButton = root.root.findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).includes('新增令牌'));
+      expect(addButton).toBeTruthy();
+      await act(async () => {
+        addButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const createSelector = root.root.findAllByType(ModernSelect)
+        .find((selector) => selector.props.placeholder === '选择账号');
+      expect(createSelector).toBeTruthy();
+      expect((createSelector!.props.options as Array<{ value: string }>).some((option) => option.value === '2')).toBe(false);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('opens the centered edit modal when editing a token', async () => {
     let root!: WebTestRenderer;
     try {
