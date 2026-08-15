@@ -1,5 +1,5 @@
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
-import type { ModelDiscoveryOptions } from './base.js';
+import type { ModelRequestCredentialInput, PlatformCredentialContext } from './base.js';
 
 const CLAUDE_DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -12,17 +12,24 @@ function resolveOpenAiCompatibleBaseUrl(baseUrl: string): string | null {
 export class ClaudeAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'claude';
 
+  override buildModelRequestCredentialHeaders(_input: ModelRequestCredentialInput): Record<string, string> {
+    // Anthropic authentication is emitted by the Claude platform profile.
+    return {};
+  }
+
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
     return normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1');
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     const openAiCompatibleBaseUrl = resolveOpenAiCompatibleBaseUrl(baseUrl);
     try {
       const claudeModels = await this.fetchModelsFromStandardEndpoint({
         baseUrl,
-        basePathMode: options?.basePathMode,
+        basePathMode: input.endpoint.basePathMode,
         headers: {
           'x-api-key': apiToken,
           'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
@@ -37,7 +44,7 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
 
     return this.fetchModelsFromStandardEndpoint({
       baseUrl: openAiCompatibleBaseUrl,
-      basePathMode: options?.basePathMode,
+      basePathMode: input.endpoint.basePathMode,
       headers: { Authorization: `Bearer ${apiToken}` },
     });
   }

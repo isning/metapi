@@ -17,6 +17,7 @@ import {
   type CredentialEndpointBinding,
   type EndpointModelObservation,
 } from '../proxy-core/apiVariants.js';
+import { hasOauthProvider, requiresManagedAccountTokens } from './accountExtraConfig.js';
 import type { UpstreamEndpoint } from '../proxy-core/orchestration/upstreamRequest.js';
 
 export type CredentialEndpointKey =
@@ -544,8 +545,8 @@ export async function listCredentialEndpointMatrix(siteId: number): Promise<Cred
     credentials.push({
       ...key,
       label: formatAccountCredentialLabel(account),
-      detail: account.oauthProvider
-        ? `oauth:${account.oauthProvider}`
+      detail: hasOauthProvider(account)
+        ? `oauth:${account.oauthProvider || 'configured'}`
         : account.credentialMode === 'apikey'
           ? 'API Key connection'
           : 'account credential',
@@ -567,6 +568,7 @@ export async function listCredentialEndpointMatrix(siteId: number): Promise<Cred
   }
 
   for (const row of tokenRows) {
+    if (!requiresManagedAccountTokens(row.account)) continue;
     const key = resolveCredentialEndpointKey({
       accountId: row.account.id,
       tokenId: row.token.id,
@@ -717,6 +719,9 @@ async function resolveCredentialKeyForSite(siteId: number, credentialKey: string
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
       .where(and(eq(schema.accountTokens.id, tokenId), eq(schema.accounts.siteId, siteId)))
       .get();
+    if (row && !requiresManagedAccountTokens(row.account)) {
+      throw new Error('OAuth direct connections do not support account-token endpoint bindings.');
+    }
     return row ? resolveCredentialEndpointKey({ accountId: row.account.id, tokenId: row.token.id }) : null;
   }
 

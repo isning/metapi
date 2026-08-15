@@ -1,10 +1,18 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 type DbModule = typeof import('../../db/index.js');
+
+const { retireSiteFromRoutingMock } = vi.hoisted(() => ({
+  retireSiteFromRoutingMock: vi.fn(),
+}));
+
+vi.mock('../../services/accountRetirementService.js', () => ({
+  retireSiteFromRouting: (...args: unknown[]) => retireSiteFromRoutingMock(...args),
+}));
 
 describe('sites batch routes', () => {
   let app: FastifyInstance;
@@ -27,6 +35,8 @@ describe('sites batch routes', () => {
   });
 
   beforeEach(async () => {
+    retireSiteFromRoutingMock.mockReset();
+    retireSiteFromRoutingMock.mockResolvedValue(undefined);
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -104,5 +114,24 @@ describe('sites batch routes', () => {
     expect(response.json()).toMatchObject({
       message: 'Invalid ids. Expected number[].',
     });
+  });
+
+  it('delegates single and batch site deletion to the routing retirement workflow', async () => {
+    await db.insert(schema.sites).values([
+      { id: 1, name: 'site-1', url: 'https://site-1.example.com', platform: 'new-api' },
+      { id: 2, name: 'site-2', url: 'https://site-2.example.com', platform: 'new-api' },
+    ]).run();
+
+    const single = await app.inject({ method: 'DELETE', url: '/api/sites/1' });
+    expect(single.statusCode).toBe(200);
+    const batch = await app.inject({
+      method: 'POST',
+      url: '/api/sites/batch',
+      payload: { ids: [1, 2], action: 'delete' },
+    });
+    expect(batch.statusCode).toBe(200);
+    expect(retireSiteFromRoutingMock).toHaveBeenNthCalledWith(1, 1, 'site-retirement');
+    expect(retireSiteFromRoutingMock).toHaveBeenNthCalledWith(2, 1, 'site-retirement');
+    expect(retireSiteFromRoutingMock).toHaveBeenNthCalledWith(3, 2, 'site-retirement');
   });
 });

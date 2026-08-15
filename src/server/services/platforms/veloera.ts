@@ -1,12 +1,16 @@
-import { BasePlatformAdapter, CheckinResult, BalanceInfo } from './base.js';
+import { BasePlatformAdapter, CheckinResult, BalanceInfo, type PlatformCredentialContext } from './base.js';
 import {
   normalizeCommonPricingPayload,
   type UpstreamPricingCatalog,
-  type UpstreamPricingCredential,
 } from '../upstreamPricingCatalog.js';
+import { resolvePlatformUserId } from '../accountExtraConfig.js';
 
 export class VeloeraAdapter extends BasePlatformAdapter {
   readonly platformName = 'veloera';
+
+  private platformUserId(input: PlatformCredentialContext): number | undefined {
+    return resolvePlatformUserId(input.account.extraConfig, input.account.username);
+  }
 
   async detect(url: string): Promise<boolean> {
     try {
@@ -31,7 +35,10 @@ export class VeloeraAdapter extends BasePlatformAdapter {
     return headers;
   }
 
-  async checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult> {
+  async checkin(input: PlatformCredentialContext): Promise<CheckinResult> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
         method: 'POST',
@@ -46,7 +53,10 @@ export class VeloeraAdapter extends BasePlatformAdapter {
     }
   }
 
-  async getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo> {
+  async getBalance(input: PlatformCredentialContext): Promise<BalanceInfo> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
     const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
       headers: this.veloeraHeaders(accessToken, platformUserId),
     });
@@ -58,20 +68,20 @@ export class VeloeraAdapter extends BasePlatformAdapter {
     return { balance: quota - used, used, quota, todayIncome, todayQuotaConsumption };
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
   }
 
-  async getPricingCatalog(
-    baseUrl: string,
-    credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
-    const token = (credential.token || '').trim();
+  async getPricingCatalog(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const token = this.pricingCredential(input).trim();
     const headers = token
-      ? this.veloeraHeaders(token, credential.platformUserId)
+      ? this.veloeraHeaders(token, this.platformUserId(input))
       : {};
     const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
     return normalizeCommonPricingPayload(payload);

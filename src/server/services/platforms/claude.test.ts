@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { ClaudeAdapter } from './claude.js';
+import { testModelContext } from './testCredentialContext.js';
 
 vi.mock('../siteProxy.js', () => ({
   withSiteProxyRequestInit: (_url: string, options: unknown) => options,
@@ -48,7 +49,7 @@ describe('ClaudeAdapter', () => {
     });
 
     const adapter = new ClaudeAdapter();
-    const models = await adapter.getModels(`${baseUrl}/anthropic`, 'tp-test');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/anthropic`, 'tp-test'));
 
     expect(models).toEqual(['claude-sonnet-test']);
     expect(requests).toHaveLength(1);
@@ -72,7 +73,7 @@ describe('ClaudeAdapter', () => {
     });
 
     const adapter = new ClaudeAdapter();
-    const models = await adapter.getModels(`${baseUrl}/anthropic`, 'tp-test');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/anthropic`, 'tp-test'));
 
     expect(models).toEqual(['mimo-v2.5', 'mimo-v2.5-pro']);
     expect(requests.map((request) => request.url)).toEqual(['/anthropic/v1/models', '/v1/models']);
@@ -88,7 +89,7 @@ describe('ClaudeAdapter', () => {
     });
 
     const adapter = new ClaudeAdapter();
-    const models = await adapter.getModels(baseUrl, 'tp-test');
+    const models = await adapter.getModels(testModelContext(baseUrl, 'tp-test'));
 
     expect(models).toEqual([]);
     expect(requests.map((request) => request.url)).toEqual(['/v1/models']);

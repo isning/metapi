@@ -157,6 +157,35 @@ describe('search routes', () => {
     });
   });
 
+  it('labels OAuth accounts as OAuth instead of misclassifying them as session connections', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex oauth site',
+      url: 'https://oauth.example.com',
+      platform: 'codex',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'oauth-search-user',
+      credentialMode: 'oauth',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/search',
+      payload: { query: 'oauth-search-user', limit: 20 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: account.id, segment: 'oauth' }),
+    ]));
+  });
+
   it('returns site matches for platform keywords in global search', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Direct Workspace',

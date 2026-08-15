@@ -5,6 +5,7 @@ import { OpenAiAdapter } from './openai.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
+import { testModelContext } from './testCredentialContext.js';
 
 interface RequestSnapshot {
   method: string;
@@ -128,37 +129,37 @@ describe('official llm upstream adapters', () => {
 
   it('fetches models from openai upstream', async () => {
     const adapter = new OpenAiAdapter();
-    const models = await adapter.getModels(`${baseUrl}/openai`, 'sk-openai');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/openai`, 'sk-openai'));
     expect(models).toEqual(['gpt-4.1', 'gpt-4o-mini']);
   });
 
   it('does not append /v1 when an OpenAI-compatible adapter URL ends in a custom version', async () => {
     const adapter = new OpenAiAdapter();
-    const models = await adapter.getModels(`${baseUrl}/ark/api/coding/v3`, 'sk-ark');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/ark/api/coding/v3`, 'sk-ark'));
     expect(models).toEqual(['ark-code-latest']);
   });
 
   it('fetches models from claude upstream with anthropic headers', async () => {
     const adapter = new ClaudeAdapter();
-    const models = await adapter.getModels(`${baseUrl}/claude`, 'sk-claude');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/claude`, 'sk-claude'));
     expect(models).toEqual(['claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']);
   });
 
   it('fetches models from cliproxy openai-compatible upstream', async () => {
     const adapter = new CliProxyApiAdapter();
-    const models = await adapter.getModels(`${baseUrl}/cliproxy`, 'sk-cpa');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/cliproxy`, 'sk-cpa'));
     expect(models).toEqual(['gpt-5.4', 'gpt-5.2-codex']);
   });
 
   it('fetches models from gemini native endpoint and normalizes model names', async () => {
     const adapter = new GeminiAdapter();
-    const models = await adapter.getModels(`${baseUrl}/gemini/v1beta`, 'gemini-key');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/gemini/v1beta`, 'gemini-key'));
     expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
   });
 
   it('fetches models from gemini openai-compatible endpoint when configured', async () => {
     const adapter = new GeminiAdapter();
-    const models = await adapter.getModels(`${baseUrl}/gemini-openai/v1beta/openai`, 'gemini-key');
+    const models = await adapter.getModels(testModelContext(`${baseUrl}/gemini-openai/v1beta/openai`, 'gemini-key'));
     expect(models).toEqual(['gemini-2.5-flash']);
   });
 });

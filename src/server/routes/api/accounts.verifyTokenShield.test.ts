@@ -13,6 +13,15 @@ let adapterPlatformName = 'new-api';
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
     platformName: adapterPlatformName,
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
+    accountConnectionFields: [],
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
   }),
 }));
@@ -157,7 +166,7 @@ describe('accounts verify-token shield detection', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Token invalid: cannot use it as session cookie or API key',
+      message: '连接凭据验证失败',
     });
     expect(undiciFetchMock).toHaveBeenCalled();
   });
@@ -190,7 +199,7 @@ describe('accounts verify-token shield detection', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Token invalid: cannot use it as session cookie or API key',
+      message: '连接凭据验证失败',
     });
     expect(response.json()).not.toMatchObject({
       shieldBlocked: true,

@@ -6,8 +6,9 @@ import { resolveStoredAccountCredentialMode } from '../../services/accountExtraC
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import { listActiveCompiledRuntimeModelInventory } from '../../services/compiledRuntimeInventoryService.js';
 
-function resolveAccountSearchSegment(account: typeof schema.accounts.$inferSelect): 'session' | 'apikey' {
-  return resolveStoredAccountCredentialMode(account) === 'apikey' ? 'apikey' : 'session';
+function resolveAccountSearchSegment(account: typeof schema.accounts.$inferSelect): 'session' | 'apikey' | 'oauth' {
+  const mode = resolveStoredAccountCredentialMode(account);
+  return mode === 'oauth' ? 'oauth' : mode === 'apikey' ? 'apikey' : 'session';
 }
 
 function normalizeSearchQuery(input: string): string {

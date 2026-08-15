@@ -1,14 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withAccountProxyOverride, withSiteProxyRequestInit } from '../siteProxy.js';
-import {
-  getPlatformCredentialCapabilities,
-  type PlatformCredentialCapabilities,
-} from '../../../shared/platformCredentialCapabilities.js';
-import type {
-  UpstreamPricingCatalog,
-  UpstreamPricingCredential,
-} from '../upstreamPricingCatalog.js';
+import type { UpstreamPricingCatalog } from '../upstreamPricingCatalog.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -48,6 +41,7 @@ export interface BalanceInfo {
 interface LoginResult {
   success: boolean;
   accessToken?: string;
+  credentialKind?: 'session_cookie' | 'access_token';
   username?: string;
   message?: string;
 }
@@ -73,10 +67,42 @@ export interface ApiTokenInfo {
   key: string;
   enabled?: boolean;
   tokenGroup?: string | null;
+  extraConfig?: string | null;
 }
 
-export interface ModelDiscoveryOptions {
+/** Endpoint selected by the caller. Adapters own protocol-specific URL use. */
+export interface ModelEndpoint {
+  baseUrl: string;
   basePathMode?: 'protocol_default' | 'complete_api_prefix' | null;
+}
+
+/**
+ * Persisted account connection material. `extraConfig` is intentionally
+ * opaque here: only the owning adapter may interpret platform-specific keys.
+ */
+export interface AccountCredential {
+  id: number | null;
+  siteId: number | null;
+  username: string | null;
+  mode: 'session' | 'apikey' | 'oauth';
+  credential: string;
+  credentialKind: string;
+  extraConfig: string | null;
+}
+
+/** Persisted model invocation credential owned by an account. */
+export interface AccountTokenCredential {
+  id: number | null;
+  accountId: number | null;
+  token: string;
+  enabled: boolean;
+  extraConfig: string | null;
+}
+
+export interface PlatformCredentialContext {
+  endpoint: ModelEndpoint;
+  account: AccountCredential;
+  token: AccountTokenCredential | null;
 }
 
 export interface SiteAnnouncement {
@@ -103,31 +129,91 @@ export interface CreateApiTokenOptions {
   modelLimits?: string;
 }
 
+export type SessionCredentialOption = {
+  kind: 'session_cookie' | 'access_token';
+  labelI18nKey: string;
+  commentI18nKey?: string;
+  placeholderI18nKey?: string;
+};
+
+export type PlatformCredentialCapabilities = {
+  session: boolean;
+  apiKey: boolean;
+  sessionCredentialOptions: readonly SessionCredentialOption[];
+};
+
+export type ModelRequestCredentialInput = {
+  /** This is an execution credential, never an account connection credential. */
+  kind: 'model_api_key' | 'oauth_access_token';
+  credential: string;
+};
+
+export function buildDefaultModelRequestCredentialHeaders(input: ModelRequestCredentialInput): Record<string, string> {
+  return input.credential.trim()
+    ? { Authorization: `Bearer ${input.credential}` }
+    : {};
+}
+
+const DEFAULT_CREDENTIAL_CAPABILITIES: PlatformCredentialCapabilities = {
+  session: true,
+  apiKey: true,
+  // Adapters inheriting the base implementation use bearer access tokens.
+  // Keep this explicit so clients never infer a cookie/session option from
+  // the generic `session` capability.
+  sessionCredentialOptions: [{
+    kind: 'access_token',
+    labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+    commentI18nKey: 'pages.accounts.credentialKindAccessTokenComment',
+    placeholderI18nKey: 'pages.accounts.credentialPlaceholderAccessToken',
+  }],
+};
+
+export type AccountConnectionField = {
+  key: string;
+  labelI18nKey: string;
+  commentI18nKey?: string;
+  placeholderI18nKey?: string;
+  inputType: 'text' | 'number' | 'password';
+  storagePath: string;
+  secret?: boolean;
+  /** Maps this declared value to a shared adapter runtime argument. */
+  runtimeArgument?: 'platformUserId';
+};
+
 export interface PlatformAdapter {
   readonly platformName: string;
   readonly credentialCapabilities: PlatformCredentialCapabilities;
+  readonly accountConnectionFields: readonly AccountConnectionField[];
+  buildModelRequestCredentialHeaders(input: ModelRequestCredentialInput): Record<string, string>;
   runWithProxyOverride<T>(proxyUrl: string | null | undefined, operation: () => Promise<T>): Promise<T>;
   detect(url: string): Promise<boolean>;
   login(baseUrl: string, username: string, password: string): Promise<LoginResult>;
-  getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
-  verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult>;
-  checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult>;
-  getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo>;
-  getModels(baseUrl: string, token: string, platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]>;
-  getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null>;
-  getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]>;
-  getSiteAnnouncements(baseUrl: string, accessToken: string, platformUserId?: number): Promise<SiteAnnouncement[]>;
-  getUserGroups(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string[]>;
-  getPricingCatalog?(baseUrl: string, credential: UpstreamPricingCredential): Promise<UpstreamPricingCatalog | null>;
-  createApiToken(baseUrl: string, accessToken: string, platformUserId?: number, options?: CreateApiTokenOptions): Promise<boolean>;
-  deleteApiToken(baseUrl: string, accessToken: string, tokenKey: string, platformUserId?: number): Promise<boolean>;
+  getUserInfo(input: PlatformCredentialContext): Promise<UserInfo | null>;
+  verifyToken(input: PlatformCredentialContext): Promise<TokenVerifyResult>;
+  checkin(input: PlatformCredentialContext): Promise<CheckinResult>;
+  getBalance(input: PlatformCredentialContext): Promise<BalanceInfo>;
+  getModels(input: PlatformCredentialContext): Promise<string[]>;
+  getApiToken(input: PlatformCredentialContext): Promise<string | null>;
+  getApiTokens(input: PlatformCredentialContext): Promise<ApiTokenInfo[]>;
+  getSiteAnnouncements(input: PlatformCredentialContext): Promise<SiteAnnouncement[]>;
+  getAccountTokenGroups(input: PlatformCredentialContext): Promise<string[]>;
+  getUserGroups(input: PlatformCredentialContext): Promise<string[]>;
+  getPricingCatalog?(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null>;
+  createApiToken(input: PlatformCredentialContext & { options?: CreateApiTokenOptions }): Promise<boolean>;
+  deleteApiToken(input: PlatformCredentialContext): Promise<boolean>;
 }
 
 export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract readonly platformName: string;
 
   get credentialCapabilities(): PlatformCredentialCapabilities {
-    return getPlatformCredentialCapabilities(this.platformName);
+    return DEFAULT_CREDENTIAL_CAPABILITIES;
+  }
+
+  readonly accountConnectionFields: readonly AccountConnectionField[] = [];
+
+  buildModelRequestCredentialHeaders(input: ModelRequestCredentialInput): Record<string, string> {
+    return buildDefaultModelRequestCredentialHeaders(input);
   }
 
   runWithProxyOverride<T>(
@@ -138,36 +224,45 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   }
 
   abstract detect(url: string): Promise<boolean>;
-  abstract checkin(baseUrl: string, accessToken: string): Promise<CheckinResult>;
-  abstract getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo>;
-  abstract getModels(baseUrl: string, token: string, platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]>;
+  abstract checkin(input: PlatformCredentialContext): Promise<CheckinResult>;
+  abstract getBalance(input: PlatformCredentialContext): Promise<BalanceInfo>;
+  abstract getModels(input: PlatformCredentialContext): Promise<string[]>;
 
-  async verifyToken(baseUrl: string, token: string, _platformUserId?: number): Promise<TokenVerifyResult> {
-    // 1. Try as session/access token first (for management APIs)
-    const userInfo = await this.getUserInfo(baseUrl, token);
-    if (userInfo) {
-      let balance: BalanceInfo | null = null;
-      try { balance = await this.getBalance(baseUrl, token); } catch {}
-      let discoveredModelToken: string | null = null;
-      try { discoveredModelToken = await this.getApiToken(baseUrl, token); } catch {}
-      return { tokenType: 'session', userInfo, balance, discoveredModelToken };
-    }
-
-    // 2. Try as API key (for /v1/models)
-    try {
-      const models = await this.getModels(baseUrl, token);
-      if (models && models.length > 0) {
-        return { tokenType: 'apikey', models };
-      }
-    } catch {}
-
-    return { tokenType: 'unknown' };
+  protected modelCredential(input: PlatformCredentialContext): string {
+    return input.token?.token || '';
   }
 
-  async getUserInfo(baseUrl: string, accessToken: string): Promise<UserInfo | null> {
+  /** Pricing endpoints may be authorized by either declared credential. */
+  protected pricingCredential(input: PlatformCredentialContext): string {
+    return input.token?.token || input.account.credential;
+  }
+
+  async verifyToken(input: PlatformCredentialContext): Promise<TokenVerifyResult> {
+    if (input.account.mode === 'apikey') {
+      try {
+        const models = await this.getModels(input);
+        if (models.length > 0) return { tokenType: 'apikey', models };
+      } catch {}
+      return { tokenType: 'unknown' };
+    }
+
+    const userInfo = await this.getUserInfo(input);
+    if (!userInfo) return { tokenType: 'unknown' };
+
+    let balance: BalanceInfo | null = null;
+    try { balance = await this.getBalance(input); } catch {}
+    let discoveredModelToken: string | null = null;
     try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const tokens = await this.getApiTokens(input);
+      discoveredModelToken = tokens.find((item) => item.enabled !== false)?.key || tokens[0]?.key || null;
+    } catch {}
+    return { tokenType: 'session', userInfo, balance, discoveredModelToken };
+  }
+
+  async getUserInfo(input: PlatformCredentialContext): Promise<UserInfo | null> {
+    try {
+      const res = await this.fetchJson<any>(`${input.endpoint.baseUrl}/api/user/self`, {
+        headers: { Authorization: `Bearer ${input.account.credential}` },
       });
       if (res?.success && res?.data) {
         return {
@@ -202,54 +297,38 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     }
   }
 
-  async getApiToken(_baseUrl: string, _accessToken: string, _platformUserId?: number): Promise<string | null> {
+  async getApiToken(_input: PlatformCredentialContext): Promise<string | null> {
     return null;
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]> {
-    const token = await this.getApiToken(baseUrl, accessToken, platformUserId);
+  async getApiTokens(input: PlatformCredentialContext): Promise<ApiTokenInfo[]> {
+    const token = await this.getApiToken(input);
     if (!token) return [];
     return [{ name: 'default', key: token, enabled: true, tokenGroup: 'default' }];
   }
 
-  async getSiteAnnouncements(
-    _baseUrl: string,
-    _accessToken: string,
-    _platformUserId?: number,
-  ): Promise<SiteAnnouncement[]> {
+  async getSiteAnnouncements(_input: PlatformCredentialContext): Promise<SiteAnnouncement[]> {
     return [];
   }
 
-  async createApiToken(
-    _baseUrl: string,
-    _accessToken: string,
-    _platformUserId?: number,
-    _options?: CreateApiTokenOptions,
-  ): Promise<boolean> {
+  async getAccountTokenGroups(input: PlatformCredentialContext): Promise<string[]> {
+    if (input.account.mode !== 'session') return ['default'];
+    return this.getUserGroups(input);
+  }
+
+  async createApiToken(_input: PlatformCredentialContext & { options?: CreateApiTokenOptions }): Promise<boolean> {
     return false;
   }
 
-  async getUserGroups(
-    _baseUrl: string,
-    _accessToken: string,
-    _platformUserId?: number,
-  ): Promise<string[]> {
+  async getUserGroups(_input: PlatformCredentialContext): Promise<string[]> {
     return ['default'];
   }
 
-  async getPricingCatalog(
-    _baseUrl: string,
-    _credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
+  async getPricingCatalog(_input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
     return null;
   }
 
-  async deleteApiToken(
-    _baseUrl: string,
-    _accessToken: string,
-    _tokenKey: string,
-    _platformUserId?: number,
-  ): Promise<boolean> {
+  async deleteApiToken(_input: PlatformCredentialContext): Promise<boolean> {
     return false;
   }
 

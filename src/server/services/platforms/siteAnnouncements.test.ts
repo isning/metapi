@@ -6,6 +6,7 @@ import {
   type PlatformAdapter,
   type SiteAnnouncement,
 } from './base.js';
+import { testAccountContext } from './testCredentialContext.js';
 
 class UnsupportedAnnouncementAdapter extends BasePlatformAdapter {
   override readonly platformName = 'unsupported';
@@ -80,13 +81,13 @@ describe('site announcement platform contract', () => {
   it('allows unsupported adapters to return an empty list', async () => {
     const adapter: PlatformAdapter = new UnsupportedAnnouncementAdapter();
 
-    await expect(adapter.getSiteAnnouncements('https://example.com', 'token')).resolves.toEqual([]);
+    await expect(adapter.getSiteAnnouncements(testAccountContext('https://example.com', 'token'))).resolves.toEqual([]);
   });
 
   it('normalizes single-notice platforms into the shared announcement shape', async () => {
     const adapter: PlatformAdapter = new SingleNoticeAdapter();
 
-    const rows = await adapter.getSiteAnnouncements('https://example.com', 'token');
+    const rows = await adapter.getSiteAnnouncements(testAccountContext('https://example.com', 'token'));
 
     expect(rows).toHaveLength(1);
     expectAnnouncementShape(rows[0]);
@@ -95,7 +96,7 @@ describe('site announcement platform contract', () => {
   it('normalizes list-style platforms into the shared announcement shape', async () => {
     const adapter: PlatformAdapter = new ListAnnouncementAdapter();
 
-    const rows = await adapter.getSiteAnnouncements('https://example.com', 'token');
+    const rows = await adapter.getSiteAnnouncements(testAccountContext('https://example.com', 'token'));
 
     expect(rows).toHaveLength(2);
     rows.forEach(expectAnnouncementShape);

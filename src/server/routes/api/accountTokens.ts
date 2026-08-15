@@ -25,7 +25,11 @@ import {
   runAccountTokenBatchCommand,
 } from '../../services/accountTokenCommandService.js';
 import { getAdapter } from '../../services/platforms/index.js';
-import { getAccountManagementCredential, getProxyUrlFromExtraConfig, isApiKeyAccount, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
+import {
+  getAccountManagementCredential,
+  getProxyUrlFromExtraConfig,
+  hasOauthProvider,
+} from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { withAccountProxyOverride } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
@@ -45,6 +49,7 @@ import {
 } from '../../contracts/accountTokensRoutePayloads.js';
 import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
 import { emitInboxItem } from '../../services/inboxService.js';
+import { buildPlatformCredentialContext, serializeOpaqueExtraConfig } from '../../services/adapterCredentialContextService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -135,10 +140,6 @@ function buildTokenSyncTaskDetailMessage(results: SyncExecutionResult[]): string
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
-}
-
-function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  return isApiKeyAccount(account);
 }
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -246,6 +247,20 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     siteStatus: row.sites.status,
   };
 
+  if (hasOauthProvider(row.accounts)) {
+    return {
+      ...base,
+      status: 'skipped',
+      reason: 'oauth_direct_connection',
+      message: 'OAuth 账号使用直接凭据路由，不支持同步站点令牌',
+      synced: false,
+      created: 0,
+      updated: 0,
+      total: 0,
+      defaultTokenId: null,
+    };
+  }
+
   if (isSiteDisabled(row.sites.status)) {
     return {
       ...base,
@@ -260,26 +275,13 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     };
   }
 
-  if (isApiKeyConnection(row.accounts)) {
-    return {
-      ...base,
-      status: 'skipped',
-      reason: 'apikey_connection',
-      message: 'apikey connection does not support account tokens',
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
-
   const managementCredential = resolveManagementCredential(row.accounts);
   if (!managementCredential) {
     return {
       ...base,
       status: 'skipped',
-      reason: 'missing_access_token',
+      reason: 'management_credential_unavailable',
+      message: 'account has no credential for upstream token management',
       synced: false,
       created: 0,
       updated: 0,
@@ -304,11 +306,14 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
   }
 
   try {
-    const platformUserId = resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username);
     const accountProxyUrl = getProxyUrlFromExtraConfig(row.accounts.extraConfig);
+    const credentialContext = buildPlatformCredentialContext({
+      endpoint: { baseUrl: row.sites.url },
+      account: row.accounts,
+    });
     let tokens = await withTimeout(
       () => withAccountProxyOverride(accountProxyUrl,
-        () => adapter.getApiTokens(row.sites.url, managementCredential, platformUserId)),
+        () => adapter.getApiTokens(credentialContext)),
       TOKEN_SYNC_TIMEOUT_MS,
       `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
     );
@@ -316,7 +321,7 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     if (tokens.length === 0) {
       const fallback = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(row.sites.url, managementCredential, platformUserId)),
+          () => adapter.getApiToken(credentialContext)),
         TOKEN_SYNC_TIMEOUT_MS,
         `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
       );
@@ -510,6 +515,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
     const before = await getAvailableModelsForAccountToken(tokenId);
     if (!before) return reply.code(404).send({ success: false, message: '令牌不存在' });
+    const owner = await getAccountTokenWithOwner(tokenId);
+    if (owner && hasOauthProvider(owner.account)) {
+      return reply.code(400).send({ success: false, message: 'OAuth 账号不支持模型调用 Key 操作' });
+    }
 
     const result = await refreshAccountModelsAndRoutes(before.account.id);
     const models = await getAvailableModelsForAccountToken(tokenId);
@@ -528,8 +537,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const parsed = parseAccountTokenModelsPayload(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
     const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
-    const token = await getAccountTokenById(tokenId);
+    const token = await getAccountTokenWithOwner(tokenId);
     if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
+    if (hasOauthProvider(token.account)) {
+      return reply.code(400).send({ success: false, message: 'OAuth 账号不支持模型调用 Key 操作' });
+    }
 
     await db.transaction(async (tx) => {
       await tx.delete(schema.tokenDisabledModels).where(eq(schema.tokenDisabledModels.tokenId, tokenId)).run();
@@ -537,7 +549,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await tx.insert(schema.tokenDisabledModels).values(models.map((modelName) => ({ tokenId, modelName }))).run();
       }
     });
-    const convergence = await rebuildAccountRoutes(token.accountId);
+    const convergence = await rebuildAccountRoutes(token.token.accountId);
     return { success: true, rebuild: convergence.rebuildResult };
   });
 
@@ -550,8 +562,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
     const models = Array.from(new Set((parsed.data.models || []).map((model) => model.trim()).filter(Boolean)));
     if (models.length === 0) return reply.code(400).send({ success: false, message: '模型列表不能为空' });
-    const token = await getAccountTokenById(tokenId);
+    const token = await getAccountTokenWithOwner(tokenId);
     if (!token) return reply.code(404).send({ success: false, message: '令牌不存在' });
+    if (hasOauthProvider(token.account)) {
+      return reply.code(400).send({ success: false, message: 'OAuth 账号不支持模型调用 Key 操作' });
+    }
 
     const checkedAt = new Date().toISOString();
     await db.transaction(async (tx) => {
@@ -574,7 +589,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         }
       }
     });
-    const convergence = await rebuildAccountRoutes(token.accountId);
+    const convergence = await rebuildAccountRoutes(token.token.accountId);
     return { success: true, rebuild: convergence.rebuildResult };
   });
 
@@ -594,8 +609,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
 
-    if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持创建账号令牌' });
+    if (hasOauthProvider(row.accounts)) {
+      return reply.code(400).send({
+        success: false,
+        message: 'OAuth 账号使用直接凭据路由，不支持添加模型调用 Key',
+      });
     }
 
     const tokenValue = (body.token || '').trim();
@@ -625,6 +643,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           token: tokenValue,
           tokenGroup: (body.group || '').trim() || null,
           compatibilityPolicy: normalizedCompatibilityPolicy.present ? normalizedCompatibilityPolicy.value : null,
+          extraConfig: serializeOpaqueExtraConfig(body.extraConfig),
           valueStatus,
           source: body.source || 'manual',
           enabled,
@@ -702,17 +721,14 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'modelLimitsEnabled 参数无效' });
     }
 
-    const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
     const beforeTokenIds = normalizedCompatibilityPolicy.present
       ? await listAccountTokenIds(account.id)
       : null;
     const createdViaUpstream = await withAccountProxyOverride(
       getProxyUrlFromExtraConfig(account.extraConfig),
-      () => adapter.createApiToken(
-        site.url,
-        managementCredential,
-        platformUserId,
-        {
+      () => adapter.createApiToken({
+        ...buildPlatformCredentialContext({ endpoint: { baseUrl: site.url }, account }),
+        options: {
           name: asTrimmedString(body.name),
           group: asTrimmedString(body.group),
           unlimitedQuota,
@@ -722,7 +738,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           modelLimitsEnabled,
           modelLimits: asTrimmedString(body.modelLimits),
         },
-      ),
+      }),
     );
     if (!createdViaUpstream) {
       return reply.code(502).send({ success: false, message: '站点创建令牌失败' });
@@ -806,8 +822,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!owner) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
-    const apiKeyConnection = isApiKeyConnection(owner);
-
+    if (hasOauthProvider(owner)) {
+      return reply.code(400).send({ success: false, message: 'OAuth 账号不支持模型调用 Key 操作' });
+    }
     const body = parsedBody.data;
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     let nextValueStatus = resolveAccountTokenValueStatus(existing);
@@ -828,13 +845,6 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       updates.valueStatus = nextValueStatus;
     }
 
-    if (apiKeyConnection && nextValueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY) {
-      return reply.code(400).send({ success: false, message: 'API Key 必须填写完整明文，不能保存脱敏占位值' });
-    }
-    if (apiKeyConnection && (body.enabled === false || body.isDefault === false)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接的唯一 Key 必须保持启用并设为默认' });
-    }
-
     if (body.group !== undefined) {
       updates.tokenGroup = (body.group || '').trim() || null;
     }
@@ -842,9 +852,6 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
       updates.enabled = false;
       updates.isDefault = false;
-    } else if (apiKeyConnection) {
-      updates.enabled = true;
-      updates.isDefault = true;
     } else {
       if (body.enabled !== undefined) updates.enabled = body.enabled;
       if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
@@ -856,6 +863,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
     if (normalizedCompatibilityPolicy.present) {
       updates.compatibilityPolicy = normalizedCompatibilityPolicy.value;
+    }
+    if (body.extraConfig !== undefined) {
+      updates.extraConfig = serializeOpaqueExtraConfig(body.extraConfig);
     }
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
@@ -880,6 +890,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
+    await rebuildAccountRoutes(existing.accountId);
+
     return { success: true, token: latest };
   });
 
@@ -896,8 +908,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!owner) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
-    if (isApiKeyConnection(owner)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
+    if (hasOauthProvider(owner)) {
+      return reply.code(400).send({ success: false, message: 'OAuth 账号不支持模型调用 Key 操作' });
     }
     if (isMaskedPendingAccountToken(tokenRow)) {
       return reply.code(400).send({ success: false, message: '待补全令牌不能设为默认，请先补全明文 token' });
@@ -952,26 +964,27 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
 
-    if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持拉取账号令牌分组' });
-    }
-
     const account = row.accounts;
     const site = row.sites;
+    if (hasOauthProvider(account)) {
+      return reply.code(400).send({
+        success: false,
+        message: 'OAuth 账号使用直接凭据路由，不支持拉取模型调用 Key 分组',
+      });
+    }
     const adapter = getAdapter(site.platform);
     if (!adapter) {
       return reply.code(400).send({ success: false, message: `不支持的平台: ${site.platform}` });
     }
     const managementCredential = resolveManagementCredential(account);
-    if (!managementCredential) {
-      return reply.code(400).send({ success: false, message: '账号缺少访问令牌，无法拉取分组' });
-    }
 
     try {
-      const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
-      const groups = await withAccountProxyOverride(
+      const groups = await adapter.runWithProxyOverride(
         getProxyUrlFromExtraConfig(account.extraConfig),
-        () => adapter.getUserGroups(site.url, managementCredential, platformUserId),
+        () => adapter.getAccountTokenGroups(buildPlatformCredentialContext({
+          endpoint: { baseUrl: site.url },
+          account,
+        })),
       );
       const normalized = Array.from(new Set((groups || []).map((item) => String(item || '').trim()).filter(Boolean)));
       return { success: true, groups: normalized.length > 0 ? normalized : ['default'] };
@@ -990,9 +1003,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
     const result = await deleteAccountTokenById(tokenId);
     if (!result.success) {
-      const statusCode = result.message === '令牌不存在'
-        ? 404
-        : (result.message === 'API Key 连接不支持管理账号令牌' ? 400 : 502);
+      const statusCode = result.message === '令牌不存在' ? 404 : 502;
       return reply.code(statusCode).send({ success: false, message: result.message });
     }
     return { success: true };
@@ -1015,16 +1026,15 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     const result = await executeAccountTokenSync(row);
     appendTokenSyncEvent(result);
-    if (result.status === 'skipped' && result.reason === 'apikey_connection') {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持同步账号令牌' });
-    }
     if (result.status === 'failed' && result.reason === 'unsupported_platform') {
       return reply.code(400).send({ success: false, message: result.message });
     }
     if (result.status === 'failed') {
       return reply.code(502).send({ success: false, message: result.message || '同步失败' });
     }
-    const coverageRefresh = await refreshCoverageForAccounts([accountId]);
+    const coverageRefresh = result.status === 'synced'
+      ? await refreshCoverageForAccounts([accountId])
+      : { refresh: [], rebuild: null };
     return { success: true, ...result, coverageRefresh };
   });
 
@@ -1090,7 +1100,6 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       success: true,
       token: row
         ? (() => {
-          if (isApiKeyConnection(row.account)) return null;
           const { token: rawToken, ...meta } = row.token;
           return { ...meta, tokenMasked: maskToken(rawToken, row.site.platform) };
         })()

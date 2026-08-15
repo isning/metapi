@@ -9,6 +9,15 @@ const getModelsMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
+    accountConnectionFields: [],
     getModels: (...args: unknown[]) => getModelsMock(...args),
   }),
 }));
@@ -75,7 +84,6 @@ describe('accounts skipModelFetch behavior', () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-test-skip-fetch',
-        credentialMode: 'apikey',
         skipModelFetch: true,
       },
     });
@@ -110,7 +118,6 @@ describe('accounts skipModelFetch behavior', () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-test-normal-fetch',
-        credentialMode: 'apikey',
         skipModelFetch: false,
       },
     });

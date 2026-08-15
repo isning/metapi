@@ -4,6 +4,8 @@ import {
   normalizePlatformBaseUrl,
   resolveVersionedModelsUrl,
 } from './standardApiProvider.js';
+import type { PlatformCredentialContext } from './base.js';
+import { testAccountContext, testModelContext } from './testCredentialContext.js';
 
 class TestStandardApiProviderAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'test-standard';
@@ -13,7 +15,7 @@ class TestStandardApiProviderAdapter extends StandardApiProviderAdapterBase {
     return false;
   }
 
-  async getModels(_baseUrl: string, _token: string): Promise<string[]> {
+  async getModels(_input: PlatformCredentialContext): Promise<string[]> {
     return [];
   }
 
@@ -23,6 +25,10 @@ class TestStandardApiProviderAdapter extends StandardApiProviderAdapterBase {
 
   async fetchModelsForTest(options: Parameters<StandardApiProviderAdapterBase['fetchModelsFromStandardEndpoint']>[0]) {
     return this.fetchModelsFromStandardEndpoint(options);
+  }
+
+  modelCredentialForTest(input: PlatformCredentialContext): string {
+    return this.modelCredential(input);
   }
 }
 
@@ -45,16 +51,22 @@ describe('standardApiProvider helpers', () => {
       success: false,
       message: 'login endpoint not supported',
     });
-    await expect(adapter.getUserInfo('https://api.example.com', 'token')).resolves.toBe(null);
-    await expect(adapter.checkin('https://api.example.com', 'token')).resolves.toEqual({
+    await expect(adapter.getUserInfo(testAccountContext('https://api.example.com', 'token'))).resolves.toBe(null);
+    await expect(adapter.checkin(testAccountContext('https://api.example.com', 'token'))).resolves.toEqual({
       success: false,
       message: 'checkin endpoint not supported',
     });
-    await expect(adapter.getBalance('https://api.example.com', 'token')).resolves.toEqual({
+    await expect(adapter.getBalance(testAccountContext('https://api.example.com', 'token'))).resolves.toEqual({
       balance: 0,
       used: 0,
       quota: 0,
     });
+  });
+
+  it('never substitutes an account connection credential for a model key', () => {
+    const adapter = new TestStandardApiProviderAdapter();
+    expect(adapter.modelCredentialForTest(testAccountContext('https://api.example.com', 'session-cookie'))).toBe('');
+    expect(adapter.modelCredentialForTest(testModelContext('https://api.example.com', 'sk-model-key'))).toBe('sk-model-key');
   });
 
   it('does not swallow mapper bugs while still returning empty lists for network failures', async () => {

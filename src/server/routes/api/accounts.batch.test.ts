@@ -4,12 +4,17 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const { refreshBalanceMock } = vi.hoisted(() => ({
+const { refreshBalanceMock, retireAccountFromRoutingMock } = vi.hoisted(() => ({
   refreshBalanceMock: vi.fn(),
+  retireAccountFromRoutingMock: vi.fn(),
 }));
 
 vi.mock('../../services/balanceService.js', () => ({
   refreshBalance: refreshBalanceMock,
+}));
+
+vi.mock('../../services/accountRetirementService.js', () => ({
+  retireAccountFromRouting: (...args: unknown[]) => retireAccountFromRoutingMock(...args),
 }));
 
 type DbModule = typeof import('../../db/index.js');
@@ -36,6 +41,8 @@ describe('accounts batch routes', () => {
 
   beforeEach(async () => {
     refreshBalanceMock.mockReset();
+    retireAccountFromRoutingMock.mockReset();
+    retireAccountFromRoutingMock.mockResolvedValue(undefined);
     refreshBalanceMock.mockImplementation(async (id: number) => {
       if (id === 999) return null;
       return { id, balance: 12.5 };
@@ -121,5 +128,22 @@ describe('accounts batch routes', () => {
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { message?: string }).message).toContain('ids');
+  });
+
+  it('delegates single and batch account deletion to the atomic routing retirement workflow', async () => {
+    const single = await app.inject({
+      method: 'DELETE',
+      url: '/api/accounts/1',
+    });
+    expect(single.statusCode).toBe(200);
+
+    const batch = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/batch',
+      payload: { ids: [2], action: 'delete' },
+    });
+    expect(batch.statusCode).toBe(200);
+    expect(retireAccountFromRoutingMock).toHaveBeenNthCalledWith(1, 1, 'account-retirement');
+    expect(retireAccountFromRoutingMock).toHaveBeenNthCalledWith(2, 2, 'account-retirement');
   });
 });

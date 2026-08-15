@@ -3,6 +3,8 @@ import {
   type BalanceInfo,
   type CheckinResult,
   type UserInfo,
+  type PlatformCredentialCapabilities,
+  type PlatformCredentialContext,
 } from './base.js';
 import type { SiteApiEndpointBasePathMode } from '../../contracts/siteApiEndpointUrlMode.js';
 import { resolveOpenAiModelsUrl } from '../../contracts/siteApiEndpointUrlResolver.js';
@@ -31,6 +33,9 @@ export function resolveVersionedModelsUrl(
 }
 
 export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter {
+  override get credentialCapabilities(): PlatformCredentialCapabilities {
+    return { session: false, apiKey: true, sessionCredentialOptions: [] };
+  }
   protected loginUnsupportedMessage = 'login endpoint not supported';
   protected checkinUnsupportedMessage = 'checkin endpoint not supported';
 
@@ -41,18 +46,18 @@ export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter
     };
   }
 
-  override async getUserInfo(_baseUrl: string, _accessToken: string): Promise<UserInfo | null> {
+  override async getUserInfo(_input: PlatformCredentialContext): Promise<UserInfo | null> {
     return null;
   }
 
-  override async checkin(_baseUrl: string, _accessToken: string): Promise<CheckinResult> {
+  override async checkin(_input: PlatformCredentialContext): Promise<CheckinResult> {
     return {
       success: false,
       message: this.checkinUnsupportedMessage,
     };
   }
 
-  override async getBalance(_baseUrl: string, _accessToken: string): Promise<BalanceInfo> {
+  override async getBalance(_input: PlatformCredentialContext): Promise<BalanceInfo> {
     return { balance: 0, used: 0, quota: 0 };
   }
 

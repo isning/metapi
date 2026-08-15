@@ -17,12 +17,8 @@ describe('account route payload contracts', () => {
       username: 'alice',
       credential: 'access',
       credentialKind: 'access_token',
-      apiKey: 'key',
       platformUserId: 2,
       checkinEnabled: true,
-      credentialMode: 'apikey',
-      refreshToken: 'refresh',
-      tokenExpiresAt: '2030',
       skipModelFetch: false,
       extra: 'kept',
     })).toEqual({
@@ -32,12 +28,8 @@ describe('account route payload contracts', () => {
         username: 'alice',
         credential: 'access',
         credentialKind: 'access_token',
-        apiKey: 'key',
         platformUserId: 2,
         checkinEnabled: true,
-        credentialMode: 'apikey',
-        refreshToken: 'refresh',
-        tokenExpiresAt: '2030',
         skipModelFetch: false,
         extra: 'kept',
       },
@@ -60,9 +52,9 @@ describe('account route payload contracts', () => {
       success: true,
       data: { siteId: 1, username: 'u', password: 'p' },
     });
-    expect(parseAccountVerifyTokenPayload({ siteId: 1, credentialMode: 'session' })).toEqual({
+    expect(parseAccountVerifyTokenPayload({ siteId: 1, credential: 'access', credentialKind: 'access_token' })).toEqual({
       success: true,
-      data: { siteId: 1, credentialMode: 'session' },
+      data: { siteId: 1, credential: 'access', credentialKind: 'access_token' },
     });
     expect(parseAccountManualModelsPayload({ models: ['gpt-4.1'] })).toEqual({
       success: true,
@@ -79,7 +71,7 @@ describe('account route payload contracts', () => {
       ['apiKey', () => parseAccountCreatePayload({ siteId: 1, apiKey: 1 }), 'Invalid apiKey. Expected string.'],
       ['checkinEnabled', () => parseAccountCreatePayload({ siteId: 1, checkinEnabled: 'yes' }), 'Invalid checkinEnabled. Expected boolean.'],
       ['unitCost', () => parseAccountUpdatePayload({ unitCost: '1' }), 'Invalid unitCost. Expected number or null.'],
-      ['credentialMode', () => parseAccountCreatePayload({ siteId: 1, credentialMode: 'password' }), 'Invalid credentialMode. Expected auto/session/apikey.'],
+      ['credentialMode', () => parseAccountCreatePayload({ siteId: 1, credentialMode: 'password' }), 'Account creation derives its credential type from credential or apiKey.'],
       ['skipModelFetch', () => parseAccountCreatePayload({ siteId: 1, skipModelFetch: 'yes' }), 'Invalid skipModelFetch. Expected boolean.'],
       ['isPinned', () => parseAccountUpdatePayload({ isPinned: 'yes' }), 'Invalid isPinned. Expected boolean.'],
       ['sortOrder', () => parseAccountUpdatePayload({ sortOrder: -1 }), 'Invalid sortOrder. Expected non-negative integer.'],
@@ -87,8 +79,6 @@ describe('account route payload contracts', () => {
       ['ids', () => parseAccountBatchPayload({ ids: [0] }), 'Invalid ids. Expected number[].'],
       ['action', () => parseAccountBatchPayload({ action: 1 }), 'Invalid action. Expected string.'],
       ['platformUserId', () => parseAccountCreatePayload({ siteId: 1, platformUserId: 0 }), 'Invalid platformUserId. Expected positive number.'],
-      ['refreshToken', () => parseAccountUpdatePayload({ refreshToken: 1 }), 'Invalid refreshToken. Expected string or null.'],
-      ['tokenExpiresAt', () => parseAccountUpdatePayload({ tokenExpiresAt: {} }), 'Invalid tokenExpiresAt. Expected number, string, or null.'],
       ['accountId', () => parseAccountHealthRefreshPayload({ accountId: 0 }), '账号 ID 无效'],
       ['wait', () => parseAccountHealthRefreshPayload({ wait: 'yes' }), 'Invalid wait. Expected boolean.'],
       ['models', () => parseAccountManualModelsPayload({ models: [1] }), 'Invalid models. Expected string[].'],
@@ -100,11 +90,37 @@ describe('account route payload contracts', () => {
   });
 
   it('rejects removed credential fields instead of silently ignoring them', () => {
-    for (const field of ['accessToken', 'apiToken', 'cred', 'modelApiKey', 'managementApiToken']) {
+    for (const field of ['accessToken', 'apiToken', 'cred', 'modelApiKey', 'managementApiToken', 'refreshToken', 'tokenExpiresAt']) {
       expect(parseAccountUpdatePayload({ [field]: 'legacy-value' })).toEqual({
         success: false,
-        error: `Unsupported legacy account field "${field}". Use "credential" for connection credentials or "apiKey" for model keys.`,
+        error: `Unsupported legacy account field "${field}". Use "credential" for connection credentials, "apiKey" for model keys, or "connectionValues" for adapter connection fields.`,
       });
     }
+  });
+
+  it('keeps creation and connection verification credential inputs separate', () => {
+    expect(parseAccountCreatePayload({
+      siteId: 1,
+      credential: 'connection-credential',
+      apiKey: 'model-key',
+    })).toEqual({
+      success: false,
+      error: '请只填写连接凭据或模型调用 Key 其中一种。',
+    });
+
+    expect(parseAccountVerifyTokenPayload({
+      siteId: 1,
+      apiKey: 'model-key',
+    })).toEqual({
+      success: false,
+      error: 'Connection credential verification only accepts credential and credentialKind.',
+    });
+    expect(parseAccountVerifyTokenPayload({
+      siteId: 1,
+      credentialMode: 'session',
+    })).toEqual({
+      success: false,
+      error: 'Connection credential verification only accepts credential and credentialKind.',
+    });
   });
 });

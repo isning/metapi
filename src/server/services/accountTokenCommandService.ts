@@ -6,9 +6,16 @@ import {
   isMaskedPendingAccountToken,
   repairDefaultToken,
 } from './accountTokenService.js';
-import { getAccountManagementCredential, getProxyUrlFromExtraConfig, isApiKeyAccount, resolvePlatformUserId } from './accountExtraConfig.js';
+import {
+  getAccountManagementCredential,
+  getProxyUrlFromExtraConfig,
+  hasOauthProvider,
+} from './accountExtraConfig.js';
 import { getAdapter } from './platforms/index.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { buildPlatformCredentialContext } from './adapterCredentialContextService.js';
+import { retireAccountTokenFromRouting } from './accountRetirementService.js';
+import { rebuildRoutesOnly } from './routeRefreshWorkflow.js';
 
 export type AccountTokenCommandResult = { success: boolean; message?: string };
 export type AccountTokenBatchAction = 'enable' | 'disable' | 'delete';
@@ -17,10 +24,6 @@ export type AccountTokenBatchResult = {
   failedItems: Array<{ id: number; message: string }>;
 };
 
-function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
-  return isApiKeyAccount(account);
-}
-
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
 }
@@ -28,10 +31,6 @@ function isSiteDisabled(status?: string | null): boolean {
 export async function deleteAccountTokenById(tokenId: number): Promise<AccountTokenCommandResult> {
   const row = await getAccountTokenWithOwner(tokenId);
   if (!row) return { success: false, message: '令牌不存在' };
-  if (isApiKeyConnection(row.account)) {
-    return { success: false, message: 'API Key 连接不支持管理账号令牌' };
-  }
-
   const existing = row.token;
   const account = row.account;
   const site = row.site;
@@ -39,21 +38,25 @@ export async function deleteAccountTokenById(tokenId: number): Promise<AccountTo
   const managementCredential = getAccountManagementCredential(account) || '';
   const shouldDeleteUpstream = !isMaskedPendingAccountToken(existing)
     && !isSiteDisabled(site.status)
+    && !hasOauthProvider(account)
     && !!managementCredential
     && !!adapter;
 
   if (shouldDeleteUpstream) {
-    const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
     const upstreamDeleted = await withAccountProxyOverride(
       getProxyUrlFromExtraConfig(account.extraConfig),
-      () => adapter!.deleteApiToken(site.url, managementCredential, existing.token, platformUserId),
+      () => adapter!.deleteApiToken(buildPlatformCredentialContext({
+        endpoint: { baseUrl: site.url },
+        account,
+        token: existing,
+      })),
     );
     if (!upstreamDeleted) {
       return { success: false, message: '站点删除令牌失败，本地未删除' };
     }
   }
 
-  await db.delete(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).run();
+  await retireAccountTokenFromRouting(tokenId, 'account-token-retirement');
   if (existing.isDefault) await repairDefaultToken(existing.accountId);
   return { success: true };
 }
@@ -64,6 +67,7 @@ export async function runAccountTokenBatchCommand(
 ): Promise<AccountTokenBatchResult> {
   const successIds: number[] = [];
   const failedItems: Array<{ id: number; message: string }> = [];
+  let routeCatalogChanged = false;
 
   for (const id of ids) {
     try {
@@ -78,11 +82,10 @@ export async function runAccountTokenBatchCommand(
         failedItems.push({ id, message: 'Account not found' });
         continue;
       }
-      if (isApiKeyConnection(owner)) {
-        failedItems.push({ id, message: 'API Key 连接不支持管理账号令牌' });
+      if (action !== 'delete' && hasOauthProvider(owner)) {
+        failedItems.push({ id, message: 'OAuth 账号不支持模型调用 Key 操作' });
         continue;
       }
-
       if (action === 'delete') {
         const result = await deleteAccountTokenById(id);
         if (!result.success) {
@@ -99,10 +102,22 @@ export async function runAccountTokenBatchCommand(
           .where(eq(schema.accountTokens.id, id))
           .run();
         if (existing.isDefault && action === 'disable') await repairDefaultToken(existing.accountId);
+        routeCatalogChanged = true;
       }
       successIds.push(id);
     } catch (error: any) {
       failedItems.push({ id, message: error?.message || 'Batch operation failed' });
+    }
+  }
+
+  if (routeCatalogChanged) {
+    try {
+      await rebuildRoutesOnly();
+    } catch (error: any) {
+      const message = error?.message || 'Route rebuild failed';
+      for (const id of successIds.splice(0)) {
+        failedItems.push({ id, message });
+      }
     }
   }
 

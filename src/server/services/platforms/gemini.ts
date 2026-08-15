@@ -1,5 +1,5 @@
 import { StandardApiProviderAdapterBase, normalizePlatformBaseUrl } from './standardApiProvider.js';
-import type { ModelDiscoveryOptions } from './base.js';
+import type { PlatformCredentialContext } from './base.js';
 import { resolveGeminiNativeModelsUrl } from '../../contracts/siteApiEndpointUrlResolver.js';
 
 function stripModelPrefix(name: string): string {
@@ -39,7 +39,9 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     );
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     const normalizedBase = normalizePlatformBaseUrl(baseUrl);
 
     if (isOpenAiCompatGeminiBase(normalizedBase)) {
@@ -54,7 +56,7 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     try {
       const res = await this.fetchJson<any>(resolveGeminiNativeModelsUrl({
         baseUrl: normalizedBase,
-        basePathMode: options?.basePathMode,
+        basePathMode: input.endpoint.basePathMode,
       }, apiToken));
       const nativeModels = (res?.models || [])
         .map((m: any) => String(m?.name || '').trim())

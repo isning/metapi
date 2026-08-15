@@ -10,6 +10,15 @@ const getApiTokensMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
+    accountConnectionFields: [],
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
   }),
@@ -110,7 +119,7 @@ describe('accounts add requires token verification success', () => {
     expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
   });
 
-  it('allows binding when token verification succeeds as api key', async () => {
+  it('rejects a model key submitted through the connection credential field', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'apikey',
       models: ['gpt-4o-mini'],
@@ -131,14 +140,12 @@ describe('accounts add requires token verification success', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as { tokenType?: string };
-    expect(body.tokenType).toBe('apikey');
-
-    const accounts = await db.select().from(schema.accounts).all();
-    expect(accounts).toHaveLength(1);
-    const tokens = await db.select().from(schema.accountTokens).all();
-    expect(tokens).toHaveLength(1);
-    expect(tokens[0]?.token).toBe('sk-valid-key');
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: '当前凭据是模型调用 Key，请在「API Key 管理」中添加。',
+    });
+    expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
+    expect(await db.select().from(schema.accountTokens).all()).toHaveLength(0);
   });
 });

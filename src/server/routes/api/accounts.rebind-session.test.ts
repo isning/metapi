@@ -9,8 +9,22 @@ import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMember
 const verifyTokenMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
-  getAdapter: () => ({
+  getAdapter: (platform: string) => ({
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
+    accountConnectionFields: platform === 'sub2api'
+      ? [
+          { key: 'sub2apiAuth.refreshToken', inputType: 'password', storagePath: 'sub2apiAuth.refreshToken', secret: true },
+          { key: 'sub2apiAuth.tokenExpiresAt', inputType: 'number', storagePath: 'sub2apiAuth.tokenExpiresAt' },
+        ]
+      : [],
   }),
 }));
 
@@ -88,6 +102,35 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(latest?.credential).toBe('old-access-token');
     expect(latest?.status).toBe('expired');
+  });
+
+  it('does not allow an API Key account to be converted into a Session account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'API Key Site',
+      url: 'https://apikey.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/rebind-session`,
+      payload: { credential: 'new-session-token' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: '仅 Session 账号可以重新绑定连接凭据。',
+    });
+    expect(verifyTokenMock).not.toHaveBeenCalled();
+    const latest = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    expect(latest).toMatchObject({ credentialMode: 'apikey', credential: '' });
   });
 
   it('rejects non-string credential payload before session rebind verification', async () => {
@@ -220,8 +263,10 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
         credential: 'new-session-token',
-        refreshToken: 'new-refresh-token',
-        tokenExpiresAt: 1760000000000,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': 'new-refresh-token',
+          'sub2apiAuth.tokenExpiresAt': 1760000000000,
+        },
       },
     });
 
@@ -235,7 +280,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
   });
 
-  it('keeps existing sub2api refresh token when rebind payload refreshToken is empty', async () => {
+  it('keeps an existing sub2api refresh token when a rebind omits its secret connection value', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',
       userInfo: { username: 'sub2_user' },
@@ -265,8 +310,10 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
         credential: 'new-session-token',
-        refreshToken: '',
-        tokenExpiresAt: 1760000000000,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': '',
+          'sub2apiAuth.tokenExpiresAt': 1760000000000,
+        },
       },
     });
 
@@ -280,7 +327,7 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
   });
 
-  it('ignores managed sub2api refresh token fields for non-sub2api rebind', async () => {
+  it('ignores unknown connection fields for a non-sub2api rebind', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',
       userInfo: { username: 'linuxdo_1003' },
@@ -305,8 +352,10 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
       url: `/api/accounts/${account.id}/rebind-session`,
       payload: {
         credential: 'new-session-token',
-        refreshToken: 'should-be-ignored',
-        tokenExpiresAt: 1760000000000,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': 'should-be-ignored',
+          'sub2apiAuth.tokenExpiresAt': 1760000000000,
+        },
       },
     });
 

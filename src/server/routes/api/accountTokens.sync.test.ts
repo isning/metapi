@@ -18,9 +18,15 @@ type AccountTokenServiceModule = typeof import('../../services/accountTokenServi
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    runWithProxyOverride: (_proxyUrl: unknown, operation: () => Promise<unknown>) => operation(),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
     getApiToken: (...args: unknown[]) => getApiTokenMock(...args),
     createApiToken: (...args: unknown[]) => createApiTokenMock(...args),
+    getAccountTokenGroups: (context: { account: { mode: string } }) => (
+      context.account.mode === 'apikey'
+        ? Promise.resolve(['default'])
+        : getUserGroupsMock(context)
+    ),
     getUserGroups: (...args: unknown[]) => getUserGroupsMock(...args),
     deleteApiToken: (...args: unknown[]) => deleteApiTokenMock(...args),
     getModels: (...args: unknown[]) => getModelsMock(...args),
@@ -48,7 +54,9 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     siteStatus?: 'active' | 'disabled';
     accountStatus?: string;
     credential?: string | null;
-    credentialMode?: 'session' | 'apikey';
+    credentialMode?: 'session' | 'apikey' | 'oauth';
+    oauthProvider?: string | null;
+    extraConfig?: string | null;
   }) => {
     const id = nextSeed();
     const site = await db.insert(schema.sites).values({
@@ -66,6 +74,8 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
       credentialMode: input.credentialMode ?? 'session',
       credential: input.credential ?? (input.credentialMode === 'apikey' ? '' : `access-token-${id}`),
       credentialKind: input.credentialMode === 'apikey' ? 'none' : 'adapter_default',
+      oauthProvider: input.oauthProvider ?? null,
+      extraConfig: input.extraConfig ?? null,
       status: input.accountStatus ?? 'active',
     }).returning().get();
 
@@ -497,17 +507,18 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     expect((maskedRow as any)?.valueStatus).toBe('masked_pending');
   });
 
-  it('rejects sync and creation for apikey connections', async () => {
+  it('skips upstream sync but supports multiple manual keys for apikey connections', async () => {
     const { account } = await seedAccount({ siteStatus: 'active', credentialMode: 'apikey' });
 
     const syncResponse = await app.inject({
       method: 'POST',
       url: `/api/account-tokens/sync/${account.id}`,
     });
-    expect(syncResponse.statusCode).toBe(400);
+    expect(syncResponse.statusCode).toBe(200);
     expect(syncResponse.json()).toMatchObject({
-      success: false,
-      message: 'API Key 连接不支持同步账号令牌',
+      success: true,
+      status: 'skipped',
+      reason: 'management_credential_unavailable',
     });
 
     const createResponse = await app.inject({
@@ -515,24 +526,119 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
       url: '/api/account-tokens',
       payload: {
         accountId: account.id,
-        name: 'should-fail',
+        name: 'first',
+        token: 'sk-first-key',
       },
     });
-    expect(createResponse.statusCode).toBe(400);
+    expect(createResponse.statusCode).toBe(200);
     expect(createResponse.json()).toMatchObject({
-      success: false,
-      message: 'API Key 连接不支持创建账号令牌',
+      success: true,
+      token: expect.objectContaining({
+        name: 'first',
+        token: 'sk-first-key',
+      }),
     });
+
+    const secondCreateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: { accountId: account.id, name: 'second', token: 'sk-second-key' },
+    });
+    expect(secondCreateResponse.statusCode).toBe(200);
+    expect(await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).all()).toHaveLength(2);
+
+    const groupsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/account-tokens/groups/${account.id}`,
+    });
+    expect(groupsResponse.statusCode).toBe(200);
+    expect(groupsResponse.json()).toEqual({ success: true, groups: ['default'] });
+    expect(getUserGroupsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not manage model keys for OAuth connections, including legacy OAuth metadata', async () => {
+    const { account } = await seedAccount({
+      credentialMode: 'session',
+      extraConfig: JSON.stringify({ oauth: { provider: 'codex' } }),
+    });
+
+    const syncResponse = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/sync/${account.id}`,
+    });
+    expect(syncResponse.statusCode).toBe(200);
+    expect(syncResponse.json()).toMatchObject({
+      success: true,
+      status: 'skipped',
+      reason: 'oauth_direct_connection',
+    });
+    expect(getApiTokensMock).not.toHaveBeenCalled();
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: { accountId: account.id, name: 'ignored', token: 'sk-ignored' },
+    });
+    expect({ statusCode: createResponse.statusCode, body: createResponse.json() }).toEqual({
+      statusCode: 400,
+      body: {
+        success: false,
+        message: 'OAuth 账号使用直接凭据路由，不支持添加模型调用 Key',
+      },
+    });
+    expect(await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).all()).toHaveLength(0);
 
     const groupsResponse = await app.inject({
       method: 'GET',
       url: `/api/account-tokens/groups/${account.id}`,
     });
     expect(groupsResponse.statusCode).toBe(400);
-    expect(groupsResponse.json()).toMatchObject({
+    expect(groupsResponse.json()).toEqual({
       success: false,
-      message: 'API Key 连接不支持拉取账号令牌分组',
+      message: 'OAuth 账号使用直接凭据路由，不支持拉取模型调用 Key 分组',
     });
+    expect(getUserGroupsMock).not.toHaveBeenCalled();
+
+    const legacyToken = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'legacy',
+      token: 'sk-legacy',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    for (const request of [
+      { method: 'PUT', url: `/api/account-tokens/${legacyToken.id}`, payload: { name: 'renamed' } },
+      { method: 'POST', url: `/api/account-tokens/${legacyToken.id}/default` },
+      { method: 'POST', url: `/api/account-tokens/${legacyToken.id}/models/manual`, payload: { models: ['gpt-5'] } },
+    ] as const) {
+      const response = await app.inject(request);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({
+        success: false,
+        message: 'OAuth 账号不支持模型调用 Key 操作',
+      });
+    }
+    const batchResponse = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/batch',
+      payload: { ids: [legacyToken.id], action: 'disable' },
+    });
+    expect(batchResponse.json()).toMatchObject({
+      successIds: [],
+      failedItems: [{ id: legacyToken.id, message: 'OAuth 账号不支持模型调用 Key 操作' }],
+    });
+
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/api/account-tokens/${legacyToken.id}`,
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteApiTokenMock).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, legacyToken.id)).get()).toBeUndefined();
   });
 
   it('lists and updates the unique model key for an apikey connection', async () => {
@@ -689,6 +795,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
         accountId: account.id,
         name: 'compat-token',
         token: 'sk-compat-token',
+        extraConfig: '{ "adapter": { "scope": "create" } }',
         compatibilityPolicy: {
           reasoningHistory: {
             transport: {
@@ -710,6 +817,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
         },
       },
     });
+    expect(created.extraConfig).toBe('{ "adapter": { "scope": "create" } }');
 
     const updateResponse = await app.inject({
       method: 'PUT',
@@ -722,6 +830,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
             },
           },
         },
+        extraConfig: { adapter: { scope: 'update' } },
       },
     });
 
@@ -733,6 +842,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
         },
       },
     });
+    expect(updateResponse.json().token.extraConfig).toBe('{"adapter":{"scope":"update"}}');
   });
 
   it('creates token via upstream api and syncs into local store when manual token is omitted', async () => {
@@ -759,8 +869,10 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
       status: 'synced',
     });
     expect(createApiTokenMock).toHaveBeenCalledTimes(1);
-    expect(createApiTokenMock.mock.calls[0][0]).toBe(site.url);
-    expect(createApiTokenMock.mock.calls[0][1]).toBe(account.credential);
+    expect(createApiTokenMock.mock.calls[0][0]).toMatchObject({
+      endpoint: { baseUrl: site.url },
+      account: { id: account.id, credential: account.credential },
+    });
 
     const tokenRows = await db.select()
       .from(schema.accountTokens)
@@ -849,7 +961,7 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
 
     expect(response.statusCode).toBe(200);
     expect(createApiTokenMock).toHaveBeenCalledTimes(1);
-    expect(createApiTokenMock.mock.calls[0][3]).toMatchObject({
+    expect(createApiTokenMock.mock.calls[0][0].options).toMatchObject({
       name: 'custom-token',
       group: 'vip',
       unlimitedQuota: false,
@@ -951,6 +1063,22 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
     expect(getUserGroupsMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the adapter dummy group for API Key accounts without an upstream group request', async () => {
+    const { account } = await seedAccount({ credentialMode: 'apikey' });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/account-tokens/groups/${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      success: true,
+      groups: ['default'],
+    });
+    expect(getUserGroupsMock).not.toHaveBeenCalled();
+  });
+
   it('deletes upstream token before removing local token', async () => {
     const { account, site } = await seedAccount({ siteStatus: 'active' });
     const token = await db.insert(schema.accountTokens).values({
@@ -970,9 +1098,11 @@ describe('account tokens sync routes with site status', { timeout: 15_000 }, () 
 
     expect(response.statusCode).toBe(200);
     expect(deleteApiTokenMock).toHaveBeenCalledTimes(1);
-    expect(deleteApiTokenMock.mock.calls[0][0]).toBe(site.url);
-    expect(deleteApiTokenMock.mock.calls[0][1]).toBe(account.credential);
-    expect(deleteApiTokenMock.mock.calls[0][2]).toBe('sk-upstream-token');
+    expect(deleteApiTokenMock.mock.calls[0][0]).toMatchObject({
+      endpoint: { baseUrl: site.url },
+      account: { id: account.id, credential: account.credential },
+      token: { id: token.id, token: 'sk-upstream-token' },
+    });
 
     const removed = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();
     expect(removed).toBeUndefined();

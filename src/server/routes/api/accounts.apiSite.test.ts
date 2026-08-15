@@ -11,6 +11,15 @@ const getModelsMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
+    accountConnectionFields: [],
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
     getModels: (...args: unknown[]) => getModelsMock(...args),
   }),
@@ -99,21 +108,22 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/api/accounts/verify-token',
+      url: '/api/accounts',
       payload: {
         siteId: site.id,
         apiKey: 'sk-nihao',
-        credentialMode: 'apikey',
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      success: true,
       tokenType: 'apikey',
       modelCount: 1,
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'sk-nihao', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://api.example.com' },
+      token: expect.objectContaining({ token: 'sk-nihao' }),
+    }));
     expect(verifyTokenMock).not.toHaveBeenCalled();
   });
 
@@ -146,22 +156,22 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/api/accounts/verify-token',
+      url: '/api/accounts',
       payload: {
         siteId: site.id,
         apiKey: 'sk-rotate',
-        credentialMode: 'apikey',
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      success: true,
       tokenType: 'apikey',
       modelCount: 1,
     });
-    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api-a.example.com', 'sk-rotate', undefined);
-    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api-b.example.com', 'sk-rotate', undefined);
+    expect(getModelsMock.mock.calls.slice(0, 2).map(([context]) => [context.endpoint.baseUrl, context.token?.token])).toEqual([
+      ['https://api-a.example.com', 'sk-rotate'],
+      ['https://api-b.example.com', 'sk-rotate'],
+    ]);
 
     const endpoints = await db.select().from(schema.siteApiEndpoints).all();
     const firstEndpoint = endpoints.find((item) => item.url === 'https://api-a.example.com');
@@ -199,7 +209,6 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         credential: 'session-token',
-        credentialMode: 'session',
       },
     });
 
@@ -208,7 +217,11 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       success: true,
       tokenType: 'session',
     });
-    expect(verifyTokenMock).toHaveBeenCalledWith('https://console.example.com', 'session-token', undefined);
+    expect(verifyTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://console.example.com' },
+      account: expect.objectContaining({ mode: 'session', credential: 'session-token' }),
+      token: null,
+    }));
     expect(getModelsMock).not.toHaveBeenCalled();
   });
 
@@ -235,7 +248,6 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-nihao-create',
-        credentialMode: 'apikey',
       },
     });
 
@@ -243,12 +255,17 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(response.json()).toMatchObject({
       tokenType: 'apikey',
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'sk-nihao-create', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://api.example.com' },
+      token: expect.objectContaining({ token: 'sk-nihao-create' }),
+    }));
   });
 
   it('rotates API key account creation across configured ai endpoints after a retryable failure', async () => {
     let failedPrimaryEndpoint = false;
-    getModelsMock.mockImplementation(async (baseUrl, token) => {
+    getModelsMock.mockImplementation(async (context) => {
+      const baseUrl = context.endpoint.baseUrl;
+      const token = context.token?.token;
       if (token !== 'sk-nihao-create-rotate') return ['gpt-4o-mini'];
       if (baseUrl === 'https://api-create-a.example.com' && !failedPrimaryEndpoint) {
         failedPrimaryEndpoint = true;
@@ -286,7 +303,6 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-nihao-create-rotate',
-        credentialMode: 'apikey',
       },
     });
 
@@ -304,15 +320,17 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(task?.status).toBe('succeeded');
 
     const createRotateCalls = getModelsMock.mock.calls
-      .filter(([, token]) => token === 'sk-nihao-create-rotate');
+      .filter(([context]) => context.token?.token === 'sk-nihao-create-rotate')
+      .map(([context]) => [context.endpoint.baseUrl, context.token?.token]);
     expect(createRotateCalls.slice(0, 2)).toEqual([
-      ['https://api-create-a.example.com', 'sk-nihao-create-rotate', undefined],
-      ['https://api-create-b.example.com', 'sk-nihao-create-rotate', undefined],
+      ['https://api-create-a.example.com', 'sk-nihao-create-rotate'],
+      ['https://api-create-b.example.com', 'sk-nihao-create-rotate'],
     ]);
   });
 
   it('supports batch creating multiple API key connections for one site', async () => {
-    getModelsMock.mockImplementation(async (_baseUrl, token) => {
+    getModelsMock.mockImplementation(async (context) => {
+      const token = context.token?.token;
       if (token === 'sk-batch-a') return ['gpt-4o-mini'];
       if (token === 'sk-batch-b') return ['gpt-4.1-mini'];
       throw new Error(`unexpected token ${String(token)}`);
@@ -339,7 +357,6 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
         siteId: site.id,
         username: 'batch-key',
         apiKey: 'sk-batch-a\nsk-batch-b',
-        credentialMode: 'apikey',
       },
     });
 
@@ -351,9 +368,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       createdCount: 2,
       failedCount: 0,
     });
-    expect(getModelsMock.mock.calls).toEqual(expect.arrayContaining([
-      ['https://api.example.com', 'sk-batch-a', undefined],
-      ['https://api.example.com', 'sk-batch-b', undefined],
+    expect(getModelsMock.mock.calls.map(([context]) => [context.endpoint.baseUrl, context.token?.token])).toEqual(expect.arrayContaining([
+      ['https://api.example.com', 'sk-batch-a'],
+      ['https://api.example.com', 'sk-batch-b'],
     ]));
 
     const accounts = await db.select().from(schema.accounts).all();
@@ -364,7 +381,8 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   });
 
   it('treats newline-delimited apiKey payloads as batch API key creation', async () => {
-    getModelsMock.mockImplementation(async (_baseUrl, token) => {
+    getModelsMock.mockImplementation(async (context) => {
+      const token = context.token?.token;
       if (token === 'sk-array-a') return ['gpt-4o-mini'];
       if (token === 'sk-array-b') return ['gpt-4.1-mini'];
       throw new Error(`unexpected token ${String(token)}`);
@@ -402,9 +420,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       createdCount: 2,
       failedCount: 0,
     });
-    expect(getModelsMock.mock.calls).toEqual(expect.arrayContaining([
-      ['https://api.example.com', 'sk-array-a', undefined],
-      ['https://api.example.com', 'sk-array-b', undefined],
+    expect(getModelsMock.mock.calls.map(([context]) => [context.endpoint.baseUrl, context.token?.token])).toEqual(expect.arrayContaining([
+      ['https://api.example.com', 'sk-array-a'],
+      ['https://api.example.com', 'sk-array-b'],
     ]));
 
     const accounts = await db.select().from(schema.accounts).all();

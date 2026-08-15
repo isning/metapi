@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Sub2ApiAdapter } from './sub2api.js';
+import { testAccountContext } from './testCredentialContext.js';
 
 class MockSub2ApiAdapter extends Sub2ApiAdapter {
   constructor(private readonly responses: Record<string, unknown>) {
@@ -44,7 +45,7 @@ describe('Sub2ApiAdapter subscription summary parsing', () => {
       },
     });
 
-    const balance = await adapter.getBalance('https://sub2api.example.com', 'jwt-token');
+    const balance = await adapter.getBalance(testAccountContext('https://sub2api.example.com', 'jwt-token'));
     expect(balance.subscriptionSummary).toEqual({
       activeCount: 1,
       totalUsedUsd: 3.2,
@@ -84,7 +85,7 @@ describe('Sub2ApiAdapter subscription summary parsing', () => {
       },
     });
 
-    const balance = await adapter.getBalance('https://sub2api.example.com', 'jwt-token');
+    const balance = await adapter.getBalance(testAccountContext('https://sub2api.example.com', 'jwt-token'));
     expect(balance.subscriptionSummary).toEqual({
       activeCount: 1,
       totalUsedUsd: 1.5,
@@ -124,7 +125,7 @@ describe('Sub2ApiAdapter subscription summary parsing', () => {
       },
     });
 
-    const balance = await adapter.getBalance('https://sub2api.example.com', 'jwt-token');
+    const balance = await adapter.getBalance(testAccountContext('https://sub2api.example.com', 'jwt-token'));
     expect(balance.subscriptionSummary).toEqual({
       activeCount: 0,
       totalUsedUsd: 0,

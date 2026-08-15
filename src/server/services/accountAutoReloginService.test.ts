@@ -41,7 +41,10 @@ describe('accountAutoReloginService', () => {
 
   it('refreshes the persisted session from the encrypted password credential', async () => {
     const login = vi.fn().mockResolvedValue({ success: true, accessToken: 'fresh-session' });
-    getAdapterMock.mockReturnValue({ login });
+    getAdapterMock.mockReturnValue({
+      login,
+      credentialCapabilities: { session: true },
+    });
     decryptAccountPasswordMock.mockReturnValue('plain-password');
 
     await expect(refreshAccountSessionFromAutoRelogin({
@@ -54,13 +57,43 @@ describe('accountAutoReloginService', () => {
     }, {
       platform: 'new-api',
       url: 'https://newapi.example.com',
-    })).resolves.toBe('fresh-session');
+    })).resolves.toEqual({ credential: 'fresh-session', credentialKind: 'access_token' });
 
     expect(login).toHaveBeenCalledWith('https://newapi.example.com', 'alice', 'plain-password');
     expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({
       credential: 'fresh-session',
       credentialMode: 'session',
+      credentialKind: 'access_token',
       status: 'active',
+    }));
+  });
+
+  it('preserves a Cookie credential returned by the adapter', async () => {
+    const login = vi.fn().mockResolvedValue({
+      success: true,
+      accessToken: 'session=cookie-value',
+      credentialKind: 'session_cookie',
+    });
+    getAdapterMock.mockReturnValue({
+      login,
+      credentialCapabilities: { session: true },
+    });
+    decryptAccountPasswordMock.mockReturnValue('plain-password');
+
+    await refreshAccountSessionFromAutoRelogin({
+      id: 4,
+      credentialMode: 'session',
+      extraConfig: JSON.stringify({
+        autoRelogin: { username: 'alice', passwordCipher: 'cipher' },
+      }),
+    }, {
+      platform: 'new-api',
+      url: 'https://newapi.example.com',
+    });
+
+    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({
+      credential: 'session=cookie-value',
+      credentialKind: 'session_cookie',
     }));
   });
 
@@ -78,5 +111,64 @@ describe('accountAutoReloginService', () => {
 
     expect(getAdapterMock).not.toHaveBeenCalled();
     expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
+  });
+
+  it('does not convert a structured OAuth account when stale auto-relogin metadata exists', async () => {
+    await expect(refreshAccountSessionFromAutoRelogin({
+      id: 4,
+      // Some pre-migration rows still carry the legacy Session mode. The
+      // structured OAuth provider remains authoritative for their lifecycle.
+      credentialMode: 'session',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        autoRelogin: { username: 'alice', passwordCipher: 'cipher' },
+      }),
+    }, {
+      platform: 'codex',
+      url: 'https://chatgpt.com/backend-api/codex',
+    })).resolves.toBeNull();
+
+    expect(getAdapterMock).not.toHaveBeenCalled();
+    expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
+    expect(updateSetMock).not.toHaveBeenCalled();
+  });
+
+  it('does not convert a legacy OAuth account identified only in extraConfig', async () => {
+    await expect(refreshAccountSessionFromAutoRelogin({
+      id: 4,
+      credentialMode: 'session',
+      extraConfig: JSON.stringify({
+        oauth: { provider: 'codex' },
+        autoRelogin: { username: 'alice', passwordCipher: 'cipher' },
+      }),
+    }, {
+      platform: 'codex',
+      url: 'https://chatgpt.com/backend-api/codex',
+    })).resolves.toBeNull();
+
+    expect(getAdapterMock).not.toHaveBeenCalled();
+    expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
+    expect(updateSetMock).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-relogin through an adapter without Session support', async () => {
+    getAdapterMock.mockReturnValue({
+      login: vi.fn(),
+      credentialCapabilities: { session: false },
+    });
+
+    await expect(refreshAccountSessionFromAutoRelogin({
+      id: 4,
+      credentialMode: 'session',
+      extraConfig: JSON.stringify({
+        autoRelogin: { username: 'alice', passwordCipher: 'cipher' },
+      }),
+    }, {
+      platform: 'openai',
+      url: 'https://api.openai.com',
+    })).resolves.toBeNull();
+
+    expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
+    expect(updateSetMock).not.toHaveBeenCalled();
   });
 });

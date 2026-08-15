@@ -4,6 +4,7 @@ import {
   convergeAccountMutation,
   rebuildRoutesBestEffort,
 } from './accountMutationWorkflow.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
 
 type AccountUpdateWorkflowInput = {
   accountId: number;
@@ -28,10 +29,7 @@ export async function applyAccountUpdateWorkflow(input: AccountUpdateWorkflowInp
     updatedAt: new Date().toISOString(),
   };
 
-  await db.update(schema.accounts)
-    .set(persistedUpdates)
-    .where(eq(schema.accounts.id, input.accountId))
-    .run();
+  await updateAccountRuntimeIdentity(input.accountId, persistedUpdates);
 
   const convergence = await convergeAccountMutation({
     accountId: input.accountId,
@@ -47,13 +45,7 @@ export async function applyAccountUpdateWorkflow(input: AccountUpdateWorkflowInp
     input.reactivateAfterSuccessfulModelRefresh
     && convergence.modelRefreshResult?.status === 'success'
   ) {
-    await db.update(schema.accounts)
-      .set({
-        status: 'active',
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.accounts.id, input.accountId))
-      .run();
+    await updateAccountRuntimeIdentity(input.accountId, { status: 'active' });
   }
 
   const shouldRebuildRoutes = !isExpiredApiKeyRecoveryFlow

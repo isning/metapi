@@ -1,32 +1,49 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 const verifyTokenMock = vi.fn();
 const getModelsMock = vi.fn();
 const getApiTokensMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
-  getAdapter: (platform: string) => ({
+  getAdapter: (platform: string) => platform === 'unsupported' ? undefined : ({
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
     getModels: (...args: unknown[]) => getModelsMock(...args),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
     credentialCapabilities: platform === 'openai'
-      ? { session: false, apiKey: true }
-      : { session: true, apiKey: true },
+      ? { session: false, apiKey: true, sessionCredentialOptions: [] }
+      : {
+          session: true,
+          apiKey: true,
+          sessionCredentialOptions: platform === 'anyrouter'
+            ? [{ kind: 'session_cookie' }, { kind: 'access_token' }]
+            : [{ kind: 'access_token' }],
+        },
+    accountConnectionFields: platform === 'sub2api'
+      ? [
+          { key: 'sub2apiAuth.refreshToken', inputType: 'password', storagePath: 'sub2apiAuth.refreshToken', secret: true },
+          { key: 'sub2apiAuth.tokenExpiresAt', inputType: 'number', storagePath: 'sub2apiAuth.tokenExpiresAt' },
+        ]
+      : [],
   }),
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
 
 describe('accounts credential mode', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let resetBackgroundTasks: BackgroundTaskModule['__resetBackgroundTasksForTests'];
+  let getBackgroundTask: BackgroundTaskModule['getBackgroundTask'];
+  let listBackgroundTasks: BackgroundTaskModule['listBackgroundTasks'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -36,8 +53,12 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./accounts.js');
+    const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
+    getBackgroundTask = backgroundTaskModule.getBackgroundTask;
+    listBackgroundTasks = backgroundTaskModule.listBackgroundTasks;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -48,6 +69,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     getModelsMock.mockReset();
     getApiTokensMock.mockReset();
     getApiTokensMock.mockResolvedValue([]);
+    resetBackgroundTasks();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
@@ -61,14 +83,22 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     await db.delete(schema.sites).run();
   });
 
+  afterEach(async () => {
+    const tasks = listBackgroundTasks(200);
+    await Promise.all(tasks.map((task) => waitForBackgroundTaskToReachTerminalState(
+      getBackgroundTask,
+      task.id,
+      { timeoutMs: 10_000, pollMs: 5 },
+    )));
+    resetBackgroundTasks();
+  });
+
   afterAll(async () => {
     await app.close();
     delete process.env.DATA_DIR;
   });
 
-  it('uses API-key fast verify path when credentialMode is apikey', async () => {
-    verifyTokenMock.mockRejectedValueOnce(new Error('verifyToken should not be called'));
-    getModelsMock.mockResolvedValueOnce(['gpt-5-mini', 'gpt-4o-mini']);
+  it('rejects model-key fields from connection credential verification', async () => {
 
     const site = await db.insert(schema.sites).values({
       name: 'Fast Verify Site',
@@ -82,18 +112,90 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-fast-verify',
-        credentialMode: 'apikey',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Connection credential verification only accepts credential and credentialKind.',
+    });
+    expect(verifyTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit Session Cookie or Access Token choice for AnyRouter-style sessions', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Explicit Credential Kind Site',
+      url: 'https://explicit-kind.example.com',
+      platform: 'anyrouter',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: site.id,
+        credential: 'session=value',
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      success: true,
-      tokenType: 'apikey',
-      modelCount: 2,
+      success: false,
+      message: '请选择连接凭据类型：Session Cookie 或 Access Token。',
     });
-    expect(getModelsMock).toHaveBeenCalledTimes(1);
     expect(verifyTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('derives API-key account health from observed enabled token health', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'API Key Health Site',
+      url: 'https://api-key-health.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'api-key-health',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
+      status: 'active',
+    }).returning().get();
+    const healthy = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'healthy',
+      token: 'sk-health-1',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const unhealthy = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'unhealthy',
+      token: 'sk-health-2',
+      enabled: true,
+      isDefault: false,
+    }).returning().get();
+    const disabled = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'disabled',
+      token: 'sk-health-3',
+      enabled: false,
+      isDefault: false,
+    }).returning().get();
+    await db.insert(schema.accountTokenHealth).values([
+      { tokenId: healthy.id, state: 'healthy', reason: 'proxy ok', source: 'proxy-observation' },
+      { tokenId: unhealthy.id, state: 'unhealthy', reason: '401', source: 'proxy-auth' },
+      { tokenId: disabled.id, state: 'unhealthy', reason: '401', source: 'proxy-auth' },
+    ]).run();
+
+    const response = await app.inject({ method: 'GET', url: '/api/accounts?refresh=1' });
+    expect(response.statusCode).toBe(200);
+    const listed = response.json().accounts.find((item: { id: number }) => item.id === account.id);
+    expect(listed.apiKeyHealth).toMatchObject({ state: 'degraded', source: 'token-aggregate' });
+
+    await db.update(schema.accountTokenHealth).set({ state: 'unhealthy' }).where(eq(schema.accountTokenHealth.tokenId, healthy.id)).run();
+    const allFailed = await app.inject({ method: 'GET', url: '/api/accounts?refresh=1' });
+    expect(allFailed.json().accounts.find((item: { id: number }) => item.id === account.id).apiKeyHealth.state).toBe('unhealthy');
   });
 
   it('rejects accessToken input when API-key mode requires apiKey', async () => {
@@ -109,7 +211,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         accessToken: 'sk-wrong-field',
-        credentialMode: 'apikey',
       },
     });
 
@@ -125,7 +226,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         accessToken: 'sk-wrong-field',
-        credentialMode: 'apikey',
       },
     });
 
@@ -149,7 +249,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         credential: 'not-a-session',
-        credentialMode: 'session',
       },
     });
     expect(verifyResponse.statusCode).toBe(200);
@@ -164,7 +263,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         credential: 'not-a-session',
-        credentialMode: 'session',
       },
     });
     expect(createResponse.statusCode).toBe(400);
@@ -190,14 +288,26 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         apiKey: 'sk-proxy-only',
-        credentialMode: 'apikey',
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { tokenType?: string; capabilities?: { proxyOnly?: boolean } };
+    const body = response.json() as {
+      tokenType?: string;
+      capabilities?: {
+        canSyncAccountTokens?: boolean;
+        canCreateAccountTokens?: boolean;
+        canRebindSession?: boolean;
+        proxyOnly?: boolean;
+      };
+    };
     expect(body.tokenType).toBe('apikey');
-    expect(body.capabilities?.proxyOnly).toBe(true);
+    expect(body.capabilities).toMatchObject({
+      canSyncAccountTokens: false,
+      canCreateAccountTokens: true,
+      canRebindSession: false,
+      proxyOnly: true,
+    });
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
@@ -298,7 +408,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect((response.json() as { message?: string }).message).toContain('credential');
   });
 
-  it('marks apikey connection healthy in account list after model discovery succeeds', async () => {
+  it('does not derive API-key account health from model discovery records', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Healthy API Key Site',
       url: 'https://healthy-apikey.example.com',
@@ -340,16 +450,30 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       accounts: Array<{
         id: number;
         runtimeHealth?: { state?: string; reason?: string };
-        capabilities?: { proxyOnly?: boolean };
+        capabilities?: {
+          canSyncAccountTokens?: boolean;
+          canCreateAccountTokens?: boolean;
+          canRebindSession?: boolean;
+          proxyOnly?: boolean;
+        };
       }>;
       sites: any[];
     };
     const list = body.accounts;
     expect(list).toHaveLength(1);
-    expect(list[0]?.capabilities?.proxyOnly).toBe(true);
+    expect(list[0]?.capabilities).toMatchObject({
+      canSyncAccountTokens: false,
+      canCreateAccountTokens: true,
+      canRebindSession: false,
+      proxyOnly: true,
+    });
     expect(list[0]?.runtimeHealth).toMatchObject({
-      state: 'healthy',
-      reason: '模型探测成功',
+      state: 'unknown',
+      reason: '尚未检测',
+    });
+    expect(list[0]?.apiKeyHealth).toMatchObject({
+      state: 'unknown',
+      source: 'token-aggregate',
     });
   });
 
@@ -401,6 +525,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         capabilities?: {
           canCheckin?: boolean;
           canRefreshBalance?: boolean;
+          canSyncAccountTokens?: boolean;
+          canCreateAccountTokens?: boolean;
+          canRebindSession?: boolean;
           proxyOnly?: boolean;
         };
       }>;
@@ -408,10 +535,13 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     };
     const list = body.accounts;
     const item = list.find((entry) => entry.id === account.id);
-    expect(item?.credentialMode).toBe('session');
+    expect(item?.credentialMode).toBe('oauth');
     expect(item?.capabilities).toMatchObject({
       canCheckin: false,
       canRefreshBalance: false,
+      canSyncAccountTokens: false,
+      canCreateAccountTokens: false,
+      canRebindSession: false,
       proxyOnly: true,
     });
   });
@@ -461,6 +591,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         capabilities?: {
           canCheckin?: boolean;
           canRefreshBalance?: boolean;
+          canSyncAccountTokens?: boolean;
+          canCreateAccountTokens?: boolean;
+          canRebindSession?: boolean;
           proxyOnly?: boolean;
         };
         runtimeHealth?: {
@@ -475,11 +608,14 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect(item?.capabilities).toMatchObject({
       canCheckin: false,
       canRefreshBalance: false,
+      canSyncAccountTokens: false,
+      canCreateAccountTokens: false,
+      canRebindSession: false,
       proxyOnly: true,
     });
     expect(item?.runtimeHealth).toMatchObject({
-      state: 'healthy',
-      reason: '模型探测成功',
+      state: 'unknown',
+      reason: '尚未检测',
     });
   });
 
@@ -501,8 +637,10 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       payload: {
         siteId: site.id,
         credential: 'jwt-access-token',
-        refreshToken: 'jwt-refresh-token',
-        tokenExpiresAt: 1760000000000,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': 'jwt-refresh-token',
+          'sub2apiAuth.tokenExpiresAt': 1760000000000,
+        },
       },
     });
 
@@ -518,9 +656,38 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect(created?.credential).toBe('jwt-access-token');
     expect(parsedExtra.sub2apiAuth?.refreshToken).toBe('jwt-refresh-token');
     expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
+    expect(verifyTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      account: expect.objectContaining({
+        extraConfig: expect.stringContaining('jwt-refresh-token'),
+      }),
+    }));
   });
 
-  it('updates and clears managed refresh token via account update API', async () => {
+  it('returns a client error for credential edits on an unsupported legacy platform', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Unsupported Site',
+      url: 'https://unsupported.example.com',
+      platform: 'unsupported',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      credentialMode: 'session',
+      credential: 'existing-access-token',
+      credentialKind: 'access_token',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: { credential: 'replacement-access-token' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: '不支持的平台: unsupported' });
+  });
+
+  it('updates adapter connection fields and preserves an omitted secret value', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Sub2 Site',
       url: 'https://sub2.example.com',
@@ -544,8 +711,10 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
       payload: {
-        refreshToken: 'new-refresh-token',
-        tokenExpiresAt: 1760000000000,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': 'new-refresh-token',
+          'sub2apiAuth.tokenExpiresAt': 1760000000000,
+        },
       },
     });
     expect(updateResponse.statusCode).toBe(200);
@@ -561,8 +730,10 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
       payload: {
-        refreshToken: null,
-        tokenExpiresAt: null,
+        connectionValues: {
+          'sub2apiAuth.refreshToken': null,
+          'sub2apiAuth.tokenExpiresAt': null,
+        },
       },
     });
     expect(clearResponse.statusCode).toBe(200);
@@ -571,7 +742,8 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const parsedCleared = JSON.parse(cleared?.extraConfig || '{}') as {
       sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
     };
-    expect(parsedCleared.sub2apiAuth).toBeUndefined();
+    expect(parsedCleared.sub2apiAuth?.refreshToken).toBe('new-refresh-token');
+    expect(parsedCleared.sub2apiAuth?.tokenExpiresAt).toBeUndefined();
   });
 
   it('accepts nullable optional fields from the edit panel payload', async () => {
@@ -603,8 +775,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         unitCost: null,
         credential: 'access-token-updated',
         isPinned: false,
-        refreshToken: null,
-        tokenExpiresAt: null,
         proxyUrl: null,
       },
     });

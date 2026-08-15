@@ -1,4 +1,4 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type AccountConnectionField, type PlatformCredentialCapabilities, type PlatformCredentialContext } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
@@ -6,11 +6,36 @@ import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
 import {
   normalizeCommonPricingPayload,
   type UpstreamPricingCatalog,
-  type UpstreamPricingCredential,
 } from '../upstreamPricingCatalog.js';
+import { resolvePlatformUserId } from '../accountExtraConfig.js';
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
+
+  override get credentialCapabilities(): PlatformCredentialCapabilities {
+    return {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [
+        { kind: 'session_cookie', labelI18nKey: 'pages.accounts.credentialKindSessionCookie', commentI18nKey: 'pages.accounts.credentialKindSessionCookieComment', placeholderI18nKey: 'pages.accounts.credentialPlaceholderCookie' },
+        { kind: 'access_token', labelI18nKey: 'pages.accounts.credentialKindAccessToken', commentI18nKey: 'pages.accounts.credentialKindAccessTokenComment', placeholderI18nKey: 'pages.accounts.credentialPlaceholderAccessToken' },
+      ],
+    };
+  }
+
+  override readonly accountConnectionFields: readonly AccountConnectionField[] = [{
+    key: 'platformUserId',
+    labelI18nKey: 'pages.accounts.newApiUserId',
+    commentI18nKey: 'pages.accounts.sitesNewApiUserUserId',
+    placeholderI18nKey: 'pages.accounts.id',
+    inputType: 'number',
+    storagePath: 'platformUserId',
+    runtimeArgument: 'platformUserId',
+  }];
+
+  private platformUserId(input: PlatformCredentialContext): number | undefined {
+    return resolvePlatformUserId(input.account.extraConfig, input.account.username);
+  }
 
   async detect(url: string): Promise<boolean> {
     try {
@@ -21,7 +46,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async getSiteAnnouncements(baseUrl: string, _accessToken: string): Promise<SiteAnnouncement[]> {
+  override async getSiteAnnouncements(input: PlatformCredentialContext): Promise<SiteAnnouncement[]> {
+    const baseUrl = input.endpoint.baseUrl;
     try {
       const payload = await this.fetchJson<any>(`${baseUrl}/api/notice`);
       const content = typeof payload?.data === 'string'
@@ -84,12 +110,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const raw = trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
     const candidates: string[] = [];
 
+    candidates.push(`session=${raw}`);
+    candidates.push(`token=${raw}`);
+
+    // An opaque session value may itself contain '=' (for example base64
+    // payloads), so try the documented cookie names before treating it as a
+    // complete Cookie header.
     if (raw.includes('=')) {
       candidates.push(raw);
     }
-
-    candidates.push(`session=${raw}`);
-    candidates.push(`token=${raw}`);
 
     return Array.from(new Set(candidates));
   }
@@ -839,22 +868,6 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  private async getSessionModelsByCookie(baseUrl: string, token: string, userId?: number | null): Promise<string[]> {
-    for (const cookie of this.buildCookieCandidates(token)) {
-      try {
-        const headers: Record<string, string> = { Cookie: cookie };
-        Object.assign(headers, this.userIdHeaders(userId));
-        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/models`, { headers });
-        if (Array.isArray(res?.data) && res.data.length > 0) return res.data.filter(Boolean);
-        if (res?.data && typeof res.data === 'object') {
-          const keys = Object.keys(res.data).filter(Boolean);
-          if (keys.length > 0) return keys;
-        }
-      } catch {}
-    }
-    return [];
-  }
-
   private extractOpenAiModels(payload: any): string[] {
     if (!Array.isArray(payload?.data)) return [];
     return payload.data.map((m: any) => m?.id).filter(Boolean);
@@ -893,44 +906,21 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  private async discoverUserId(baseUrl: string, accessToken: string): Promise<number | null> {
-    const jwtId = this.tryDecodeUserId(accessToken);
-    if (jwtId) {
+  override async getUserInfo(input: PlatformCredentialContext): Promise<UserInfo | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    if (input.account.credentialKind === 'access_token') {
       try {
-        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-          headers: this.authHeaders(accessToken, jwtId),
+        const directRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
         });
-        if (res?.success && res?.data) return jwtId;
+        if (directRes?.success && directRes?.data) return this.parseUserInfo(directRes.data);
       } catch {}
+      return null;
     }
 
-    try {
-      const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res?.success && res?.data?.id) return res.data.id;
-    } catch {}
-
-    try {
-      const cookieRes = await this.fetchUserSelfByCookie(baseUrl, accessToken);
-      if (cookieRes?.success && cookieRes?.data?.id) return cookieRes.data.id;
-    } catch {}
-
-    const cookieId = await this.probeUserIdByCookie(baseUrl, accessToken);
-    if (cookieId) return cookieId;
-
-    return null;
-  }
-
-  override async getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null> {
-    try {
-      const directRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (directRes?.success && directRes?.data) {
-        return this.parseUserInfo(directRes.data);
-      }
-    } catch {}
+    if (input.account.credentialKind !== 'session_cookie') return null;
 
     try {
       const cookieRes = await this.fetchUserSelfByCookie(baseUrl, accessToken, platformUserId);
@@ -956,7 +946,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+  ): Promise<{
+    success: boolean;
+    accessToken?: string;
+    credentialKind?: 'session_cookie' | 'access_token';
+    username?: string;
+    message?: string;
+  }> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
@@ -974,6 +970,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         return {
           success: true,
           accessToken,
+          credentialKind: 'access_token',
           username,
         };
       }
@@ -981,6 +978,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         return {
           success: true,
           accessToken: cookieHeader,
+          credentialKind: 'session_cookie',
           username,
         };
       }
@@ -997,64 +995,115 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
-    if (openAiModels.length > 0) {
-      return { tokenType: 'apikey', models: openAiModels };
+  override async verifyToken(input: PlatformCredentialContext): Promise<TokenVerifyResult> {
+    const baseUrl = input.endpoint.baseUrl;
+    const platformUserId = this.platformUserId(input);
+    if (input.account.mode === 'apikey') {
+      const token = this.modelCredential(input);
+      const models = await this.getOpenAiModels(baseUrl, token);
+      return models.length > 0 ? { tokenType: 'apikey', models } : { tokenType: 'unknown' };
     }
 
-    try {
-      const directRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (directRes?.success && directRes?.data) {
-        const userId = directRes.data.id;
-        const userInfo = this.parseUserInfo(directRes.data);
-        const balance = this.parseBalance(directRes.data);
-        return { tokenType: 'session', userInfo, balance };
-      }
+    if (input.account.credentialKind === 'access_token') {
+      return this.verifyAccessTokenSession(baseUrl, input.account.credential, platformUserId);
+    }
+    if (input.account.credentialKind === 'session_cookie') {
+      return this.verifyCookieSession(baseUrl, input.account.credential, platformUserId);
+    }
+    return { tokenType: 'unknown' };
+  }
 
-      if (directRes?.message?.includes('New-Api-User')) {
-        const userId = platformUserId || await this.probeUserId(baseUrl, token);
+  private selectDiscoveredModelToken(tokens: ApiTokenInfo[]): string | null {
+    return tokens.find((item) => item.enabled !== false)?.key || tokens[0]?.key || null;
+  }
+
+  private async getApiTokensByAccessToken(
+    baseUrl: string,
+    accessToken: string,
+    userId?: number | null,
+  ): Promise<ApiTokenInfo[]> {
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
+        headers: this.authHeaders(accessToken, userId || undefined),
+      });
+      return this.normalizeTokenItems(this.parseTokenItems(res));
+    } catch {
+      return [];
+    }
+  }
+
+  private async discoverUserIdByAccessToken(baseUrl: string, accessToken: string): Promise<number | null> {
+    try {
+      const response = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
+        headers: this.authHeaders(accessToken),
+      });
+      const userId = Number.parseInt(String(response?.data?.id), 10);
+      if (response?.success && Number.isFinite(userId) && userId > 0) return userId;
+    } catch {}
+    return this.probeUserId(baseUrl, accessToken);
+  }
+
+  private async verifyAccessTokenSession(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+  ): Promise<TokenVerifyResult> {
+    let response: any = null;
+    let userId = platformUserId;
+    try {
+      response = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
+        headers: this.authHeaders(accessToken, userId),
+      });
+      if (!response?.success || !response?.data) {
+        userId = platformUserId || await this.probeUserId(baseUrl, accessToken) || undefined;
         if (userId) {
-          const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-            headers: this.authHeaders(token, userId),
+          response = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
+            headers: this.authHeaders(accessToken, userId),
           });
-          if (res?.success && res?.data) {
-            const userInfo = this.parseUserInfo(res.data);
-            const balance = this.parseBalance(res.data);
-            return { tokenType: 'session', userInfo, balance };
-          }
-          if (
-            platformUserId &&
-            typeof res?.message === 'string' &&
-            /娑撳秴灏柊宄緈ismatch/i.test(res.message)
-          ) {
-            return { tokenType: 'unknown' };
-          }
         }
       }
-    } catch {}
-
-    const cookieRes = await this.fetchUserSelfByCookie(baseUrl, token, platformUserId);
-    if (cookieRes?.success && cookieRes?.data) {
-      const userId = cookieRes.data.id;
-      const userInfo = this.parseUserInfo(cookieRes.data);
-      const balance = this.parseBalance(cookieRes.data);
-      return { tokenType: 'session', userInfo, balance };
+    } catch {
+      return { tokenType: 'unknown' };
     }
 
-    const cookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, token, platformUserId);
-    if (cookieUserId) {
-      const cookieRetry = await this.fetchUserSelfByCookie(baseUrl, token, cookieUserId);
-      if (cookieRetry?.success && cookieRetry?.data) {
-        const userInfo = this.parseUserInfo(cookieRetry.data);
-        const balance = this.parseBalance(cookieRetry.data);
-        return { tokenType: 'session', userInfo, balance };
-      }
-    }
+    if (!response?.success || !response?.data) return { tokenType: 'unknown' };
+    const responseUserId = Number.parseInt(String(response.data.id), 10);
+    const resolvedUserId = Number.isFinite(responseUserId) && responseUserId > 0
+      ? responseUserId
+      : userId;
+    const apiTokens = await this.getApiTokensByAccessToken(baseUrl, accessToken, resolvedUserId);
+    return {
+      tokenType: 'session',
+      userInfo: this.parseUserInfo(response.data),
+      balance: this.parseBalance(response.data),
+      discoveredModelToken: this.selectDiscoveredModelToken(apiTokens),
+    };
+  }
 
-    return { tokenType: 'unknown' };
+  private async verifyCookieSession(
+    baseUrl: string,
+    cookie: string,
+    platformUserId?: number,
+  ): Promise<TokenVerifyResult> {
+    let userId = platformUserId;
+    let response = await this.fetchUserSelfByCookie(baseUrl, cookie, userId);
+    if (!response?.success || !response?.data) {
+      userId = await this.probeAlternateUserIdByCookie(baseUrl, cookie, userId) || undefined;
+      if (userId) response = await this.fetchUserSelfByCookie(baseUrl, cookie, userId);
+    }
+    if (!response?.success || !response?.data) return { tokenType: 'unknown' };
+
+    const responseUserId = Number.parseInt(String(response.data.id), 10);
+    const resolvedUserId = Number.isFinite(responseUserId) && responseUserId > 0
+      ? responseUserId
+      : userId;
+    const apiTokens = await this.getApiTokensByCookie(baseUrl, cookie, resolvedUserId);
+    return {
+      tokenType: 'session',
+      userInfo: this.parseUserInfo(response.data),
+      balance: this.parseBalance(response.data),
+      discoveredModelToken: this.selectDiscoveredModelToken(apiTokens),
+    };
   }
 
   private async probeUserId(baseUrl: string, accessToken: string): Promise<number | null> {
@@ -1083,11 +1132,16 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  async checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult> {
-    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+  async checkin(input: PlatformCredentialContext): Promise<CheckinResult> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    const resolvedUserId = platformUserId || (input.account.credentialKind === 'session_cookie'
+      ? await this.probeUserIdByCookie(baseUrl, accessToken)
+      : await this.discoverUserIdByAccessToken(baseUrl, accessToken));
     let firstFailureMessage: string | undefined;
 
-    try {
+    if (input.account.credentialKind === 'access_token') try {
       const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
 
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
@@ -1102,6 +1156,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     } catch (err) {
       const parsed = this.formatRequestErrorMessage(err);
       if (parsed) firstFailureMessage = parsed;
+    }
+
+    if (input.account.credentialKind === 'access_token') {
+      return { success: false, message: firstFailureMessage || 'checkin failed' };
+    }
+    if (input.account.credentialKind !== 'session_cookie') {
+      return { success: false, message: 'unsupported account credential kind' };
     }
 
     if (firstFailureMessage && !this.shouldFallbackToCookieCheckin(firstFailureMessage)) {
@@ -1177,8 +1238,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return { success: false, message: firstFailureMessage || 'checkin failed' };
   }
 
-  async getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo> {
-    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+  async getBalance(input: PlatformCredentialContext): Promise<BalanceInfo> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    const resolvedUserId = platformUserId || (input.account.credentialKind === 'session_cookie'
+      ? await this.probeUserIdByCookie(baseUrl, accessToken)
+      : await this.discoverUserIdByAccessToken(baseUrl, accessToken));
     let failureMessage: string | null = null;
     const rememberFailure = (message?: string | null) => {
       const text = typeof message === 'string' ? message.trim() : '';
@@ -1192,7 +1258,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
     };
 
-    try {
+    if (input.account.credentialKind === 'access_token') try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
         headers: this.authHeaders(accessToken, resolvedUserId || undefined),
       });
@@ -1202,6 +1268,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       rememberFailure(typeof res?.message === 'string' ? res.message : null);
     } catch (err) {
       rememberFailure(this.formatRequestErrorMessage(err));
+    }
+
+    if (input.account.credentialKind === 'access_token') {
+      throw new Error(failureMessage || 'failed to fetch balance');
+    }
+    if (input.account.credentialKind !== 'session_cookie') {
+      throw new Error('unsupported account credential kind');
     }
 
     const cookieRes = await this.fetchUserSelfByCookie(
@@ -1225,35 +1298,11 @@ export class NewApiAdapter extends BasePlatformAdapter {
     throw new Error(failureMessage || 'failed to fetch balance');
   }
 
-  async getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
-    if (openAiModels.length > 0) return openAiModels;
-
-    const userId = platformUserId || await this.discoverUserId(baseUrl, token);
-    if (userId) {
-      try {
-        const res = await this.fetchJson<any>(`${baseUrl}/api/user/models`, {
-          headers: this.authHeaders(token, userId),
-        });
-        if (Array.isArray(res?.data)) {
-          return res.data.filter(Boolean);
-        }
-        if (res?.data && typeof res.data === 'object') {
-          return Object.keys(res.data).filter(Boolean);
-        }
-      } catch {}
-    }
-
-    const cookieModels = await this.getSessionModelsByCookie(baseUrl, token, userId || platformUserId);
-    if (cookieModels.length > 0) return cookieModels;
-
-    const alternateCookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, token, userId || platformUserId);
-    if (alternateCookieUserId) {
-      const fallbackModels = await this.getSessionModelsByCookie(baseUrl, token, alternateCookieUserId);
-      if (fallbackModels.length > 0) return fallbackModels;
-    }
-
-    return [];
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    // Account-level model discovery was intentionally removed. This method is
+    // for a model invocation Key only, so it never falls back to management
+    // endpoints or a session Cookie.
+    return this.getOpenAiModels(input.endpoint.baseUrl, this.modelCredential(input));
   }
 
   private async fetchPricingCatalogByCookie(
@@ -1283,58 +1332,73 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return null;
   }
 
-  override async getPricingCatalog(
-    baseUrl: string,
-    credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
-    const token = (credential.token || '').trim();
-    const shouldPreferCookie = !!token && (this.platformName === 'anyrouter' || token.includes('='));
-    const platformUserId = credential.platformUserId;
+  override async getPricingCatalog(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const credential = input.account.credential.trim();
+    const platformUserId = this.platformUserId(input);
 
-    if (shouldPreferCookie) {
-      const cookieCatalog = await this.fetchPricingCatalogByCookie(baseUrl, token, platformUserId || undefined);
-      if (cookieCatalog) return cookieCatalog;
+    if (input.account.mode === 'apikey') {
+      const modelToken = this.modelCredential(input).trim();
+      if (!modelToken) return null;
+      try {
+        const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, {
+          headers: this.authHeaders(modelToken),
+        });
+        return normalizeCommonPricingPayload(payload);
+      } catch {
+        return null;
+      }
     }
 
-    try {
-      const headers = token ? this.authHeaders(token, platformUserId || undefined) : {};
-      const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
-      const catalog = normalizeCommonPricingPayload(payload);
-      if (catalog) return catalog;
-    } catch {}
-
-    if (token && !shouldPreferCookie) {
-      return this.fetchPricingCatalogByCookie(baseUrl, token, platformUserId || undefined);
+    if (input.account.credentialKind === 'session_cookie') {
+      return this.fetchPricingCatalogByCookie(baseUrl, credential, platformUserId || undefined);
     }
+    if (input.account.credentialKind === 'access_token') {
+      try {
+        const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, {
+          headers: this.authHeaders(credential, platformUserId || undefined),
+        });
+        return normalizeCommonPricingPayload(payload);
+      } catch {
+        return null;
+      }
+    }
+
     return null;
   }
 
-  async getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null> {
-    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
-    const tokens = await this.getApiTokensWithUser(baseUrl, accessToken, userId);
+  async getApiToken(input: PlatformCredentialContext): Promise<string | null> {
+    const tokens = await this.getApiTokens(input);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]> {
-    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
-    return this.getApiTokensWithUser(baseUrl, accessToken, userId);
+  async getApiTokens(input: PlatformCredentialContext): Promise<ApiTokenInfo[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    if (input.account.credentialKind === 'access_token') {
+      const userId = platformUserId || await this.discoverUserIdByAccessToken(baseUrl, accessToken);
+      return this.getApiTokensByAccessToken(baseUrl, accessToken, userId);
+    }
+    if (input.account.credentialKind === 'session_cookie') {
+      const userId = platformUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
+      return this.getApiTokensByCookie(baseUrl, accessToken, userId);
+    }
+
+    return [];
   }
 
-  private async getApiTokenWithUser(baseUrl: string, accessToken: string, userId: number | null): Promise<string | null> {
-    const tokens = await this.getApiTokensWithUser(baseUrl, accessToken, userId);
-    return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
-  }
-
-  async createApiToken(
-    baseUrl: string,
-    accessToken: string,
-    platformUserId?: number,
-    options?: CreateApiTokenOptions,
-  ): Promise<boolean> {
+  async createApiToken(input: PlatformCredentialContext & { options?: CreateApiTokenOptions }): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    const options = input.options;
     const payload = JSON.stringify(this.buildDefaultTokenPayload(options));
-    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+    const resolvedUserId = platformUserId || (input.account.credentialKind === 'session_cookie'
+      ? await this.probeUserIdByCookie(baseUrl, accessToken)
+      : await this.discoverUserIdByAccessToken(baseUrl, accessToken));
 
-    try {
+    if (input.account.credentialKind === 'access_token') try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/token/`, {
         method: 'POST',
         headers: this.authHeaders(accessToken, resolvedUserId || undefined),
@@ -1342,6 +1406,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
       });
       if (res?.success) return true;
     } catch {}
+
+    if (input.account.credentialKind === 'access_token') return false;
+    if (input.account.credentialKind !== 'session_cookie') return false;
 
     const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
     for (const cookie of this.buildCookieCandidates(accessToken)) {
@@ -1360,12 +1427,17 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return false;
   }
 
-  async getUserGroups(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string[]> {
-    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+  async getUserGroups(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const platformUserId = this.platformUserId(input);
+    const resolvedUserId = platformUserId || (input.account.credentialKind === 'session_cookie'
+      ? await this.probeUserIdByCookie(baseUrl, accessToken)
+      : await this.discoverUserIdByAccessToken(baseUrl, accessToken));
     const dedupe = (groups: string[]) => Array.from(new Set(groups.map((item) => item.trim()).filter(Boolean)));
     let terminalError: string | null = null;
 
-    try {
+    if (input.account.credentialKind === 'access_token') try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/self/groups`, {
         headers: this.authHeaders(accessToken, resolvedUserId || undefined),
       });
@@ -1376,7 +1448,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       if (parsed.length > 0) return parsed;
     } catch {}
 
-    try {
+    if (input.account.credentialKind === 'access_token') try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user_group_map`, {
         headers: this.authHeaders(accessToken, resolvedUserId || undefined),
       });
@@ -1386,6 +1458,12 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const parsed = dedupe(this.parseGroupKeys(res));
       if (parsed.length > 0) return parsed;
     } catch {}
+
+    if (input.account.credentialKind === 'access_token') {
+      if (terminalError) throw new Error(terminalError);
+      return ['default'];
+    }
+    if (input.account.credentialKind !== 'session_cookie') return ['default'];
 
     const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
     for (const cookie of this.buildCookieCandidates(accessToken)) {
@@ -1418,15 +1496,16 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return ['default'];
   }
 
-  async deleteApiToken(
-    baseUrl: string,
-    accessToken: string,
-    tokenKey: string,
-    platformUserId?: number,
-  ): Promise<boolean> {
+  async deleteApiToken(input: PlatformCredentialContext): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const tokenKey = input.token?.token || '';
+    const platformUserId = this.platformUserId(input);
     const targetKey = this.normalizeTokenKeyForCompare(tokenKey);
     if (!targetKey) return false;
-    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+    const resolvedUserId = platformUserId || (input.account.credentialKind === 'session_cookie'
+      ? await this.probeUserIdByCookie(baseUrl, accessToken)
+      : await this.discoverUserIdByAccessToken(baseUrl, accessToken));
 
     const pickTokenId = (items: any[]): number | null => {
       for (const item of items) {
@@ -1441,21 +1520,28 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
     let tokenId: number | null = null;
 
-    try {
-      const list = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
-        headers: this.authHeaders(accessToken, resolvedUserId || undefined),
-      });
-      tokenId = pickTokenId(this.parseTokenItems(list));
-      if (tokenId) {
+    if (input.account.credentialKind === 'access_token') {
+      try {
+        const list = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
+          headers: this.authHeaders(accessToken, resolvedUserId || undefined),
+        });
+        if (!this.isTokenListResponse(list)) return false;
+        tokenId = pickTokenId(this.parseTokenItems(list));
+        if (!tokenId) return true;
         const res = await this.fetchJson<any>(`${baseUrl}/api/token/${tokenId}`, {
           method: 'DELETE',
           headers: this.authHeaders(accessToken, resolvedUserId || undefined),
         });
         return !!res?.success;
+      } catch {
+        return false;
       }
-    } catch {}
+    }
+
+    if (input.account.credentialKind !== 'session_cookie') return false;
 
     const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
+    let listedSuccessfully = false;
     for (const cookie of this.buildCookieCandidates(accessToken)) {
       const headers: Record<string, string> = { Cookie: cookie };
       Object.assign(headers, this.userIdHeaders(cookieUserId));
@@ -1463,6 +1549,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
       try {
         if (!tokenId) {
           const list = await this.fetchJsonRaw<any>(`${baseUrl}/api/token/?p=0&size=100`, { headers });
+          if (!this.isTokenListResponse(list)) continue;
+          listedSuccessfully = true;
           tokenId = pickTokenId(this.parseTokenItems(list));
         }
 
@@ -1476,30 +1564,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
       } catch {}
     }
 
-    // Upstream key already absent means local deletion is safe.
-    if (!tokenId) return true;
+    // A successfully read list proves the upstream key is already absent.
+    if (!tokenId && listedSuccessfully) return true;
     return false;
   }
 
-  private async getApiTokensWithUser(baseUrl: string, accessToken: string, userId: number | null): Promise<ApiTokenInfo[]> {
-    try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
-        headers: this.authHeaders(accessToken, userId || undefined),
-      });
-      const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
-      if (normalized.length > 0) return normalized;
-      if (this.isTokenListResponse(res)) return [];
-    } catch {}
-
-    const cookieTokens = await this.getApiTokensByCookie(baseUrl, accessToken, userId);
-    if (cookieTokens.length > 0) return cookieTokens;
-
-    const alternateCookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, accessToken, userId);
-    if (alternateCookieUserId) {
-      const fallbackTokens = await this.getApiTokensByCookie(baseUrl, accessToken, alternateCookieUserId);
-      if (fallbackTokens.length > 0) return fallbackTokens;
-    }
-
-    return [];
-  }
 }

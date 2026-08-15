@@ -55,7 +55,7 @@ describe('accountHealthService', () => {
     expect(health.reason).not.toContain('访问令牌已过期');
   });
 
-  it('does not show proxy-only expired accounts as healthy just because models were discovered before expiry', () => {
+  it('ignores legacy model-discovery health and still reports an expired account as unhealthy', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'expired',
       siteStatus: 'active',
@@ -69,7 +69,6 @@ describe('accountHealthService', () => {
         },
       }),
       sessionCapable: false,
-      hasDiscoveredModels: true,
     });
 
     expect(health).toMatchObject({
@@ -77,6 +76,24 @@ describe('accountHealthService', () => {
       source: 'auth',
     });
     expect(health.reason).toContain('连接已过期');
+  });
+
+  it('ignores legacy model-discovery health for active accounts', () => {
+    const health = buildRuntimeHealthForAccount({
+      accountStatus: 'active',
+      siteStatus: 'active',
+      sessionCapable: false,
+      extraConfig: {
+        runtimeHealth: {
+          state: 'healthy',
+          reason: '模型探测成功',
+          source: 'model-discovery',
+          checkedAt: '2026-04-01T10:00:00.000Z',
+        },
+      },
+    });
+
+    expect(health).toMatchObject({ state: 'unknown', source: 'none', reason: '尚未检测' });
   });
 
   it('uses a generic expired-credential message for oauth-backed accounts', () => {

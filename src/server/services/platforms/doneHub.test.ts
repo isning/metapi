@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { DoneHubAdapter } from './doneHub.js';
+import { testAccountContext, testModelContext } from './testCredentialContext.js';
 
 describe('DoneHubAdapter', () => {
   let server: ReturnType<typeof createServer>;
@@ -77,20 +78,20 @@ describe('DoneHubAdapter', () => {
 
   it('marks checkin as unsupported', async () => {
     const adapter = new DoneHubAdapter();
-    const result = await adapter.checkin(baseUrl, 'token');
+    const result = await adapter.checkin(testAccountContext(baseUrl, 'token'));
     expect(result.success).toBe(false);
     expect(result.message).toBe('checkin endpoint not found');
   });
 
   it('falls back to /api/available_model when /v1/models is unavailable', async () => {
     const adapter = new DoneHubAdapter();
-    const models = await adapter.getModels(baseUrl, 'token');
+    const models = await adapter.getModels(testModelContext(baseUrl, 'token'));
     expect(models).toEqual(['gpt-4o', 'deepseek-chat']);
   });
 
   it('parses token list from nested data.data shape', async () => {
     const adapter = new DoneHubAdapter();
-    const tokens = await adapter.getApiTokens(baseUrl, 'token');
+    const tokens = await adapter.getApiTokens(testAccountContext(baseUrl, 'token'));
     expect(tokens).toEqual([
       { key: 'donehub-token-key', name: 'sys_playground', enabled: true },
     ]);
@@ -98,7 +99,7 @@ describe('DoneHubAdapter', () => {
 
   it('treats quota as remaining balance and sums used quota for total', async () => {
     const adapter = new DoneHubAdapter();
-    const balance = await adapter.getBalance(baseUrl, 'token');
+    const balance = await adapter.getBalance(testAccountContext(baseUrl, 'token'));
     expect(balance.balance).toBe(40);
     expect(balance.used).toBe(60);
     expect(balance.quota).toBe(100);
@@ -106,7 +107,7 @@ describe('DoneHubAdapter', () => {
 
   it('normalizes the global site notice from /api/notice', async () => {
     const adapter = new DoneHubAdapter();
-    const rows = await adapter.getSiteAnnouncements(baseUrl, 'token');
+    const rows = await adapter.getSiteAnnouncements(testAccountContext(baseUrl, 'token'));
 
     expect(rows).toEqual([
       {

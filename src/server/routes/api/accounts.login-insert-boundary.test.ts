@@ -14,6 +14,11 @@ vi.mock('../../services/platforms/index.js', () => ({
     login: (...args: unknown[]) => loginMock(...args),
     getApiToken: (...args: unknown[]) => getApiTokenMock(...args),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{ kind: 'access_token' }],
+    },
   }),
 }));
 

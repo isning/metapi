@@ -16,6 +16,15 @@ const syncTokensFromUpstreamMock = vi.fn();
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+      }],
+    },
+    accountConnectionFields: [],
     verifyToken: (...args: unknown[]) => verifyTokenMock(...args),
     getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
   }),

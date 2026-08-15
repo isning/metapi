@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { OneHubAdapter } from './oneHub.js';
+import { testAccountContext, testModelContext } from './testCredentialContext.js';
 
 describe('OneHubAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -49,7 +50,7 @@ describe('OneHubAdapter', () => {
     });
 
     const adapter = new OneHubAdapter();
-    const models = await adapter.getModels(baseUrl, 'token');
+    const models = await adapter.getModels(testModelContext(baseUrl, 'token'));
     expect(models).toEqual(expect.arrayContaining(['gpt-4o', 'claude-3-opus']));
   });
 
@@ -64,7 +65,7 @@ describe('OneHubAdapter', () => {
     });
 
     const adapter = new OneHubAdapter();
-    const groups = await adapter.getUserGroups(baseUrl, 'token');
+    const groups = await adapter.getUserGroups(testAccountContext(baseUrl, 'token'));
     expect(groups).toEqual(expect.arrayContaining(['default', 'vip']));
   });
 
@@ -100,10 +101,7 @@ describe('OneHubAdapter', () => {
     });
 
     const adapter = new OneHubAdapter();
-    const catalog = await adapter.getPricingCatalog(baseUrl, {
-      token: 'token',
-      tokenKind: 'api_token',
-    });
+    const catalog = await adapter.getPricingCatalog(testModelContext(baseUrl, 'token'));
 
     const model = catalog?.models.get('gpt-4o');
     expect(catalog?.groupRatio).toEqual({ default: 1, vip: 0.8 });
@@ -152,10 +150,7 @@ describe('OneHubAdapter', () => {
     });
 
     const adapter = new OneHubAdapter();
-    const catalog = await adapter.getPricingCatalog(baseUrl, {
-      token: 'token',
-      tokenKind: 'api_token',
-    });
+    const catalog = await adapter.getPricingCatalog(testModelContext(baseUrl, 'token'));
 
     const model = catalog?.models.get('gpt-4o-mini');
     expect(model).toMatchObject({
@@ -180,7 +175,7 @@ describe('OneHubAdapter', () => {
     });
 
     const adapter = new OneHubAdapter();
-    const tokens = await adapter.getApiTokens(baseUrl, 'token');
+    const tokens = await adapter.getApiTokens(testAccountContext(baseUrl, 'token'));
     expect(tokens.length).toBe(1);
     expect(tokens[0].key).toBe('sk-hub-abc');
   });

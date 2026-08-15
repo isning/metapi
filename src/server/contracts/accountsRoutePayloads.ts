@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
-const accountCredentialModeSchema = z.enum(['auto', 'session', 'apikey']);
 const accountCredentialKindSchema = z.enum([
   'session_cookie',
   'access_token',
-  'adapter_default',
 ]);
 
 const LEGACY_ACCOUNT_CREDENTIAL_FIELDS = new Set([
@@ -13,6 +11,8 @@ const LEGACY_ACCOUNT_CREDENTIAL_FIELDS = new Set([
   'cred',
   'modelApiKey',
   'managementApiToken',
+  'refreshToken',
+  'tokenExpiresAt',
 ]);
 
 const accountCreatePayloadSchema = z.object({
@@ -23,9 +23,7 @@ const accountCreatePayloadSchema = z.object({
   apiKey: z.string().optional(),
   platformUserId: z.number().int().positive().optional(),
   checkinEnabled: z.boolean().optional(),
-  credentialMode: accountCredentialModeSchema.optional(),
-  refreshToken: z.string().optional(),
-  tokenExpiresAt: z.union([z.number(), z.string()]).optional(),
+  connectionValues: z.record(z.string(), z.unknown()).optional(),
   skipModelFetch: z.boolean().optional(),
 }).passthrough();
 
@@ -33,16 +31,14 @@ const accountUpdatePayloadSchema = z.object({
   username: z.string().optional(),
   credential: z.string().optional(),
   credentialKind: accountCredentialKindSchema.optional(),
-  credentialMode: accountCredentialModeSchema.optional(),
   status: z.string().optional(),
   checkinEnabled: z.boolean().optional(),
   unitCost: z.union([z.number(), z.null()]).optional(),
   extraConfig: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
-  refreshToken: z.union([z.string(), z.null()]).optional(),
-  tokenExpiresAt: z.union([z.number(), z.string(), z.null()]).optional(),
   isPinned: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
+  connectionValues: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
 const accountBatchPayloadSchema = z.object({
@@ -54,8 +50,7 @@ const accountRebindSessionPayloadSchema = z.object({
   credential: z.string().optional(),
   credentialKind: accountCredentialKindSchema.optional(),
   platformUserId: z.number().int().positive().optional(),
-  refreshToken: z.string().optional(),
-  tokenExpiresAt: z.union([z.number(), z.string()]).optional(),
+  connectionValues: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
 const accountHealthRefreshPayloadSchema = z.object({
@@ -73,9 +68,8 @@ const accountVerifyTokenPayloadSchema = z.object({
   siteId: z.number().int().positive(),
   credential: z.string().optional(),
   credentialKind: accountCredentialKindSchema.optional(),
-  apiKey: z.string().optional(),
   platformUserId: z.number().int().positive().optional(),
-  credentialMode: accountCredentialModeSchema.optional(),
+  connectionValues: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
 const accountManualModelsPayloadSchema = z.object({
@@ -119,9 +113,6 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   if (firstPath === 'unitCost') {
     return 'Invalid unitCost. Expected number or null.';
   }
-  if (firstPath === 'credentialMode') {
-    return 'Invalid credentialMode. Expected auto/session/apikey.';
-  }
   if (firstPath === 'credentialKind') {
     return 'Invalid credentialKind.';
   }
@@ -146,12 +137,6 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   if (firstPath === 'platformUserId') {
     return 'Invalid platformUserId. Expected positive number.';
   }
-  if (firstPath === 'refreshToken') {
-    return 'Invalid refreshToken. Expected string or null.';
-  }
-  if (firstPath === 'tokenExpiresAt') {
-    return 'Invalid tokenExpiresAt. Expected number, string, or null.';
-  }
   if (firstPath === 'accountId') {
     return '账号 ID 无效';
   }
@@ -171,7 +156,7 @@ function parseAccountsPayload<T>(schema: z.ZodType<T>, input: unknown):
     if (legacyField) {
       return {
         success: false,
-        error: `Unsupported legacy account field "${legacyField}". Use "credential" for connection credentials or "apiKey" for model keys.`,
+        error: `Unsupported legacy account field "${legacyField}". Use "credential" for connection credentials, "apiKey" for model keys, or "connectionValues" for adapter connection fields.`,
       };
     }
   }
@@ -190,7 +175,21 @@ function parseAccountsPayload<T>(schema: z.ZodType<T>, input: unknown):
 
 export function parseAccountCreatePayload(input: unknown):
 { success: true; data: AccountCreatePayload } | { success: false; error: string } {
-  return parseAccountsPayload(accountCreatePayloadSchema, input);
+  if (input && typeof input === 'object' && !Array.isArray(input) && 'credentialMode' in input) {
+    return {
+      success: false,
+      error: 'Account creation derives its credential type from credential or apiKey.',
+    };
+  }
+  const parsed = parseAccountsPayload(accountCreatePayloadSchema, input);
+  if (!parsed.success) return parsed;
+  if (parsed.data.credential?.trim() && parsed.data.apiKey?.trim()) {
+    return {
+      success: false,
+      error: '请只填写连接凭据或模型调用 Key 其中一种。',
+    };
+  }
+  return parsed;
 }
 
 export function parseAccountUpdatePayload(input: unknown):
@@ -220,6 +219,15 @@ export function parseAccountLoginPayload(input: unknown):
 
 export function parseAccountVerifyTokenPayload(input: unknown):
 { success: true; data: AccountVerifyTokenPayload } | { success: false; error: string } {
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const record = input as Record<string, unknown>;
+    if ('apiKey' in record || 'credentialMode' in record) {
+      return {
+        success: false,
+        error: 'Connection credential verification only accepts credential and credentialKind.',
+      };
+    }
+  }
   return parseAccountsPayload(accountVerifyTokenPayloadSchema, input);
 }
 

@@ -22,6 +22,12 @@ const {
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
+    credentialCapabilities: {
+      session: false,
+      apiKey: true,
+      sessionCredentialOptions: [],
+    },
+    accountConnectionFields: [],
     getModels: (...args: unknown[]) => getModelsMock(...args),
   }),
 }));
@@ -125,7 +131,6 @@ describe('accounts model catalog source discovery', () => {
       headers: app.adminHeaders(),
       payload: {
         siteId: site.id,
-        credentialMode: 'apikey',
         apiKey: 'sk-catalog-credential',
       },
     });
@@ -149,11 +154,11 @@ describe('accounts model catalog source discovery', () => {
       'catalog-responses-model',
     ]);
     expect(getModelsMock).toHaveBeenCalledTimes(1);
-    expect(getModelsMock).toHaveBeenCalledWith(
-      'https://console.catalog.example.com',
-      'sk-catalog-credential',
-      undefined,
-    );
+    expect(getModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://console.catalog.example.com' },
+      account: expect.objectContaining({ mode: 'apikey', credential: '' }),
+      token: expect.objectContaining({ token: 'sk-catalog-credential' }),
+    }));
     expect(undiciFetchMock).toHaveBeenCalledWith(
       'https://models.catalog.example.com/private/list',
       expect.objectContaining({

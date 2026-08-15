@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   bootIsolatedRuntimeDb,
@@ -82,6 +83,35 @@ describe('credentialEndpointBindingService', () => {
         && binding.support === 'supported'
       ))
     ))).toBe(true);
+  });
+
+  it('labels legacy OAuth metadata as an OAuth account credential', async () => {
+    const { site, account } = await createCredentialFixture();
+    await db.update(schema.accounts)
+      .set({ extraConfig: JSON.stringify({ oauth: { provider: 'codex' } }) })
+      .where(eq(schema.accounts.id, account.id))
+      .run();
+
+    const matrix = await service.listCredentialEndpointMatrix(site.id);
+    expect(matrix.credentials.find((credential) => credential.accountId === account.id)).toMatchObject({
+      detail: 'oauth:configured',
+    });
+  });
+
+  it('does not expose or persist endpoint bindings for legacy OAuth tokens', async () => {
+    const { site, account, token } = await createCredentialFixture();
+    await db.update(schema.accounts)
+      .set({ extraConfig: JSON.stringify({ oauth: { provider: 'codex' } }) })
+      .where(eq(schema.accounts.id, account.id))
+      .run();
+
+    const matrix = await service.listCredentialEndpointMatrix(site.id);
+    expect(matrix.credentials.map((credential) => credential.credentialKey)).not.toContain(`account-token:${token.id}`);
+    await expect(service.replaceCredentialEndpointBindings({
+      siteId: site.id,
+      credentialKey: `account-token:${token.id}`,
+      bindings: [],
+    })).rejects.toThrow('OAuth direct connections do not support account-token endpoint bindings.');
   });
 
   it('persists key-scoped endpoint bindings and feeds the runtime api attempt planner', async () => {

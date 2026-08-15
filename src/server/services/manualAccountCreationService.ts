@@ -3,7 +3,9 @@ import { db, schema } from '../db/index.js';
 import { insertAndGetById } from '../db/insertHelpers.js';
 import { startBackgroundTask } from './backgroundTaskService.js';
 import { getAdapter } from './platforms/index.js';
+import { buildTransientPlatformCredentialContext } from './adapterCredentialContextService.js';
 import {
+  applyAccountConnectionValues,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
   type AccountCredentialMode,
@@ -11,6 +13,7 @@ import {
 import { runWithSiteApiEndpointPool } from './siteApiEndpointService.js';
 import { type AccountCreatePayload } from '../contracts/accountsRoutePayloads.js';
 import { convergeAccountMutation } from './accountMutationWorkflow.js';
+import { recordAccountsCatalogMutation } from './accountRuntimeIdentityMutationService.js';
 
 const ACCOUNT_VERIFY_TIMEOUT_MS = 10_000;
 
@@ -21,7 +24,8 @@ type AccountInitializationParams = {
   tokenType: 'session' | 'apikey' | 'unknown';
   accessToken: string;
   preferredModelApiToken: string;
-  platformUserId?: number;
+  accountExtraConfig: string | null;
+  credentialKind?: 'session_cookie' | 'access_token';
   skipModelFetch?: boolean;
 };
 
@@ -73,7 +77,7 @@ async function getModelsWithSiteApiEndpointPool(
   site: typeof schema.sites.$inferSelect,
   adapter: NonNullable<ReturnType<typeof getAdapter>>,
   accessToken: string,
-  platformUserId?: number,
+  accountExtraConfig: string | null,
 ): Promise<string[]> {
   const timeoutMessage = buildAccountVerifyTimeoutMessage();
   const deadline = Date.now() + ACCOUNT_VERIFY_TIMEOUT_MS;
@@ -83,7 +87,15 @@ async function getModelsWithSiteApiEndpointPool(
       throw new Error(timeoutMessage);
     }
     return withTimeout(
-      () => adapter.getModels(target.baseUrl, accessToken, platformUserId),
+      () => adapter.getModels(buildTransientPlatformCredentialContext({
+        endpoint: { baseUrl: target.baseUrl },
+        siteId: site.id,
+        mode: 'apikey',
+        credential: '',
+        credentialKind: 'access_token',
+        accountExtraConfig,
+        token: accessToken,
+      })),
       remainingMs,
       timeoutMessage,
     );
@@ -97,7 +109,8 @@ async function initializeAccountInBackground({
   tokenType,
   accessToken,
   preferredModelApiToken,
-  platformUserId,
+  accountExtraConfig,
+  credentialKind,
   skipModelFetch,
 }: AccountInitializationParams) {
   const summary = {
@@ -111,7 +124,14 @@ async function initializeAccountInBackground({
   let fetchedUpstreamTokens: Array<{ name?: string | null; key?: string | null; enabled?: boolean | null; tokenGroup?: string | null }> = [];
   if (tokenType === 'session' && accessToken) {
     try {
-      const syncedTokens = await adapter.getApiTokens(site.url, accessToken, platformUserId);
+      const syncedTokens = await adapter.getApiTokens(buildTransientPlatformCredentialContext({
+        endpoint: { baseUrl: site.url },
+        siteId: site.id,
+        mode: 'session',
+        credential: accessToken,
+        credentialKind: credentialKind || 'access_token',
+        accountExtraConfig,
+      }));
       summary.syncedTokenCount = Array.isArray(syncedTokens) ? syncedTokens.length : 0;
       fetchedUpstreamTokens = Array.isArray(syncedTokens) ? syncedTokens : [];
     } catch {}
@@ -166,6 +186,11 @@ export async function createManualAccount({
   let preferredModelApiToken = credentialMode === 'apikey' ? rawAccessToken.trim() : '';
   let tokenType: 'session' | 'apikey' | 'unknown' = 'unknown';
   let verifiedModels: string[] = [];
+  const initialExtraConfig = applyAccountConnectionValues(
+    mergeAccountExtraConfig(undefined, body.platformUserId ? { platformUserId: body.platformUserId } : {}),
+    adapter.accountConnectionFields,
+    body.connectionValues,
+  );
 
   if (credentialMode === 'apikey') {
     if (body.skipModelFetch === true) {
@@ -177,7 +202,7 @@ export async function createManualAccount({
         site,
         adapter,
         rawAccessToken,
-        body.platformUserId,
+        initialExtraConfig,
       );
       verifiedModels = Array.isArray(models)
         ? models.filter((item) => typeof item === 'string' && item.trim().length > 0)
@@ -194,7 +219,14 @@ export async function createManualAccount({
     }
   } else {
     const verifyResult = await withTimeout(
-      () => adapter.verifyToken(site.url, rawAccessToken, body.platformUserId),
+      () => adapter.verifyToken(buildTransientPlatformCredentialContext({
+        endpoint: { baseUrl: site.url },
+        siteId: site.id,
+        mode: 'session',
+        credential: rawAccessToken,
+        credentialKind: body.credentialKind || 'access_token',
+        accountExtraConfig: initialExtraConfig,
+      })),
       ACCOUNT_VERIFY_TIMEOUT_MS,
       buildAccountVerifyTimeoutMessage(),
     );
@@ -206,7 +238,7 @@ export async function createManualAccount({
     }
 
     if (credentialMode === 'session' && tokenType !== 'session') {
-      throw new Error('当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token');
+      throw new Error('当前凭据是模型调用 Key，请在「API Key 管理」中添加。');
     }
 
     if (tokenType === 'session') {
@@ -214,34 +246,21 @@ export async function createManualAccount({
       if (verifyResult.discoveredModelToken) {
         preferredModelApiToken = String(verifyResult.discoveredModelToken).trim();
       }
-    } else if (tokenType === 'apikey') {
-      accessToken = '';
-      if (!preferredModelApiToken) preferredModelApiToken = rawAccessToken;
-      verifiedModels = Array.isArray(verifyResult.models)
-        ? verifyResult.models.filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
-        : [];
     }
   }
 
   const resolvedPlatformUserId =
     body.platformUserId || guessPlatformUserIdFromUsername(username) || undefined;
-  const resolvedCredentialMode: AccountCredentialMode = tokenType === 'apikey' ? 'apikey' : 'session';
+  const resolvedCredentialMode: AccountCredentialMode = credentialMode;
   const extraConfigPatch: Record<string, unknown> = {};
   if (resolvedPlatformUserId) {
     extraConfigPatch.platformUserId = resolvedPlatformUserId;
   }
-  if ((site.platform || '').toLowerCase() === 'sub2api') {
-    const managedRefreshToken = typeof body.refreshToken === 'string' ? body.refreshToken.trim() : '';
-    const managedTokenExpiresAt = typeof body.tokenExpiresAt === 'number'
-      ? Math.trunc(body.tokenExpiresAt)
-      : (typeof body.tokenExpiresAt === 'string' ? Number.parseInt(body.tokenExpiresAt.trim(), 10) : undefined);
-    if (managedRefreshToken) {
-      extraConfigPatch.sub2apiAuth = managedTokenExpiresAt && Number.isFinite(managedTokenExpiresAt) && managedTokenExpiresAt > 0
-        ? { refreshToken: managedRefreshToken, tokenExpiresAt: managedTokenExpiresAt }
-        : { refreshToken: managedRefreshToken };
-    }
-  }
-  const extraConfig = mergeAccountExtraConfig(undefined, extraConfigPatch);
+  const extraConfig = applyAccountConnectionValues(
+    mergeAccountExtraConfig(initialExtraConfig, extraConfigPatch),
+    adapter.accountConnectionFields,
+    body.connectionValues,
+  );
 
   const sortOrder = await getNextAccountSortOrder();
   const result = await db.transaction(async (tx) => {
@@ -255,7 +274,7 @@ export async function createManualAccount({
         credential: tokenType === 'session' ? accessToken : '',
         credentialMode: resolvedCredentialMode,
         credentialKind: tokenType === 'session'
-          ? (body.credentialKind || 'adapter_default')
+          ? (body.credentialKind || 'access_token')
           : 'none',
         checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
         extraConfig,
@@ -279,6 +298,7 @@ export async function createManualAccount({
     }
     return created;
   });
+  await recordAccountsCatalogMutation();
 
   const shouldQueueInitialization = tokenType === 'session' || body.skipModelFetch !== true;
   let queuedTaskId: string | undefined;
@@ -301,7 +321,8 @@ export async function createManualAccount({
         tokenType,
         accessToken,
         preferredModelApiToken,
-        platformUserId: resolvedPlatformUserId,
+        accountExtraConfig: extraConfig,
+        credentialKind: body.credentialKind === 'session_cookie' ? 'session_cookie' : 'access_token',
         skipModelFetch: body.skipModelFetch,
       }),
     );

@@ -11,7 +11,6 @@ import {
   getSub2ApiSubscriptionFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
-  normalizeCredentialMode,
   resolvePlatformUserId,
   requiresManagedAccountTokens,
   supportsDirectAccountRoutingConnection,
@@ -86,13 +85,6 @@ describe('accountExtraConfig', () => {
         passwordCipher: 'cipher',
       }),
     }));
-  });
-
-  it('normalizes credential mode input', () => {
-    expect(normalizeCredentialMode(' apikey ')).toBe('apikey');
-    expect(normalizeCredentialMode('session')).toBe('session');
-    expect(normalizeCredentialMode('AUTO')).toBe('auto');
-    expect(normalizeCredentialMode('abc')).toBeUndefined();
   });
 
   it('parses managed sub2api refresh token config from extra config', () => {

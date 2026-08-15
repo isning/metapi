@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import type { SubscriptionPlanSummary, SubscriptionSummary } from './platforms/base.js';
+import type { AccountConnectionField } from './platforms/base.js';
 
 type AutoReloginConfig = {
   username?: unknown;
@@ -19,20 +20,13 @@ type Sub2ApiSubscriptionConfig = {
   subscriptions?: unknown;
 };
 
-export type AccountCredentialMode = 'auto' | 'session' | 'apikey';
+export type AccountCredentialMode = 'session' | 'apikey';
 export type StoredAccountCredentialMode = 'session' | 'apikey' | 'oauth';
 export type AccountCredentialKind =
   | 'session_cookie'
   | 'access_token'
   | 'oauth_access_token'
-  | 'adapter_default'
   | 'none';
-
-const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
-  'auto',
-  'session',
-  'apikey',
-]);
 
 type AccountExtraConfig = {
   platformUserId?: unknown;
@@ -73,6 +67,87 @@ function parseExtraConfig(extraConfig?: ExtraConfigInput): AccountExtraConfig {
   } catch {
     return {};
   }
+}
+
+function pathSegments(path: string): string[] {
+  return String(path || '').split('.').map((part) => part.trim()).filter(Boolean);
+}
+
+export function getExtraConfigPathValue(extraConfig: ExtraConfigInput, path: string): unknown {
+  let current: unknown = parseExtraConfig(extraConfig);
+  for (const segment of pathSegments(path)) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+export function mergeExtraConfigPath(
+  extraConfig: ExtraConfigInput,
+  path: string,
+  value: unknown,
+): string {
+  const root = parseExtraConfig(extraConfig) as Record<string, unknown>;
+  const segments = pathSegments(path);
+  if (segments.length === 0) return JSON.stringify(root);
+  let cursor = root;
+  for (const segment of segments.slice(0, -1)) {
+    const child = cursor[segment];
+    if (!isRecord(child)) cursor[segment] = {};
+    cursor = cursor[segment] as Record<string, unknown>;
+  }
+  const leaf = segments[segments.length - 1]!;
+  if (value === undefined || value === null || value === '') delete cursor[leaf];
+  else cursor[leaf] = value;
+  return JSON.stringify(root);
+}
+
+export function applyAccountConnectionValues(
+  extraConfig: ExtraConfigInput,
+  fields: readonly AccountConnectionField[] | null | undefined,
+  values: unknown,
+): string {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) {
+    return JSON.stringify(parseExtraConfig(extraConfig));
+  }
+
+  const record = values as Record<string, unknown>;
+  let next = JSON.stringify(parseExtraConfig(extraConfig));
+  for (const field of fields || []) {
+    if (!Object.prototype.hasOwnProperty.call(record, field.key)) continue;
+    const raw = record[field.key];
+    // An unfilled secret control must not erase a previously saved value.
+    if (field.secret && (raw === undefined || raw === null || String(raw).trim() === '')) continue;
+    let normalized: unknown = raw;
+    if (field.inputType === 'number' && typeof raw === 'string') {
+      const parsed = Number(raw.trim());
+      normalized = Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+    } else if (typeof raw === 'string') {
+      normalized = raw.trim();
+    }
+    if (normalized !== undefined) {
+      next = mergeExtraConfigPath(next, field.storagePath, normalized);
+    }
+  }
+  return next;
+}
+
+export type AccountConnectionValue = { value?: unknown; hasValue: boolean };
+
+export function buildAccountConnectionValues(
+  fields: readonly AccountConnectionField[],
+  extraConfig: ExtraConfigInput,
+): Record<string, AccountConnectionValue | unknown> {
+  const result: Record<string, AccountConnectionValue | unknown> = {};
+  for (const field of fields) {
+    const value = getExtraConfigPathValue(extraConfig, field.storagePath);
+    if (field.secret) {
+      result[field.key] = { hasValue: typeof value === 'string' ? value.trim().length > 0 : value != null };
+    } else if (value !== undefined && value !== null) {
+      result[field.key] = value;
+    }
+  }
+  return result;
 }
 
 function normalizeUserId(raw: unknown): number | undefined {
@@ -132,13 +207,6 @@ function normalizeIsoDateTime(raw: unknown): string | undefined {
   return undefined;
 }
 
-export function normalizeCredentialMode(raw: unknown): AccountCredentialMode | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const normalized = raw.trim().toLowerCase();
-  if (!VALID_CREDENTIAL_MODES.has(normalized as AccountCredentialMode)) return undefined;
-  return normalized as AccountCredentialMode;
-}
-
 export function getProxyUrlFromExtraConfig(extraConfig?: ExtraConfigInput): string | null {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeNonEmptyString(parsed.proxyUrl) ?? null;
@@ -167,6 +235,8 @@ export function getPlatformUserIdFromExtraConfig(extraConfig?: ExtraConfigInput)
 type AccountManagementCredentialInput = {
   credential?: string | null;
   credentialMode?: unknown;
+  oauthProvider?: unknown;
+  extraConfig?: ExtraConfigInput;
 };
 
 /**
@@ -184,12 +254,16 @@ export function getAccountManagementCredential(
 type StoredAccountCredentialInput = {
   credentialMode?: unknown;
   oauthProvider?: unknown;
+  extraConfig?: ExtraConfigInput;
 };
 
 export function resolveStoredAccountCredentialMode(
   account: StoredAccountCredentialInput,
 ): StoredAccountCredentialMode {
-  if (normalizeNonEmptyString(account.oauthProvider)) return 'oauth';
+  if (
+    normalizeNonEmptyString(account.oauthProvider)
+    || getOauthProviderFromExtraConfig(account.extraConfig)
+  ) return 'oauth';
   const storedMode = normalizeNonEmptyString(account.credentialMode)?.toLowerCase();
   if (storedMode === 'oauth' || storedMode === 'session' || storedMode === 'apikey') {
     return storedMode;

@@ -87,7 +87,11 @@ function defaultHealthReason(state: RuntimeHealthState): string {
 
 export function extractRuntimeHealth(extraConfig?: string | Record<string, unknown> | null): RuntimeHealthInfo | null {
   const parsed = parseObject(extraConfig);
-  return normalizeRuntimeHealthRecord(parsed.runtimeHealth);
+  const health = normalizeRuntimeHealthRecord(parsed.runtimeHealth);
+  // Legacy versions persisted model discovery results here. They describe the
+  // model catalog, not the account connection, so no health consumer may use
+  // them as an account runtime signal.
+  return isModelDiscoveryRuntimeHealth(health) ? null : health;
 }
 
 function isProxyOnlyAuthFailure(
@@ -99,6 +103,10 @@ function isProxyOnlyAuthFailure(
   return (health.source || '').toLowerCase() === 'auth';
 }
 
+function isModelDiscoveryRuntimeHealth(health: RuntimeHealthInfo | null): boolean {
+  return (health?.source || '').toLowerCase() === 'model-discovery';
+}
+
 export function buildRuntimeHealthForAccount(input: {
   accountStatus?: string | null;
   siteStatus?: string | null;
@@ -106,7 +114,6 @@ export function buildRuntimeHealthForAccount(input: {
   credentialMode?: unknown;
   oauthProvider?: string | null;
   sessionCapable?: boolean;
-  hasDiscoveredModels?: boolean;
 }): RuntimeHealthInfo {
   const accountStatus = (input.accountStatus || 'active').toLowerCase();
   const siteStatus = (input.siteStatus || 'active').toLowerCase();
@@ -146,18 +153,8 @@ export function buildRuntimeHealthForAccount(input: {
   if (
     stored
     && !ignoreStoredProxyOnlyAuthFailure
-    && !(input.sessionCapable === false && input.hasDiscoveredModels && stored.state === 'unknown')
   ) {
     return stored;
-  }
-
-  if (input.sessionCapable === false && input.hasDiscoveredModels) {
-    return {
-      state: 'healthy',
-      reason: '模型探测成功',
-      source: 'model-discovery',
-      checkedAt: stored?.checkedAt || null,
-    };
   }
 
   return {

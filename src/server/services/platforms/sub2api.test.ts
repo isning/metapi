@@ -2,6 +2,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Sub2ApiAdapter } from './sub2api.js';
+import type { PlatformCredentialContext } from './base.js';
+
+function accountContext(baseUrl: string, credential: string): PlatformCredentialContext {
+  return {
+    endpoint: { baseUrl },
+    account: { id: null, siteId: null, username: null, mode: 'session', credential, credentialKind: 'access_token', extraConfig: null },
+    token: null,
+  };
+}
+
+function modelContext(baseUrl: string, token: string): PlatformCredentialContext {
+  return {
+    ...accountContext(baseUrl, ''),
+    account: { ...accountContext(baseUrl, '').account, mode: 'apikey' },
+    token: { id: null, accountId: null, token, enabled: true, extraConfig: null },
+  };
+}
 
 describe('Sub2ApiAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -76,7 +93,7 @@ describe('Sub2ApiAdapter', () => {
   });
 
   it('returns unsupported for checkin', async () => {
-    const result = await adapter.checkin('http://localhost', 'token');
+    const result = await adapter.checkin(accountContext('http://localhost', 'token'));
     expect(result.success).toBe(false);
     expect(result.message).toContain('not supported');
   });
@@ -95,7 +112,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const balance = await adapter.getBalance(baseUrl, 'jwt-token');
+    const balance = await adapter.getBalance(accountContext(baseUrl, 'jwt-token'));
     expect(balance.balance).toBeGreaterThan(0);
     expect(balance.used).toBe(0);
   });
@@ -136,7 +153,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const balance = await adapter.getBalance(baseUrl, 'jwt-token');
+    const balance = await adapter.getBalance(accountContext(baseUrl, 'jwt-token'));
     expect(balance.subscriptionSummary).toEqual({
       activeCount: 1,
       totalUsedUsd: 3.75,
@@ -189,7 +206,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const balance = await adapter.getBalance(baseUrl, 'jwt-token');
+    const balance = await adapter.getBalance(accountContext(baseUrl, 'jwt-token'));
     expect(balance.subscriptionSummary).toEqual({
       activeCount: 1,
       totalUsedUsd: 2.5,
@@ -219,7 +236,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const userInfo = await adapter.getUserInfo(baseUrl, 'jwt-token');
+    const userInfo = await adapter.getUserInfo(accountContext(baseUrl, 'jwt-token'));
     expect(userInfo).not.toBeNull();
     expect(userInfo!.username).toBe('testuser');
   });
@@ -238,7 +255,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const userInfo = await adapter.getUserInfo(baseUrl, 'jwt-token');
+    const userInfo = await adapter.getUserInfo(accountContext(baseUrl, 'jwt-token'));
     expect(userInfo!.username).toBe('alice');
   });
 
@@ -254,7 +271,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const models = await adapter.getModels(baseUrl, 'jwt-token');
+    const models = await adapter.getModels(modelContext(baseUrl, 'jwt-token'));
     expect(models).toEqual(['gpt-4o', 'claude-3-opus']);
   });
 
@@ -273,7 +290,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const models = await adapter.getModels(`${baseUrl}/v1beta`, 'gemini-key');
+    const models = await adapter.getModels(modelContext(`${baseUrl}/v1beta`, 'gemini-key'));
     expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
   });
 
@@ -296,7 +313,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const models = await adapter.getModels(baseUrl, 'gemini-key');
+    const models = await adapter.getModels(modelContext(baseUrl, 'gemini-key'));
     expect(models).toEqual(['gemini-2.5-flash-lite', 'gemini-3-pro-preview']);
   });
 
@@ -312,12 +329,14 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const models = await adapter.getModels(`${baseUrl}/api/v1`, 'jwt-token');
+    const models = await adapter.getModels(modelContext(`${baseUrl}/api/v1`, 'jwt-token'));
     expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
   });
 
-  it('fetches models via api key discovered from /api/v1/keys when JWT cannot call /v1/models directly', async () => {
+  it('does not turn a rejected model credential into a management-key lookup', async () => {
+    const urls: string[] = [];
     await startServer((req, res) => {
+      urls.push(req.url || '');
       const auth = req.headers.authorization || '';
       if (req.url === '/v1/models' && auth === 'Bearer jwt-token') {
         res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -327,121 +346,18 @@ describe('Sub2ApiAdapter', () => {
         }));
         return;
       }
-      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          code: 0,
-          message: 'success',
-          data: {
-            items: [
-              { id: 1, key: 'sk-sub2-active', name: 'default', status: 'active' },
-              { id: 2, key: 'sk-sub2-disabled', name: 'old', status: 'inactive' },
-            ],
-          },
-        }));
-        return;
-      }
-      if (req.url === '/v1/models' && auth === 'Bearer sk-sub2-active') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          object: 'list',
-          data: [{ id: 'gpt-4o-mini' }, { id: 'claude-3-5-sonnet' }],
-        }));
-        return;
-      }
       res.writeHead(404).end();
     });
 
-    const models = await adapter.getModels(baseUrl, 'jwt-token');
-    expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
-  });
-
-  it('discovers an api key for gemini /v1beta/models when session JWT cannot call the endpoint directly', async () => {
-    await startServer((req, res) => {
-      const auth = req.headers.authorization || '';
-      if (req.url === '/v1beta/models' && auth === 'Bearer jwt-token') {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: {
-            code: 401,
-            message: 'API key is required',
-            status: 'UNAUTHENTICATED',
-          },
-        }));
-        return;
-      }
-      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          code: 0,
-          message: 'success',
-          data: {
-            items: [
-              { id: 1, key: 'sk-sub2-gemini', name: 'gemini', status: 'active' },
-            ],
-          },
-        }));
-        return;
-      }
-      if (req.url === '/v1beta/models' && auth === 'Bearer sk-sub2-gemini') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          models: [
-            { name: 'models/gemini-2.5-flash' },
-            { name: 'models/gemini-3.1-pro-preview' },
-          ],
-        }));
-        return;
-      }
-      res.writeHead(404).end();
-    });
-
-    const models = await adapter.getModels(`${baseUrl}/v1beta`, 'jwt-token');
-    expect(models).toEqual(['gemini-2.5-flash', 'gemini-3.1-pro-preview']);
-  });
-
-  it('strips a bare antigravity suffix before listing api keys for jwt fallback', async () => {
-    await startServer((req, res) => {
-      const auth = req.headers.authorization || '';
-      if (req.url === '/antigravity/v1beta/models' && auth === 'Bearer jwt-token') {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: {
-            code: 401,
-            message: 'API key is required',
-            status: 'UNAUTHENTICATED',
-          },
-        }));
-        return;
-      }
-      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          code: 0,
-          message: 'success',
-          data: {
-            items: [
-              { id: 1, key: 'sk-sub2-antigravity', name: 'gemini', status: 'active' },
-            ],
-          },
-        }));
-        return;
-      }
-      if (req.url === '/antigravity/v1beta/models' && auth === 'Bearer sk-sub2-antigravity') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          models: [
-            { name: 'models/gemini-2.5-flash' },
-            { name: 'models/gemini-2.5-pro' },
-          ],
-        }));
-        return;
-      }
-      res.writeHead(404).end();
-    });
-
-    const models = await adapter.getModels(`${baseUrl}/antigravity`, 'jwt-token');
-    expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
+    const models = await adapter.getModels(modelContext(baseUrl, 'jwt-token'));
+    expect(models).toEqual([]);
+    expect(urls).toEqual([
+      '/v1/models',
+      '/api/v1/models',
+      '/v1beta/models',
+      '/antigravity/v1beta/models',
+    ]);
+    expect(urls.some((url) => url.startsWith('/api/v1/keys'))).toBe(false);
   });
 
   it('handles non-zero code as error in /api/v1/auth/me', async () => {
@@ -458,7 +374,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    await expect(adapter.getBalance(baseUrl, 'expired-token')).rejects.toThrow();
+    await expect(adapter.getBalance(accountContext(baseUrl, 'expired-token'))).rejects.toThrow();
   });
 
   it('login returns unsupported', async () => {
@@ -486,7 +402,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const result = await adapter.verifyToken(baseUrl, 'Bearer jwt-token');
+    const result = await adapter.verifyToken(accountContext(baseUrl, 'Bearer jwt-token'));
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('testuser');
   });
@@ -515,7 +431,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const tokens = await adapter.getApiTokens(baseUrl, 'Bearer jwt-token');
+    const tokens = await adapter.getApiTokens(accountContext(baseUrl, 'Bearer jwt-token'));
     expect(tokens).toEqual([{ key: 'sk-active', name: 'default', enabled: true }]);
   });
 
@@ -538,12 +454,12 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const tokens = await adapter.getApiTokens(baseUrl, 'jwt-token');
+    const tokens = await adapter.getApiTokens(accountContext(baseUrl, 'jwt-token'));
     expect(tokens).toEqual([
       { key: 'sk-disabled', name: 'old', enabled: false },
       { key: 'sk-active', name: 'default', enabled: true },
     ]);
-    expect(await adapter.getApiToken(baseUrl, 'jwt-token')).toBe('sk-active');
+    expect(await adapter.getApiToken(accountContext(baseUrl, 'jwt-token'))).toBe('sk-active');
   });
 
   it('fetches user groups from /api/v1/groups', async () => {
@@ -565,7 +481,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const groups = await adapter.getUserGroups(baseUrl, 'jwt-token');
+    const groups = await adapter.getUserGroups(accountContext(baseUrl, 'jwt-token'));
     expect(groups).toEqual(['1', '2']);
   });
 
@@ -586,7 +502,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const groups = await adapter.getUserGroups(baseUrl, 'jwt-token');
+    const groups = await adapter.getUserGroups(accountContext(baseUrl, 'jwt-token'));
     expect(groups).toEqual(['5', '6']);
   });
 
@@ -635,10 +551,7 @@ describe('Sub2ApiAdapter', () => {
       res.end(JSON.stringify(body));
     });
 
-    const catalog = await adapter.getPricingCatalog(baseUrl, {
-      token: 'Bearer jwt-token',
-      tokenKind: 'access_token',
-    });
+    const catalog = await adapter.getPricingCatalog(accountContext(baseUrl, 'Bearer jwt-token'));
 
     expect(catalog?.groupRatio).toEqual({ default: 1, '10': 1, '20': 1.2 });
     expect(catalog?.models.get('gpt-4o')).toMatchObject({
@@ -669,7 +582,7 @@ describe('Sub2ApiAdapter', () => {
       res.end(JSON.stringify(body));
     });
 
-    const catalog = await adapter.getPricingCatalog(baseUrl, { token: 'jwt-token', tokenKind: 'access_token' });
+    const catalog = await adapter.getPricingCatalog(accountContext(baseUrl, 'jwt-token'));
     expect(catalog?.models.get('image-model')).toMatchObject({
       quotaType: 1,
       modelPrice: 0.04,
@@ -713,7 +626,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const groups = await adapter.getUserGroups(baseUrl, 'jwt-token');
+    const groups = await adapter.getUserGroups(accountContext(baseUrl, 'jwt-token'));
     expect(groups).toEqual(['7', '9']);
   });
 
@@ -741,7 +654,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const created = await adapter.createApiToken(baseUrl, 'jwt-token', undefined, { name: 'metapi-e2e' });
+    const created = await adapter.createApiToken({ ...accountContext(baseUrl, 'jwt-token'), options: { name: 'metapi-e2e' } });
     expect(created).toBe(true);
   });
 
@@ -772,7 +685,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const deleted = await adapter.deleteApiToken(baseUrl, 'jwt-token', 'sk-delete-me');
+    const deleted = await adapter.deleteApiToken({ ...accountContext(baseUrl, 'jwt-token'), token: modelContext(baseUrl, 'sk-delete-me').token });
     expect(deleted).toBe(true);
   });
 
@@ -810,7 +723,7 @@ describe('Sub2ApiAdapter', () => {
       res.writeHead(404).end();
     });
 
-    const rows = await adapter.getSiteAnnouncements(baseUrl, 'jwt-token');
+    const rows = await adapter.getSiteAnnouncements(accountContext(baseUrl, 'jwt-token'));
 
     expect(rows).toEqual([
       {

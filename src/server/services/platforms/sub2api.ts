@@ -7,12 +7,14 @@ import {
   SubscriptionPlanSummary,
   SubscriptionSummary,
   type SiteAnnouncement,
+  type AccountConnectionField,
+  type PlatformCredentialCapabilities,
+  type PlatformCredentialContext,
   UserInfo,
 } from './base.js';
 import type {
   UpstreamDirectModelPrice,
   UpstreamPricingCatalog,
-  UpstreamPricingCredential,
   UpstreamPricingModel,
 } from '../upstreamPricingCatalog.js';
 import { stripTrailingSlashes } from '../urlNormalization.js';
@@ -30,6 +32,38 @@ function normalizeBaseUrl(baseUrl: string): string {
  */
 export class Sub2ApiAdapter extends BasePlatformAdapter {
   readonly platformName = 'sub2api';
+
+  override get credentialCapabilities(): PlatformCredentialCapabilities {
+    return {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{
+        kind: 'access_token',
+        labelI18nKey: 'pages.accounts.credentialKindAccessToken',
+        commentI18nKey: 'pages.accounts.credentialKindAccessTokenComment',
+        placeholderI18nKey: 'pages.accounts.credentialPlaceholderAccessToken',
+      }],
+    };
+  }
+
+  override readonly accountConnectionFields: readonly AccountConnectionField[] = [
+    {
+      key: 'sub2apiAuth.refreshToken',
+      labelI18nKey: 'pages.accounts.refreshToken',
+      commentI18nKey: 'pages.accounts.configurationRefreshTokenMetapiJwtExpired401',
+      placeholderI18nKey: 'pages.accounts.sub2apiRefreshTokenAutomatic',
+      inputType: 'password',
+      storagePath: 'sub2apiAuth.refreshToken',
+      secret: true,
+    },
+    {
+      key: 'sub2apiAuth.tokenExpiresAt',
+      labelI18nKey: 'pages.accounts.tokenExpires',
+      commentI18nKey: 'pages.accounts.configurationRefreshTokenMetapiJwtExpired401',
+      inputType: 'number',
+      storagePath: 'sub2apiAuth.tokenExpiresAt',
+    },
+  ];
 
   private roundCurrency(value: number): number {
     return Math.round(value * 1_000_000) / 1_000_000;
@@ -802,7 +836,9 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   // --- User Info ---
-  override async getUserInfo(baseUrl: string, accessToken: string): Promise<UserInfo | null> {
+  override async getUserInfo(input: PlatformCredentialContext): Promise<UserInfo | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const user = await this.fetchAuthMe(baseUrl, accessToken);
       return {
@@ -815,15 +851,14 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   // --- Check-in: Not supported ---
-  async checkin(
-    _baseUrl: string,
-    _accessToken: string,
-  ): Promise<CheckinResult> {
+  async checkin(_input: PlatformCredentialContext): Promise<CheckinResult> {
     return { success: false, message: 'Check-in is not supported by Sub2API' };
   }
 
   // --- Balance ---
-  async getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo> {
+  async getBalance(input: PlatformCredentialContext): Promise<BalanceInfo> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const [user, subscriptionSummary] = await Promise.all([
       this.fetchAuthMe(normalizedBase, accessToken),
@@ -840,26 +875,16 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   // --- Models: Standard OpenAI-compatible endpoint ---
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     const normalizedBase = normalizeBaseUrl(baseUrl);
-    const managementBase = this.resolveManagementBaseUrl(normalizedBase);
-    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
-    if (directModels.length > 0) return directModels;
-
-    // Session JWT cannot access /v1/models directly; discover a user key first.
-    const discoveredApiToken = await this.getApiToken(managementBase, apiToken);
-    if (!discoveredApiToken) return [];
-    if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
-      return [];
-    }
-    return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+    return this.fetchModelsByToken(normalizedBase, apiToken);
   }
 
-  override async getPricingCatalog(
-    baseUrl: string,
-    credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
-    const token = this.normalizeTokenKeyForCompare(credential.token);
+  override async getPricingCatalog(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const token = this.normalizeTokenKeyForCompare(this.pricingCredential(input));
     if (!token) return null;
     const managementBase = this.resolveManagementBaseUrl(baseUrl);
     const headers = this.buildAuthHeader(token);
@@ -871,7 +896,9 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return this.parseSub2ApiCatalog(channels, groups, rates);
   }
 
-  override async getSiteAnnouncements(baseUrl: string, accessToken: string): Promise<SiteAnnouncement[]> {
+  override async getSiteAnnouncements(input: PlatformCredentialContext): Promise<SiteAnnouncement[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const endpoint = '/api/v1/announcements?page=1&page_size=100';
       const res = await this.fetchJson<any>(`${normalizeBaseUrl(baseUrl)}${endpoint}`, {
@@ -906,7 +933,9 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async getApiTokens(baseUrl: string, accessToken: string): Promise<ApiTokenInfo[]> {
+  override async getApiTokens(input: PlatformCredentialContext): Promise<ApiTokenInfo[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const keys = await this.listApiKeys(normalizeBaseUrl(baseUrl), accessToken);
       return keys.map((item) => {
@@ -923,12 +952,14 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async getApiToken(baseUrl: string, accessToken: string): Promise<string | null> {
-    const tokens = await this.getApiTokens(baseUrl, accessToken);
+  override async getApiToken(input: PlatformCredentialContext): Promise<string | null> {
+    const tokens = await this.getApiTokens(input);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 
-  override async getUserGroups(baseUrl: string, accessToken: string): Promise<string[]> {
+  override async getUserGroups(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const directGroups = await this.listGroups(normalizedBase, accessToken);
     if (directGroups.length > 0) return directGroups;
@@ -939,12 +970,10 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return ['default'];
   }
 
-  override async createApiToken(
-    baseUrl: string,
-    accessToken: string,
-    _platformUserId?: number,
-    options?: CreateApiTokenOptions,
-  ): Promise<boolean> {
+  override async createApiToken(input: PlatformCredentialContext & { options?: CreateApiTokenOptions }): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const options = input.options;
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const payload: Record<string, unknown> = {
       name: (options?.name || '').trim() || 'metapi',
@@ -981,11 +1010,10 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return false;
   }
 
-  override async deleteApiToken(
-    baseUrl: string,
-    accessToken: string,
-    tokenKey: string,
-  ): Promise<boolean> {
+  override async deleteApiToken(input: PlatformCredentialContext): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const tokenKey = input.token?.token || '';
     const targetKey = this.normalizeTokenKeyForCompare(tokenKey);
     if (!targetKey) return false;
 

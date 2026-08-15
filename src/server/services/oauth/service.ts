@@ -43,6 +43,7 @@ import {
   listOauthRouteUnitsByAccountIds,
 } from './routeUnitService.js';
 import { retireAccountFromRouting } from '../accountRetirementService.js';
+import { invalidateRouteGraphReadCaches } from '../routeGraphService.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
@@ -709,6 +710,18 @@ export async function startOauthProviderFlow(input: {
   if (!definition) {
     throw new Error(`unsupported oauth provider: ${input.provider}`);
   }
+  if (typeof input.rebindAccountId === 'number') {
+    const account = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, input.rebindAccountId))
+      .get();
+    const oauth = getOauthInfoFromAccount(account);
+    if (!oauth) {
+      throw new Error('account is not managed by oauth');
+    }
+    if (oauth.provider !== input.provider) {
+      throw new Error('oauth provider does not match the existing connection');
+    }
+  }
   const redirectUri = definition.loopback.redirectUri;
   const callbackServerState = getOAuthLoopbackCallbackServerState(input.provider);
   if (callbackServerState.attempted && !callbackServerState.ready) {
@@ -1266,6 +1279,7 @@ export async function refreshOauthAccessToken(accountId: number) {
     status: 'active',
     updatedAt: new Date().toISOString(),
   }).where(eq(schema.accounts.id, accountId)).run();
+  invalidateRouteGraphReadCaches('account-mutated');
 
   return {
     accountId,

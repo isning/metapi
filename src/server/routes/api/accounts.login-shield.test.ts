@@ -11,6 +11,11 @@ const loginMock = vi.fn();
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
     login: (...args: unknown[]) => loginMock(...args),
+    credentialCapabilities: {
+      session: true,
+      apiKey: true,
+      sessionCredentialOptions: [{ kind: 'access_token' }],
+    },
   }),
 }));
 

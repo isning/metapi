@@ -1,17 +1,19 @@
-import { eq } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { schema } from '../db/index.js';
 import {
   getAutoReloginConfig,
   resolveProxyUrlFromExtraConfig,
+  resolveStoredAccountCredentialMode,
 } from './accountExtraConfig.js';
 import { decryptAccountPassword } from './accountCredentialService.js';
 import { getAdapter } from './platforms/index.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
 
 type AccountAutoReloginSubject = {
   id: number;
   status?: string | null;
   credentialMode?: string | null;
+  oauthProvider?: string | null;
   extraConfig?: string | Record<string, unknown> | null;
 };
 
@@ -20,15 +22,20 @@ type AccountAutoReloginSite = {
   platform: string;
 };
 
+export type RefreshedAccountSession = {
+  credential: string;
+  credentialKind: 'access_token' | 'session_cookie';
+};
+
 /** Refreshes a stored session from the encrypted password recovery credential. */
 export async function refreshAccountSessionFromAutoRelogin(
   account: AccountAutoReloginSubject,
   site: AccountAutoReloginSite,
-): Promise<string | null> {
-  if (account.credentialMode === 'apikey') return null;
+): Promise<RefreshedAccountSession | null> {
+  if (resolveStoredAccountCredentialMode(account) !== 'session') return null;
 
   const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
+  if (!adapter || !adapter.credentialCapabilities?.session) return null;
 
   const relogin = getAutoReloginConfig(account.extraConfig);
   if (!relogin) return null;
@@ -42,16 +49,15 @@ export async function refreshAccountSessionFromAutoRelogin(
   );
   if (!loginResult.success || !loginResult.accessToken) return null;
 
-  await db.update(schema.accounts)
-    .set({
-      credential: loginResult.accessToken,
-      credentialMode: 'session',
-      credentialKind: 'adapter_default',
-      status: account.status === 'expired' ? 'active' : account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
+  await updateAccountRuntimeIdentity(account.id, {
+    credential: loginResult.accessToken,
+    credentialMode: 'session',
+    credentialKind: loginResult.credentialKind || 'access_token',
+    status: account.status === 'expired' ? 'active' : account.status,
+  });
 
-  return loginResult.accessToken;
+  return {
+    credential: loginResult.accessToken,
+    credentialKind: loginResult.credentialKind || 'access_token',
+  };
 }

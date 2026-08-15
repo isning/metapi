@@ -336,6 +336,33 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('does not allow the generic OAuth start endpoint to rebind a non-OAuth account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ordinary api-key site',
+      url: 'https://ordinary.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'ordinary-account',
+      credentialMode: 'apikey',
+      credential: '',
+      credentialKind: 'none',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/codex/start',
+      payload: { accountId: account.id },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      message: 'account is not managed by oauth',
+    });
+  });
+
   it('discovers the Antigravity project via onboardUser polling when loadCodeAssist does not return one', async () => {
     fetchMock
       .mockResolvedValueOnce({

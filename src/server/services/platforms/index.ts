@@ -1,4 +1,8 @@
-import type { PlatformAdapter } from './base.js';
+import {
+  buildDefaultModelRequestCredentialHeaders,
+  type ModelRequestCredentialInput,
+  type PlatformAdapter,
+} from './base.js';
 import { AnyRouterAdapter } from './anyrouter.js';
 import { NewApiAdapter } from './newApi.js';
 import { OneApiAdapter } from './oneApi.js';
@@ -41,6 +45,14 @@ function normalizePlatform(platform: string): string {
 export function getAdapter(platform: string): PlatformAdapter | undefined {
   const normalized = normalizePlatform(platform);
   return adapters.find((a) => a.platformName === normalized);
+}
+
+export function buildPlatformModelRequestCredentialHeaders(
+  platform: string,
+  input: ModelRequestCredentialInput,
+): Record<string, string> {
+  return getAdapter(platform)?.buildModelRequestCredentialHeaders(input)
+    ?? buildDefaultModelRequestCredentialHeaders(input);
 }
 
 const titleFirstPlatforms = new Set<string>([

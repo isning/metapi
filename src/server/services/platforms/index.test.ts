@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
-import { detectPlatform, getAdapter } from './index.js';
+import {
+  buildPlatformModelRequestCredentialHeaders,
+  detectPlatform,
+  getAdapter,
+} from './index.js';
 
 async function withHttpServer(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
@@ -46,6 +50,25 @@ describe('getAdapter platform aliases', () => {
   it('handles case-insensitive platform strings', () => {
     const adapter = getAdapter('Veloera');
     expect(adapter?.platformName).toBe('veloera');
+    expect(adapter?.credentialCapabilities.sessionCredentialOptions.map((option) => option.kind))
+      .toEqual(['access_token']);
+    expect(adapter?.credentialCapabilities.sessionCredentialOptions.some((option) => option.kind === 'session_cookie'))
+      .toBe(false);
+  });
+
+  it('declares OneHub as access-token-only for account connections', () => {
+    const adapter = getAdapter('one-hub');
+    expect(adapter?.credentialCapabilities.sessionCredentialOptions.map((option) => option.kind))
+      .toEqual(['access_token']);
+  });
+
+  it('does not expose regular account modes for OAuth adapters', () => {
+    for (const platform of ['codex', 'antigravity']) {
+      const capabilities = getAdapter(platform)?.credentialCapabilities;
+      expect(capabilities?.session).toBe(false);
+      expect(capabilities?.apiKey).toBe(false);
+      expect(capabilities?.sessionCredentialOptions).toEqual([]);
+    }
   });
 
   it('returns undefined for unknown platforms', () => {
@@ -66,6 +89,17 @@ describe('getAdapter platform aliases', () => {
   it('supports dedicated codex adapter and aliases', () => {
     expect(getAdapter('codex')?.platformName).toBe('codex');
     expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
+  });
+
+  it('delegates proxy credential wire format to the selected adapter', () => {
+    expect(buildPlatformModelRequestCredentialHeaders('anyrouter', {
+      kind: 'model_api_key',
+      credential: 'sk-model-key',
+    })).toEqual({ Authorization: 'Bearer sk-model-key' });
+    expect(buildPlatformModelRequestCredentialHeaders('claude', {
+      kind: 'model_api_key',
+      credential: 'sk-ant-test',
+    })).toEqual({});
   });
 
   it('detects anyrouter URL before generic new-api adapter', async () => {

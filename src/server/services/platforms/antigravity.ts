@@ -1,4 +1,11 @@
-import { BasePlatformAdapter, type BalanceInfo, type CheckinResult, type UserInfo } from './base.js';
+import {
+  BasePlatformAdapter,
+  type BalanceInfo,
+  type CheckinResult,
+  type PlatformCredentialCapabilities,
+  type PlatformCredentialContext,
+  type UserInfo,
+} from './base.js';
 import {
   ANTIGRAVITY_CLIENT_METADATA,
   ANTIGRAVITY_GOOGLE_API_CLIENT,
@@ -34,6 +41,14 @@ function extractAntigravityModelNames(payload: unknown): string[] {
 export class AntigravityAdapter extends BasePlatformAdapter {
   readonly platformName = 'antigravity';
 
+  override get credentialCapabilities(): PlatformCredentialCapabilities {
+    return {
+      session: false,
+      apiKey: false,
+      sessionCredentialOptions: [],
+    };
+  }
+
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
     return normalized.includes('antigravity');
@@ -43,19 +58,21 @@ export class AntigravityAdapter extends BasePlatformAdapter {
     return { success: false, message: 'login endpoint not supported' };
   }
 
-  override async getUserInfo(_baseUrl: string, _accessToken: string): Promise<UserInfo | null> {
+  override async getUserInfo(_input: PlatformCredentialContext): Promise<UserInfo | null> {
     return null;
   }
 
-  async checkin(_baseUrl: string, _accessToken: string): Promise<CheckinResult> {
+  async checkin(_input: PlatformCredentialContext): Promise<CheckinResult> {
     return { success: false, message: 'checkin endpoint not supported' };
   }
 
-  async getBalance(_baseUrl: string, _accessToken: string): Promise<BalanceInfo> {
+  async getBalance(_input: PlatformCredentialContext): Promise<BalanceInfo> {
     return { balance: 0, used: 0, quota: 0 };
   }
 
-  async getModels(baseUrl: string, accessToken: string): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = this.modelCredential(input);
     try {
       const payload = await this.fetchJson<{ models?: unknown }>(
         `${normalizeBaseUrl(baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)}/v1internal:fetchAvailableModels`,

@@ -1,8 +1,7 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions, type PlatformCredentialContext } from './base.js';
 import {
   normalizeCommonPricingPayload,
   type UpstreamPricingCatalog,
-  type UpstreamPricingCredential,
 } from '../upstreamPricingCatalog.js';
 
 type CreateApiTokenPayload = {
@@ -54,7 +53,9 @@ export class OneApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  async checkin(baseUrl: string, accessToken: string): Promise<CheckinResult> {
+  async checkin(input: PlatformCredentialContext): Promise<CheckinResult> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
         method: 'POST',
@@ -69,7 +70,9 @@ export class OneApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  async getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo> {
+  async getBalance(input: PlatformCredentialContext): Promise<BalanceInfo> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -81,14 +84,18 @@ export class OneApiAdapter extends BasePlatformAdapter {
     return { balance: quota - used, used, quota, todayIncome, todayQuotaConsumption };
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string): Promise<ApiTokenInfo[]> {
+  async getApiTokens(input: PlatformCredentialContext): Promise<ApiTokenInfo[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -127,12 +134,14 @@ export class OneApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  async getApiToken(baseUrl: string, accessToken: string): Promise<string | null> {
-    const tokens = await this.getApiTokens(baseUrl, accessToken);
+  async getApiToken(input: PlatformCredentialContext): Promise<string | null> {
+    const tokens = await this.getApiTokens(input);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 
-  async getUserGroups(baseUrl: string, accessToken: string): Promise<string[]> {
+  async getUserGroups(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     const headers = { Authorization: `Bearer ${accessToken}` };
     const resolveGroupFetchErrorMessage = (payload: any): string => {
       const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
@@ -180,24 +189,21 @@ export class OneApiAdapter extends BasePlatformAdapter {
     return ['default'];
   }
 
-  async getPricingCatalog(
-    baseUrl: string,
-    credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
+  async getPricingCatalog(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const token = this.pricingCredential(input);
     const headers: Record<string, string> = {};
-    if (credential.token) {
-      headers.Authorization = `Bearer ${credential.token}`;
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
     }
     const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
     return normalizeCommonPricingPayload(payload);
   }
 
-  async createApiToken(
-    baseUrl: string,
-    accessToken: string,
-    _platformUserId?: number,
-    options?: CreateApiTokenOptions,
-  ): Promise<boolean> {
+  async createApiToken(input: PlatformCredentialContext & { options?: CreateApiTokenOptions }): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const options = input.options;
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/token/`, {
         method: 'POST',
@@ -210,11 +216,10 @@ export class OneApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  async deleteApiToken(
-    baseUrl: string,
-    accessToken: string,
-    tokenKey: string,
-  ): Promise<boolean> {
+  async deleteApiToken(input: PlatformCredentialContext): Promise<boolean> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
+    const tokenKey = input.token?.token || '';
     const targetKey = this.normalizeTokenKeyForCompare(tokenKey);
     if (!targetKey) return false;
 

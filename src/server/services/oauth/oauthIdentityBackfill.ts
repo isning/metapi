@@ -1,5 +1,6 @@
 import { eq, isNotNull, isNull, or } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { invalidateRouteGraphReadCaches } from '../routeGraphService.js';
 import { getOauthInfoFromExtraConfig } from './oauthAccount.js';
 
 let inFlightOauthIdentityBackfill: Promise<number> | null = null;
@@ -47,6 +48,12 @@ async function runOauthIdentityBackfill(): Promise<number> {
       updatedAt: new Date().toISOString(),
     }).where(eq(schema.accounts.id, row.id)).run();
     updated += 1;
+  }
+
+  // This backfill also runs from the OAuth listing endpoint, after request
+  // routing may already have cached account identities.
+  if (updated > 0) {
+    invalidateRouteGraphReadCaches('account-mutated');
   }
 
   return updated;

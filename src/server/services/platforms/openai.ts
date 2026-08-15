@@ -1,5 +1,5 @@
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
-import type { ModelDiscoveryOptions } from './base.js';
+import type { PlatformCredentialContext } from './base.js';
 
 export class OpenAiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'openai';
@@ -9,11 +9,11 @@ export class OpenAiAdapter extends StandardApiProviderAdapterBase {
     return normalized.includes('api.openai.com');
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]> {
+  async getModels(input: PlatformCredentialContext): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
-      baseUrl,
-      basePathMode: options?.basePathMode,
-      headers: { Authorization: `Bearer ${apiToken}` },
+      baseUrl: input.endpoint.baseUrl,
+      basePathMode: input.endpoint.basePathMode,
+      headers: { Authorization: `Bearer ${this.modelCredential(input)}` },
     });
   }
 }

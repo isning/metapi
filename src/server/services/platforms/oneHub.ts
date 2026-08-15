@@ -1,8 +1,8 @@
 import { OneApiAdapter } from './oneApi.js';
+import type { PlatformCredentialContext } from './base.js';
 import {
   normalizeOneHubPricingPayload,
   type UpstreamPricingCatalog,
-  type UpstreamPricingCredential,
 } from '../upstreamPricingCatalog.js';
 
 export class OneHubAdapter extends OneApiAdapter {
@@ -18,10 +18,12 @@ export class OneHubAdapter extends OneApiAdapter {
    * The /api/available_model model-list API returns { data: { model_name: { price: ... }, ... } }
    * where the keys are model names.
    */
-  override async getModels(baseUrl: string, apiToken: string, platformUserId?: number): Promise<string[]> {
+  override async getModels(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const apiToken = this.modelCredential(input);
     let openAiModels: string[] = [];
     try {
-      openAiModels = await super.getModels(baseUrl, apiToken, platformUserId);
+      openAiModels = await super.getModels(input);
     } catch {}
     if (openAiModels.length > 0) return openAiModels;
 
@@ -42,7 +44,9 @@ export class OneHubAdapter extends OneApiAdapter {
   /**
    * OneHub user groups: /api/user_group_map returns { data: { group_name: ratio, ... } }
    */
-  override async getUserGroups(baseUrl: string, accessToken: string): Promise<string[]> {
+  override async getUserGroups(input: PlatformCredentialContext): Promise<string[]> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user_group_map`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -54,15 +58,14 @@ export class OneHubAdapter extends OneApiAdapter {
       }
     } catch {}
 
-    return super.getUserGroups(baseUrl, accessToken);
+    return super.getUserGroups(input);
   }
 
-  override async getPricingCatalog(
-    baseUrl: string,
-    credential: UpstreamPricingCredential,
-  ): Promise<UpstreamPricingCatalog | null> {
+  override async getPricingCatalog(input: PlatformCredentialContext): Promise<UpstreamPricingCatalog | null> {
+    const baseUrl = input.endpoint.baseUrl;
+    const token = this.pricingCredential(input);
     const headers: Record<string, string> = {};
-    if (credential.token) headers.Authorization = `Bearer ${credential.token}`;
+    if (token) headers.Authorization = `Bearer ${token}`;
 
     const [availablePayload, groupPayload] = await Promise.all([
       this.fetchJson<any>(`${baseUrl}/api/available_model`, { headers }),

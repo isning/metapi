@@ -1,10 +1,15 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import {
-  hasOauthProvider,
   resolveStoredAccountCredentialMode,
-  type AccountCredentialMode,
+  buildAccountConnectionValues,
+  type StoredAccountCredentialMode,
 } from "./accountExtraConfig.js";
+import {
+  buildAccountCapabilities,
+  type AccountCapabilities,
+} from './accountCapabilities.js';
+import { getAdapter } from './platforms/index.js';
 import {
   buildRuntimeHealthForAccount,
   type RuntimeHealthInfo,
@@ -12,22 +17,18 @@ import {
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import { getLocalDayRangeUtc } from "./localTimeService.js";
 import {
+  clearSnapshotCache,
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
-import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import { createAdminSnapshotPersistence, deleteAdminSnapshot } from "./adminSnapshotStore.js";
 import { listValuedRequestCostFacts } from "./billingCostValuationService.js";
-
-export type AccountCapabilities = {
-  canCheckin: boolean;
-  canRefreshBalance: boolean;
-  proxyOnly: boolean;
-};
+import { buildApiKeyAccountHealth, listAccountTokenHealth } from './accountTokenHealthService.js';
 
 export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
   site: typeof schema.sites.$inferSelect;
-  credentialMode: AccountCredentialMode;
+  credentialMode: StoredAccountCredentialMode;
   capabilities: AccountCapabilities;
   todaySpend: number;
   todaySpendUnit: string;
@@ -36,6 +37,9 @@ export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
   todaySpendIncompatibleObservationCount: number;
   todayReward: number;
   runtimeHealth: RuntimeHealthInfo;
+  apiKeyHealth: RuntimeHealthInfo | null;
+  accountConnectionFields: readonly unknown[];
+  connectionValues: Record<string, unknown>;
 };
 
 export type AccountsSnapshotPayload = {
@@ -50,57 +54,22 @@ const accountsSnapshotPersistence =
     key: "all",
   });
 
-function hasSessionTokenValue(value: string | null | undefined): boolean {
-  return typeof value === "string" && value.trim().length > 0;
+/** Invalidates the shared account/site picker snapshot after catalog writes. */
+export async function invalidateAccountsSnapshot(): Promise<void> {
+  clearSnapshotCache("accounts-snapshot");
+  await deleteAdminSnapshot({ namespace: "accounts-snapshot", key: "all" });
 }
 
 function resolveStoredCredentialMode(
   account: typeof schema.accounts.$inferSelect,
-): AccountCredentialMode {
-  const mode = resolveStoredAccountCredentialMode(account);
-  return mode === 'oauth' ? 'session' : mode;
-}
-
-function buildCapabilitiesFromCredentialMode(
-  credentialMode: AccountCredentialMode,
-  hasSessionToken: boolean,
-  oauthIdentity?:
-    | string
-    | null
-    | Pick<
-        typeof schema.accounts.$inferSelect,
-        "extraConfig" | "oauthProvider"
-      >,
-): AccountCapabilities {
-  if (hasOauthProvider(oauthIdentity)) {
-    return {
-      canCheckin: false,
-      canRefreshBalance: false,
-      proxyOnly: true,
-    };
-  }
-  const sessionCapable =
-    credentialMode === "session"
-      ? hasSessionToken
-      : credentialMode === "apikey"
-        ? false
-        : hasSessionToken;
-  return {
-    canCheckin: sessionCapable,
-    canRefreshBalance: sessionCapable,
-    proxyOnly: !sessionCapable,
-  };
+): StoredAccountCredentialMode {
+  return resolveStoredAccountCredentialMode(account);
 }
 
 function buildCapabilitiesForAccount(
   account: typeof schema.accounts.$inferSelect,
 ): AccountCapabilities {
-  const credentialMode = resolveStoredCredentialMode(account);
-  return buildCapabilitiesFromCredentialMode(
-    credentialMode,
-    hasSessionTokenValue(account.credential),
-    account,
-  );
+  return buildAccountCapabilities(account);
 }
 
 async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
@@ -115,17 +84,8 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
 
   const { localDay, startUtc, endUtc } = getLocalDayRangeUtc();
 
-  const [valuedCosts, modelCountRows, todayCheckins] = await Promise.all([
+  const [valuedCosts, todayCheckins, accountTokens] = await Promise.all([
     listValuedRequestCostFacts({ fromDay: localDay, toDay: localDay }),
-    db
-      .select({
-        accountId: schema.modelAvailability.accountId,
-        modelCount: sql<number>`count(*)`,
-      })
-      .from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.available, true))
-      .groupBy(schema.modelAvailability.accountId)
-      .all(),
     db
       .select({
         accountId: schema.checkinLogs.accountId,
@@ -141,7 +101,16 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
         ),
       )
       .all(),
+    db.select().from(schema.accountTokens).all(),
   ]);
+
+  const tokenHealthById = await listAccountTokenHealth(accountTokens.map((token) => token.id));
+  const tokensByAccountId = new Map<number, typeof accountTokens>();
+  for (const token of accountTokens) {
+    const current = tokensByAccountId.get(token.accountId) || [];
+    current.push(token);
+    tokensByAccountId.set(token.accountId, current);
+  }
 
   const spendByAccount = new Map<number, { amount: number; known: number; unknown: number; incompatible: number }>();
   for (const fact of valuedCosts.facts) {
@@ -151,12 +120,6 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
     current.unknown += fact.unknownObservationCount;
     current.incompatible += fact.incompatibleObservationCount;
     spendByAccount.set(fact.accountId, current);
-  }
-
-  const modelCountByAccount: Record<number, number> = {};
-  for (const row of modelCountRows) {
-    if (row.accountId == null) continue;
-    modelCountByAccount[row.accountId] = Number(row.modelCount || 0);
   }
 
   const rewardByAccount: Record<number, number> = {};
@@ -179,9 +142,15 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
     accounts: rows.map((row) => {
       const credentialMode = resolveStoredCredentialMode(row.accounts);
       const capabilities = buildCapabilitiesForAccount(row.accounts);
+      const apiKeyHealth = credentialMode === 'apikey'
+        ? buildApiKeyAccountHealth(tokensByAccountId.get(row.accounts.id) || [], tokenHealthById)
+        : null;
       return {
         ...row.accounts,
-        site: row.sites,
+        site: {
+          ...row.sites,
+          credentialCapabilities: getAdapter(row.sites.platform)?.credentialCapabilities,
+        },
         credentialMode,
         capabilities,
         todaySpend: Math.round((spendByAccount.get(row.accounts.id)?.amount || 0) * 1_000_000) / 1_000_000,
@@ -207,11 +176,20 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
           credentialMode: row.accounts.credentialMode,
           oauthProvider: row.accounts.oauthProvider,
           sessionCapable: capabilities.canRefreshBalance,
-          hasDiscoveredModels: (modelCountByAccount[row.accounts.id] || 0) > 0,
         }),
+        apiKeyHealth,
+        accountConnectionFields: getAdapter(row.sites.platform)?.accountConnectionFields || [],
+        connectionValues: buildAccountConnectionValues(
+          getAdapter(row.sites.platform)?.accountConnectionFields || [],
+          row.accounts.extraConfig,
+        ),
       };
     }),
-    sites,
+    sites: sites.map((site) => ({
+      ...site,
+      accountConnectionFields: getAdapter(site.platform)?.accountConnectionFields || [],
+      credentialCapabilities: getAdapter(site.platform)?.credentialCapabilities,
+    })),
   };
 }
 

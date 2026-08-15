@@ -1,5 +1,5 @@
 import { OneHubAdapter } from './oneHub.js';
-import type { BalanceInfo, CheckinResult, SiteAnnouncement } from './base.js';
+import type { BalanceInfo, CheckinResult, PlatformCredentialContext, SiteAnnouncement } from './base.js';
 
 export class DoneHubAdapter extends OneHubAdapter {
   readonly platformName: string = 'done-hub';
@@ -11,13 +11,15 @@ export class DoneHubAdapter extends OneHubAdapter {
 
   // DoneHub deployments generally do not expose /api/user/checkin.
   // Mark as unsupported so higher-level logic records it as skipped instead of failed.
-  override async checkin(_baseUrl: string, _accessToken: string): Promise<CheckinResult> {
+  override async checkin(_input: PlatformCredentialContext): Promise<CheckinResult> {
     return { success: false, message: 'checkin endpoint not found' };
   }
 
   // DoneHub reports `quota` as remaining balance and `used_quota` as spent amount.
   // Sum them to get the total quota instead of subtracting used from quota.
-  override async getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo> {
+  override async getBalance(input: PlatformCredentialContext): Promise<BalanceInfo> {
+    const baseUrl = input.endpoint.baseUrl;
+    const accessToken = input.account.credential;
     const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -32,7 +34,8 @@ export class DoneHubAdapter extends OneHubAdapter {
     return { balance: quotaRemaining, used, quota: total, todayIncome, todayQuotaConsumption };
   }
 
-  override async getSiteAnnouncements(baseUrl: string, _accessToken: string): Promise<SiteAnnouncement[]> {
+  override async getSiteAnnouncements(input: PlatformCredentialContext): Promise<SiteAnnouncement[]> {
+    const baseUrl = input.endpoint.baseUrl;
     try {
       const payload = await this.fetchJson<any>(`${baseUrl}/api/notice`);
       const content = typeof payload?.data === 'string'

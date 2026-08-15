@@ -8,17 +8,21 @@ import {
   convergeAccountMutation,
   rebuildRoutesBestEffort,
 } from "../../services/accountMutationWorkflow.js";
+import { retireAccountFromRouting } from '../../services/accountRetirementService.js';
+import { invalidateRouteGraphReadCaches } from '../../services/routeGraphService.js';
 import {
   getProxyUrlFromExtraConfig,
   guessPlatformUserIdFromUsername,
-  hasOauthProvider,
-  getSub2ApiAuthFromExtraConfig,
+  applyAccountConnectionValues,
   mergeAccountExtraConfig,
-  normalizeCredentialMode as normalizeCredentialModeInput,
   resolveStoredAccountCredentialMode,
   resolvePlatformUserId,
   type AccountCredentialMode,
 } from "../../services/accountExtraConfig.js";
+import {
+  buildAccountCapabilities,
+  type AccountCapabilities,
+} from '../../services/accountCapabilities.js';
 import { encryptAccountPassword } from "../../services/accountCredentialService.js";
 import { applyAccountUpdateWorkflow } from "../../services/accountUpdateWorkflow.js";
 import { startBackgroundTask } from "../../services/backgroundTaskService.js";
@@ -39,7 +43,6 @@ import {
 import { createRateLimitGuard } from "../../middleware/requestRateLimit.js";
 import { getAccountsSnapshot } from "../../services/accountsOverviewService.js";
 import {
-  type AccountCreatePayload,
   parseAccountBatchPayload,
   parseAccountCreatePayload,
   parseAccountHealthRefreshPayload,
@@ -51,18 +54,19 @@ import {
 } from "../../contracts/accountsRoutePayloads.js";
 import {
   requireSiteApiBaseUrl,
-  runWithSiteApiEndpointPool,
 } from "../../services/siteApiEndpointService.js";
 import {
   buildBatchApiKeyConnectionName,
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { recordAccountsCatalogMutation } from '../../services/accountRuntimeIdentityMutationService.js';
 import {
   buildPricedModelRows,
   resolveAccountPricingToken,
 } from "../../services/accountModelCostSummaryService.js";
 import { saveManualModelsForAccount } from "../../services/manualModelAvailabilityService.js";
+import { buildTransientPlatformCredentialContext } from '../../services/adapterCredentialContextService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -76,12 +80,6 @@ type AccountHealthRefreshResult = {
   status: "success" | "failed" | "skipped";
   state: RuntimeHealthState;
   message: string;
-};
-
-type AccountCapabilities = {
-  canCheckin: boolean;
-  canRefreshBalance: boolean;
-  proxyOnly: boolean;
 };
 
 type VerifyFailureReason =
@@ -108,28 +106,13 @@ function parseBooleanFlag(raw?: string): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-function hasSessionTokenValue(value: string | null | undefined): boolean {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function resolveRequestedCredentialMode(input: unknown): AccountCredentialMode {
-  return normalizeCredentialModeInput(input) || "auto";
-}
-
 function supportsRequestedCredentialMode(
   adapter: NonNullable<ReturnType<typeof getAdapter>>,
   credentialMode: AccountCredentialMode,
 ): boolean {
-  if (credentialMode === "auto") return true;
-  // All concrete adapters expose this capability. The fallback preserves
-  // compatibility with legacy third-party adapters while they migrate.
-  const capabilities = adapter.credentialCapabilities || {
-    session: true,
-    apiKey: true,
-  };
   return credentialMode === "session"
-    ? capabilities.session
-    : capabilities.apiKey;
+    ? adapter.credentialCapabilities.session
+    : adapter.credentialCapabilities.apiKey;
 }
 
 function unsupportedCredentialModeMessage(
@@ -140,53 +123,36 @@ function unsupportedCredentialModeMessage(
     : "此站点不支持 API Key 连接。";
 }
 
-function resolveStoredCredentialMode(
-  account: typeof schema.accounts.$inferSelect,
-): AccountCredentialMode {
-  const mode = resolveStoredAccountCredentialMode(account);
-  return mode === 'oauth' ? 'session' : mode;
+function requiresExplicitSessionCredentialKind(
+  adapter: NonNullable<ReturnType<typeof getAdapter>>,
+): boolean {
+  return (adapter.credentialCapabilities?.sessionCredentialOptions?.length || 0) > 1;
 }
 
-function buildCapabilitiesFromCredentialMode(
-  credentialMode: AccountCredentialMode,
-  hasSessionToken: boolean,
-  oauthIdentity?:
-    | string
-    | null
-    | Pick<
-        typeof schema.accounts.$inferSelect,
-        "extraConfig" | "oauthProvider"
-      >,
-): AccountCapabilities {
-  if (hasOauthProvider(oauthIdentity)) {
-    return {
-      canCheckin: false,
-      canRefreshBalance: false,
-      proxyOnly: true,
-    };
+function hasExplicitSessionCredentialKind(value: unknown): boolean {
+  return value === 'session_cookie' || value === 'access_token';
+}
+
+function supportsSessionCredentialKind(
+  adapter: NonNullable<ReturnType<typeof getAdapter>>,
+  value: unknown,
+): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  if (!hasExplicitSessionCredentialKind(value)) return false;
+  if (value === 'session_cookie') {
+    return adapter.credentialCapabilities.sessionCredentialOptions.some(
+      (option) => option.kind === 'session_cookie',
+    );
   }
-  const sessionCapable =
-    credentialMode === "session"
-      ? hasSessionToken
-      : credentialMode === "apikey"
-        ? false
-        : hasSessionToken;
-  return {
-    canCheckin: sessionCapable,
-    canRefreshBalance: sessionCapable,
-    proxyOnly: !sessionCapable,
-  };
+  return adapter.credentialCapabilities.sessionCredentialOptions.some(
+    (option) => option.kind === 'access_token',
+  );
 }
 
 function buildCapabilitiesForAccount(
   account: typeof schema.accounts.$inferSelect,
 ): AccountCapabilities {
-  const credentialMode = resolveStoredCredentialMode(account);
-  return buildCapabilitiesFromCredentialMode(
-    credentialMode,
-    hasSessionTokenValue(account.credential),
-    account,
-  );
+  return buildAccountCapabilities(account);
 }
 
 function normalizeBatchIds(input: unknown): number[] {
@@ -208,39 +174,11 @@ function normalizePinnedFlag(input: unknown): boolean | null {
   return null;
 }
 
-function resolveRequestedCreateTokens(
-  body: AccountCreatePayload,
-  credentialMode: AccountCredentialMode,
-): string[] {
-  if (credentialMode !== "apikey") {
-    const single = String(body.credential || "").trim();
-    return single ? [single] : [];
-  }
-
-  return parseBatchApiKeys(body.apiKey);
-}
-
 function normalizeSortOrder(input: unknown): number | null {
   if (input === undefined || input === null || input === "") return null;
   const parsed = Number.parseInt(String(input), 10);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(0, parsed);
-}
-
-function normalizeManagedRefreshToken(input: unknown): string | undefined {
-  if (typeof input !== "string") return undefined;
-  const trimmed = input.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeManagedTokenExpiresAt(input: unknown): number | undefined {
-  if (typeof input === "number" && Number.isFinite(input) && input > 0)
-    return Math.trunc(input);
-  if (typeof input === "string") {
-    const parsed = Number.parseInt(input.trim(), 10);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
 }
 
 async function getNextAccountSortOrder(): Promise<number> {
@@ -345,27 +283,6 @@ function isVerificationTimeoutError(error: unknown): boolean {
 
 function buildAccountVerifyTimeoutMessage(): string {
   return `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`;
-}
-
-async function getModelsWithSiteApiEndpointPool(
-  site: typeof schema.sites.$inferSelect,
-  adapter: NonNullable<ReturnType<typeof getAdapter>>,
-  accessToken: string,
-  platformUserId?: number,
-): Promise<string[]> {
-  const timeoutMessage = buildAccountVerifyTimeoutMessage();
-  const deadline = Date.now() + ACCOUNT_VERIFY_TIMEOUT_MS;
-  return runWithSiteApiEndpointPool(site, (target) => {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      throw new Error(timeoutMessage);
-    }
-    return withTimeout(
-      () => adapter.getModels(target.baseUrl, accessToken, platformUserId),
-      remainingMs,
-      timeoutMessage,
-    );
-  });
 }
 
 function resolveUserIdFailureReason(
@@ -551,6 +468,31 @@ export async function accountsRoutes(app: FastifyInstance) {
       const adapter = getAdapter(site.platform);
       if (!adapter)
         return { success: false, message: `不支持的平台: ${site.platform}` };
+      if (!supportsRequestedCredentialMode(adapter, 'session')) {
+        return reply.code(400).send({
+          success: false,
+          message: unsupportedCredentialModeMessage('session'),
+        });
+      }
+
+      // Password login is a Session-only lifecycle. Never let it repurpose an
+      // API Key or OAuth connection that happens to use the same username.
+      const existing = await db
+        .select()
+        .from(schema.accounts)
+        .where(
+          and(
+            eq(schema.accounts.siteId, siteId),
+            eq(schema.accounts.username, username),
+          ),
+        )
+        .get();
+      if (existing && resolveStoredAccountCredentialMode(existing) !== 'session') {
+        return reply.code(409).send({
+          success: false,
+          message: '已有同名的非 Session 账号，不能通过密码登录覆盖其连接凭据。',
+        });
+      }
 
       // Login to the target site
       const loginResult = await adapter.login(site.url, username, password);
@@ -573,35 +515,30 @@ export async function accountsRoutes(app: FastifyInstance) {
         enabled?: boolean | null;
       }> = [];
       try {
-        apiToken = await adapter.getApiToken(
-          site.url,
-          loginResult.accessToken,
-          guessedPlatformUserId,
-        );
+        apiToken = await adapter.getApiToken(buildTransientPlatformCredentialContext({
+          endpoint: { baseUrl: site.url },
+          siteId: site.id,
+          mode: 'session',
+          credential: loginResult.accessToken,
+          credentialKind: loginResult.credentialKind || 'access_token',
+          accountExtraConfig: guessedPlatformUserId ? JSON.stringify({ platformUserId: guessedPlatformUserId }) : null,
+        }));
       } catch {}
       try {
-        apiTokens = await adapter.getApiTokens(
-          site.url,
-          loginResult.accessToken,
-          guessedPlatformUserId,
-        );
+        apiTokens = await adapter.getApiTokens(buildTransientPlatformCredentialContext({
+          endpoint: { baseUrl: site.url },
+          siteId: site.id,
+          mode: 'session',
+          credential: loginResult.accessToken,
+          credentialKind: loginResult.credentialKind || 'access_token',
+          accountExtraConfig: guessedPlatformUserId ? JSON.stringify({ platformUserId: guessedPlatformUserId }) : null,
+        }));
       } catch {}
 
       const preferredApiToken =
         apiTokens.find((token) => token.enabled !== false && token.key)?.key ||
         apiToken ||
         null;
-      const existing = await db
-        .select()
-        .from(schema.accounts)
-        .where(
-          and(
-            eq(schema.accounts.siteId, siteId),
-            eq(schema.accounts.username, username),
-          ),
-        )
-        .get();
-
       const extraConfigPatch: Record<string, unknown> = {
         autoRelogin: {
           username,
@@ -625,7 +562,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           .set({
             credential: loginResult.accessToken,
             credentialMode: 'session',
-            credentialKind: 'adapter_default',
+            credentialKind: loginResult.credentialKind || 'access_token',
             checkinEnabled: true,
             status: "active",
             extraConfig,
@@ -644,7 +581,7 @@ export async function accountsRoutes(app: FastifyInstance) {
             username,
             credential: loginResult.accessToken,
             credentialMode: 'session',
-            credentialKind: 'adapter_default',
+            credentialKind: loginResult.credentialKind || 'access_token',
             checkinEnabled: true,
             extraConfig,
             isPinned: false,
@@ -664,6 +601,8 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (!result) {
         return { success: false, message: "account create failed" };
       }
+
+      await recordAccountsCatalogMutation();
 
       await convergeAccountMutation({
         accountId: result.id,
@@ -704,12 +643,8 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       const { siteId, platformUserId } = parsedBody.data;
-      const credentialMode = resolveRequestedCredentialMode(
-        parsedBody.data.credentialMode,
-      );
-      const accessToken = (credentialMode === "apikey"
-        ? parsedBody.data.apiKey || ""
-        : parsedBody.data.credential || "").trim();
+      const credentialKind = parsedBody.data.credentialKind;
+      const accessToken = (parsedBody.data.credential || "").trim();
       const site = await db
         .select()
         .from(schema.sites)
@@ -720,20 +655,32 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (!accessToken) {
         return {
           success: false,
-          message: credentialMode === "apikey"
-            ? "API Key 不能为空"
-            : "连接凭据不能为空",
+          message: "连接凭据不能为空",
         };
       }
 
       const adapter = getAdapter(site.platform);
       if (!adapter)
         return { success: false, message: `不支持的平台: ${site.platform}` };
-      if (!supportsRequestedCredentialMode(adapter, credentialMode)) {
+      if (!supportsRequestedCredentialMode(adapter, 'session')) {
         return {
           success: false,
-          message: unsupportedCredentialModeMessage(credentialMode),
+          message: unsupportedCredentialModeMessage('session'),
         };
+      }
+      if (
+        requiresExplicitSessionCredentialKind(adapter)
+        && !hasExplicitSessionCredentialKind(parsedBody.data.credentialKind)
+      ) {
+        return {
+          success: false,
+          message: '请选择连接凭据类型：Session Cookie 或 Access Token。',
+        };
+      }
+      if (
+        !supportsSessionCredentialKind(adapter, parsedBody.data.credentialKind)
+      ) {
+        return { success: false, message: '此站点不支持所选的连接凭据类型。' };
       }
 
       const normalizedPlatform = String(
@@ -747,12 +694,18 @@ export async function accountsRoutes(app: FastifyInstance) {
         platformUserId > 0
           ? Math.trunc(platformUserId)
           : undefined;
+      const verificationExtraConfig = applyAccountConnectionValues(
+        mergeAccountExtraConfig(
+          undefined,
+          parsedPlatformUserId ? { platformUserId: parsedPlatformUserId } : {},
+        ),
+        adapter.accountConnectionFields,
+        parsedBody.data.connectionValues,
+      );
       const hasProvidedUserId = parsedPlatformUserId !== undefined;
       const skipRawShieldDetection =
         normalizedPlatform === "new-api" || normalizedPlatform === "anyrouter";
-      const diagnoseVerificationFailure = async (
-        options: { useApiEndpointPool?: boolean } = {},
-      ): Promise<VerifyFailureReason> => {
+      const diagnoseVerificationFailure = async (): Promise<VerifyFailureReason> => {
         const parseFailureReason = (
           bodyText: string,
           contentType: string,
@@ -793,22 +746,22 @@ export async function accountsRoutes(app: FastifyInstance) {
           const raw = accessToken.startsWith("Bearer ")
             ? accessToken.slice(7).trim()
             : accessToken;
-          if (raw) {
-            if (raw.includes("=")) candidates.add(raw);
+          if (raw && credentialKind === 'session_cookie') {
             candidates.add(`session=${raw}`);
             candidates.add(`token=${raw}`);
+            if (raw.includes("=")) candidates.add(raw);
           }
 
           const diagnosticUserId = hasProvidedUserId
             ? String(parsedPlatformUserId)
             : "0";
-          const headerVariants: Record<string, string>[] = [
-            {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-              "New-Api-User": diagnosticUserId,
-            },
-          ];
+          const headerVariants: Record<string, string>[] = credentialKind === 'session_cookie'
+            ? []
+            : [{
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                "New-Api-User": diagnosticUserId,
+              }];
 
           for (const cookie of candidates) {
             headerVariants.push({
@@ -849,11 +802,6 @@ export async function accountsRoutes(app: FastifyInstance) {
             }
             return null;
           };
-
-          if (options.useApiEndpointPool) {
-            const diagnosticBaseUrl = await requireSiteApiBaseUrl(site);
-            return await tryBaseUrl(diagnosticBaseUrl);
-          }
 
           return await tryBaseUrl(site.url);
         } catch {}
@@ -897,52 +845,9 @@ export async function accountsRoutes(app: FastifyInstance) {
         !hasProvidedUserId &&
         (normalizedPlatform === "new-api" || normalizedPlatform === "anyrouter")
       ) {
-        const preflightReason = await diagnoseVerificationFailure({
-          useApiEndpointPool: credentialMode === "apikey",
-        });
+        const preflightReason = await diagnoseVerificationFailure();
         if (preflightReason === "needs-user-id") {
           return buildVerificationFailureResponse(preflightReason);
-        }
-      }
-
-      if (credentialMode === "apikey") {
-        try {
-          const models = await getModelsWithSiteApiEndpointPool(
-            site,
-            adapter,
-            accessToken,
-            parsedPlatformUserId,
-          );
-          const availableModels = Array.isArray(models)
-            ? models.filter(
-                (item) => typeof item === "string" && item.trim().length > 0,
-              )
-            : [];
-          if (availableModels.length === 0) {
-            return {
-              success: false,
-              message: "API Key 验证失败：未获取到可用模型",
-            };
-          }
-          return {
-            success: true,
-            tokenType: "apikey",
-            modelCount: availableModels.length,
-            models: availableModels.slice(0, 10),
-          };
-        } catch (err: any) {
-          if (isVerificationTimeoutError(err)) {
-            const failure = buildVerificationFailureResponse(
-              await diagnoseVerificationFailure({
-                useApiEndpointPool: true,
-              }),
-            );
-            if (failure) return failure;
-          }
-          return {
-            success: false,
-            message: err?.message || "API Key 验证失败",
-          };
         }
       }
 
@@ -950,7 +855,14 @@ export async function accountsRoutes(app: FastifyInstance) {
       try {
         result = await withTimeout(
           () =>
-            adapter.verifyToken(site.url, accessToken, parsedPlatformUserId),
+            adapter.verifyToken(buildTransientPlatformCredentialContext({
+              endpoint: { baseUrl: site.url },
+              siteId: site.id,
+              mode: 'session',
+              credential: accessToken,
+              credentialKind: credentialKind || 'access_token',
+              accountExtraConfig: verificationExtraConfig,
+            })),
           ACCOUNT_VERIFY_TIMEOUT_MS,
           `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
         );
@@ -980,18 +892,9 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       if (result.tokenType === "apikey") {
-        if (credentialMode === "session") {
-          return {
-            success: false,
-            message:
-              "当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token",
-          };
-        }
         return {
-          success: true,
-          tokenType: "apikey",
-          modelCount: result.models?.length || 0,
-          models: result.models?.slice(0, 10),
+          success: false,
+          message: "当前凭据是模型调用 Key，请在「API Key 管理」中添加。",
         };
       }
 
@@ -1116,10 +1019,7 @@ export async function accountsRoutes(app: FastifyInstance) {
 
       return {
         success: false,
-        message:
-          credentialMode === "session"
-            ? "Session Token 验证失败"
-            : "Token invalid: cannot use it as session cookie or API key",
+        message: "连接凭据验证失败",
       };
     },
   );
@@ -1160,6 +1060,12 @@ export async function accountsRoutes(app: FastifyInstance) {
 
       const account = row.accounts;
       const site = row.sites;
+      if (resolveStoredAccountCredentialMode(account) !== 'session') {
+        return reply.code(400).send({
+          success: false,
+          message: '仅 Session 账号可以重新绑定连接凭据。',
+        });
+      }
       const adapter = getAdapter(site.platform);
       if (!adapter) {
         return reply
@@ -1175,6 +1081,21 @@ export async function accountsRoutes(app: FastifyInstance) {
           message: unsupportedCredentialModeMessage("session"),
         });
       }
+      if (
+        requiresExplicitSessionCredentialKind(adapter)
+        && !hasExplicitSessionCredentialKind(parsedBody.data.credentialKind)
+      ) {
+        return reply.code(400).send({
+          success: false,
+          message: '请选择连接凭据类型：Session Cookie 或 Access Token。',
+        });
+      }
+      if (!supportsSessionCredentialKind(adapter, parsedBody.data.credentialKind)) {
+        return reply.code(400).send({
+          success: false,
+          message: '此站点不支持所选的连接凭据类型。',
+        });
+      }
 
       const bodyPlatformUserId = Number.parseInt(
         String(parsedBody.data.platformUserId ?? ""),
@@ -1184,17 +1105,28 @@ export async function accountsRoutes(app: FastifyInstance) {
         Number.isFinite(bodyPlatformUserId) && bodyPlatformUserId > 0
           ? bodyPlatformUserId
           : resolvePlatformUserId(account.extraConfig, account.username);
+      const verificationExtraConfig = applyAccountConnectionValues(
+        mergeAccountExtraConfig(
+          account.extraConfig,
+          candidatePlatformUserId ? { platformUserId: candidatePlatformUserId } : {},
+        ),
+        adapter.accountConnectionFields,
+        parsedBody.data.connectionValues,
+      );
 
       let verifyResult: any;
       try {
         verifyResult = await withAccountProxyOverride(
           getProxyUrlFromExtraConfig(account.extraConfig),
           () =>
-            adapter.verifyToken(
-              site.url,
-              nextAccessToken,
-              candidatePlatformUserId,
-            ),
+            adapter.verifyToken(buildTransientPlatformCredentialContext({
+              endpoint: { baseUrl: site.url },
+              siteId: site.id,
+              mode: 'session',
+              credential: nextAccessToken,
+              credentialKind: parsedBody.data.credentialKind || 'access_token',
+              accountExtraConfig: verificationExtraConfig,
+            })),
         );
       } catch (err: any) {
         return reply.code(400).send({
@@ -1233,7 +1165,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const updates: Record<string, unknown> = {
         credential: nextAccessToken,
         credentialMode: 'session',
-        credentialKind: parsedBody.data.credentialKind || account.credentialKind || 'adapter_default',
+        credentialKind: parsedBody.data.credentialKind || account.credentialKind || 'access_token',
         status: "active",
         updatedAt: new Date().toISOString(),
       };
@@ -1244,31 +1176,8 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (resolvedPlatformUserId) {
         extraConfigPatch.platformUserId = resolvedPlatformUserId;
       }
-      if ((site.platform || "").toLowerCase() === "sub2api") {
-        const existingManagedAuth = getSub2ApiAuthFromExtraConfig(
-          account.extraConfig,
-        );
-        const requestedRefreshToken = normalizeManagedRefreshToken(
-          parsedBody.data.refreshToken,
-        );
-        const requestedTokenExpiresAt = normalizeManagedTokenExpiresAt(
-          parsedBody.data.tokenExpiresAt,
-        );
-        const nextRefreshToken =
-          requestedRefreshToken || existingManagedAuth?.refreshToken;
-        const nextTokenExpiresAt =
-          requestedTokenExpiresAt ?? existingManagedAuth?.tokenExpiresAt;
-        if (nextRefreshToken) {
-          extraConfigPatch.sub2apiAuth = nextTokenExpiresAt
-            ? {
-                refreshToken: nextRefreshToken,
-                tokenExpiresAt: nextTokenExpiresAt,
-              }
-            : { refreshToken: nextRefreshToken };
-        }
-      }
       updates.extraConfig = mergeAccountExtraConfig(
-        account.extraConfig,
+        verificationExtraConfig,
         extraConfigPatch,
       );
 
@@ -1277,6 +1186,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         .set(updates)
         .where(eq(schema.accounts.id, accountId))
         .run();
+      await recordAccountsCatalogMutation();
 
       await convergeAccountMutation({
         accountId,
@@ -1300,7 +1210,10 @@ export async function accountsRoutes(app: FastifyInstance) {
         credentialMode: "session",
         capabilities: latest
           ? buildCapabilitiesForAccount(latest)
-          : buildCapabilitiesFromCredentialMode("session", true, null),
+          : buildAccountCapabilities({
+            credentialMode: "session",
+            credential: "managed-session",
+          }),
         discoveredModelTokenCount: discoveredModelToken ? 1 : 0,
       };
     },
@@ -1338,20 +1251,42 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
 
     const explicitApiKeys = parseBatchApiKeys(body.apiKey);
-    const credentialMode =
-      explicitApiKeys.length > 0
-        ? "apikey"
-        : resolveRequestedCredentialMode(body.credentialMode);
+    const connectionCredential = String(body.credential || '').trim();
+    if (explicitApiKeys.length > 0 && connectionCredential) {
+      return reply.code(400).send({
+        success: false,
+        message: '请只填写连接凭据或模型调用 Key 其中一种。',
+      });
+    }
+    const credentialMode: AccountCredentialMode = explicitApiKeys.length > 0
+      ? 'apikey'
+      : 'session';
     if (!supportsRequestedCredentialMode(adapter, credentialMode)) {
       return reply.code(400).send({
         success: false,
         message: unsupportedCredentialModeMessage(credentialMode),
       });
     }
+    if (
+      credentialMode === 'session'
+      && requiresExplicitSessionCredentialKind(adapter)
+      && !hasExplicitSessionCredentialKind(body.credentialKind)
+    ) {
+      return reply.code(400).send({
+        success: false,
+        message: '请选择连接凭据类型：Session Cookie 或 Access Token。',
+      });
+    }
+    if (credentialMode === 'session' && !supportsSessionCredentialKind(adapter, body.credentialKind)) {
+      return reply.code(400).send({
+        success: false,
+        message: '此站点不支持所选的连接凭据类型。',
+      });
+    }
     const requestedTokens =
       explicitApiKeys.length > 0
         ? explicitApiKeys
-        : resolveRequestedCreateTokens(body, credentialMode);
+        : (connectionCredential ? [connectionCredential] : []);
     if (requestedTokens.length === 0) {
       return reply.code(400).send({
           success: false,
@@ -1434,7 +1369,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       return {
         ...created.account,
         tokenType: created.tokenType,
-        credentialMode: resolveStoredCredentialMode(created.account),
+        credentialMode,
         capabilities: buildCapabilitiesForAccount(created.account),
         modelCount: created.modelCount,
         discoveredModelTokenCount: created.discoveredModelTokenCount,
@@ -1482,9 +1417,41 @@ export async function accountsRoutes(app: FastifyInstance) {
       const account = row.accounts;
       const site = row.sites;
       const storedCredentialMode = resolveStoredAccountCredentialMode(account);
+      const editAdapter = getAdapter(site.platform);
+      if (!editAdapter) {
+        return reply.code(400).send({
+          message: `不支持的平台: ${site.platform}`,
+        });
+      }
+      if (
+        storedCredentialMode === 'session'
+        && requiresExplicitSessionCredentialKind(editAdapter)
+        && (body.credential !== undefined || body.credentialKind !== undefined)
+        && !hasExplicitSessionCredentialKind(body.credentialKind ?? account.credentialKind)
+      ) {
+        return reply.code(400).send({
+          message: '请选择连接凭据类型：Session Cookie 或 Access Token。',
+        });
+      }
+      if (
+        storedCredentialMode === 'session'
+        && !supportsSessionCredentialKind(editAdapter, body.credentialKind ?? account.credentialKind)
+      ) {
+        return reply.code(400).send({
+          message: '此站点不支持所选的连接凭据类型。',
+        });
+      }
       if (storedCredentialMode === 'apikey' && Object.prototype.hasOwnProperty.call(body, 'credential')) {
         return reply.code(400).send({
           message: 'API Key 连接的模型 Key 必须通过账号令牌管理更新。',
+        });
+      }
+      if (
+        storedCredentialMode === 'oauth'
+        && (Object.prototype.hasOwnProperty.call(body, 'credential') || Object.prototype.hasOwnProperty.call(body, 'credentialKind'))
+      ) {
+        return reply.code(400).send({
+          message: 'OAuth 账号的连接凭据只能由授权流程更新。',
         });
       }
       const updates: any = {};
@@ -1499,45 +1466,14 @@ export async function accountsRoutes(app: FastifyInstance) {
       ]) {
         if (body[key] !== undefined) updates[key] = body[key];
       }
-
-      const wantsManagedSub2ApiAuthPatch =
-        Object.prototype.hasOwnProperty.call(body, "refreshToken") ||
-        Object.prototype.hasOwnProperty.call(body, "tokenExpiresAt");
-      if (
-        wantsManagedSub2ApiAuthPatch &&
-        (site.platform || "").toLowerCase() === "sub2api"
-      ) {
-        const baseExtraConfig =
-          typeof updates.extraConfig === "string"
-            ? updates.extraConfig
-            : account.extraConfig;
-        const existingManagedAuth =
-          getSub2ApiAuthFromExtraConfig(baseExtraConfig);
-
-        const nextRefreshToken = Object.prototype.hasOwnProperty.call(
-          body,
-          "refreshToken",
-        )
-          ? normalizeManagedRefreshToken(body.refreshToken)
-          : existingManagedAuth?.refreshToken;
-        const nextTokenExpiresAt = Object.prototype.hasOwnProperty.call(
-          body,
-          "tokenExpiresAt",
-        )
-          ? normalizeManagedTokenExpiresAt(body.tokenExpiresAt)
-          : existingManagedAuth?.tokenExpiresAt;
-
-        updates.extraConfig = mergeAccountExtraConfig(baseExtraConfig, {
-          sub2apiAuth: nextRefreshToken
-            ? nextTokenExpiresAt
-              ? {
-                  refreshToken: nextRefreshToken,
-                  tokenExpiresAt: nextTokenExpiresAt,
-                }
-              : { refreshToken: nextRefreshToken }
-            : undefined,
-        });
+      if (body.connectionValues !== undefined) {
+        updates.extraConfig = applyAccountConnectionValues(
+          account.extraConfig,
+          getAdapter(site.platform)?.accountConnectionFields || [],
+          body.connectionValues,
+        );
       }
+
 
       if (body.isPinned !== undefined) {
         const normalizedPinned = normalizePinnedFlag(body.isPinned);
@@ -1590,7 +1526,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         credentialsChanged ||
         Object.prototype.hasOwnProperty.call(body, "extraConfig") ||
         Object.prototype.hasOwnProperty.call(body, "proxyUrl") ||
-        wantsManagedSub2ApiAuthPatch;
+        Object.prototype.hasOwnProperty.call(body, "connectionValues");
       const isExpiredApiKeyAccount =
         account.status === "expired" &&
         nextCredentialMode === "apikey" &&
@@ -1619,8 +1555,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     "/api/accounts/:id",
     async (request) => {
       const id = parseInt(request.params.id);
-      await db.delete(schema.accounts).where(eq(schema.accounts.id, id)).run();
-      await rebuildRoutesBestEffort();
+      await retireAccountFromRouting(id, 'account-retirement');
       return { success: true };
     },
   );
@@ -1643,6 +1578,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     const successIds: number[] = [];
     const failedItems: Array<{ id: number; message: string }> = [];
     let shouldRebuildRoutes = false;
+    let shouldInvalidateRuntimeIdentities = false;
 
     for (const id of ids) {
       try {
@@ -1670,11 +1606,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         }
 
         if (action === "delete") {
-          await db
-            .delete(schema.accounts)
-            .where(eq(schema.accounts.id, id))
-            .run();
-          shouldRebuildRoutes = true;
+          await retireAccountFromRouting(id, 'account-retirement');
         } else {
           const nextStatus = action === "enable" ? "active" : "disabled";
           await db
@@ -1682,6 +1614,8 @@ export async function accountsRoutes(app: FastifyInstance) {
             .set({ status: nextStatus, updatedAt: new Date().toISOString() })
             .where(eq(schema.accounts.id, id))
             .run();
+          shouldInvalidateRuntimeIdentities = true;
+          shouldRebuildRoutes = true;
         }
 
         successIds.push(id);
@@ -1693,6 +1627,10 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
     }
 
+    if (shouldInvalidateRuntimeIdentities) {
+      invalidateRouteGraphReadCaches('account-mutated');
+      await recordAccountsCatalogMutation();
+    }
     if (shouldRebuildRoutes) {
       await rebuildRoutesBestEffort();
     }

@@ -5,6 +5,34 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
 import { AnyRouterAdapter } from './anyrouter.js';
+import type { PlatformCredentialContext } from './base.js';
+
+function credentialContext(
+  baseUrl: string,
+  credential: string,
+  options?: {
+    mode?: 'session' | 'apikey';
+    credentialKind?: 'access_token' | 'session_cookie';
+    platformUserId?: number;
+    token?: string;
+  },
+): PlatformCredentialContext {
+  return {
+    endpoint: { baseUrl },
+    account: {
+      id: null,
+      siteId: null,
+      username: null,
+      mode: options?.mode || 'session',
+      credential,
+      credentialKind: options?.credentialKind || 'access_token',
+      extraConfig: options?.platformUserId ? JSON.stringify({ platformUserId: options.platformUserId }) : null,
+    },
+    token: options?.token
+      ? { id: null, accountId: null, token: options.token, enabled: true, extraConfig: null }
+      : null,
+  };
+}
 
 interface RequestSnapshot {
   method: string;
@@ -31,6 +59,7 @@ const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
 const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
 const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
 const OPENAI_MODELS_SHIELDED_TOKEN = 'openai-models-shielded-token';
+const API_KEY_VERIFICATION_TOKEN = 'api-key-verification-token';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
 ).toString('base64');
@@ -63,6 +92,18 @@ describe('NewApiAdapter', () => {
   let baseUrl: string;
   let requests: RequestSnapshot[] = [];
 
+  it('declares its optional user id as a connection field and runtime argument', () => {
+    expect(new NewApiAdapter().accountConnectionFields).toContainEqual({
+      key: 'platformUserId',
+      labelI18nKey: 'pages.accounts.newApiUserId',
+      commentI18nKey: 'pages.accounts.sitesNewApiUserUserId',
+      placeholderI18nKey: 'pages.accounts.id',
+      inputType: 'number',
+      storagePath: 'platformUserId',
+      runtimeArgument: 'platformUserId',
+    });
+  });
+
   beforeEach(async () => {
     requests = [];
     server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -73,6 +114,11 @@ describe('NewApiAdapter', () => {
       });
 
       if (req.url === '/v1/models') {
+        if (req.headers.authorization === `Bearer ${API_KEY_VERIFICATION_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }));
+          return;
+        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${OPENAI_MODELS_SHIELDED_TOKEN}`) {
           const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
           if (!cookieHeader.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`)) {
@@ -163,17 +209,6 @@ describe('NewApiAdapter', () => {
             data: { token: SHIELD_LOGIN_TOKEN },
           }));
         });
-        return;
-      }
-
-      if (req.url === '/api/user/models') {
-        if (req.headers['new-api-user'] !== '11494') {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'missing New-Api-User' }));
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ data: ['gpt-4o', 'gpt-4.1'] }));
         return;
       }
 
@@ -566,20 +601,18 @@ describe('NewApiAdapter', () => {
     });
   });
 
-  it('falls back to session models API when /v1/models rejects token', async () => {
+  it('does not use management endpoints when a model API Key is rejected', async () => {
     const adapter = new NewApiAdapter();
-    const models = await adapter.getModels(baseUrl, 'session-token', 11494);
+    const models = await adapter.getModels(credentialContext(baseUrl, '', { mode: 'apikey', token: 'session-token', platformUserId: 11494 }));
 
-    expect(models).toEqual(['gpt-4o', 'gpt-4.1']);
+    expect(models).toEqual([]);
     expect(requests.some((r) => r.url === '/v1/models')).toBe(true);
-    expect(
-      requests.some((r) => r.url === '/api/user/models' && r.headers['new-api-user'] === '11494'),
-    ).toBe(true);
+    expect(requests.some((r) => r.url.startsWith('/api/'))).toBe(false);
   });
 
   it('reuses shield cookie retry when anyrouter /v1/models returns challenge html', async () => {
     const adapter = new AnyRouterAdapter();
-    const models = await adapter.getModels(baseUrl, OPENAI_MODELS_SHIELDED_TOKEN);
+    const models = await adapter.getModels(credentialContext(baseUrl, '', { mode: 'apikey', token: OPENAI_MODELS_SHIELDED_TOKEN }));
 
     expect(models).toEqual(['claude-sonnet-4-5-20250929', 'claude-opus-4-6']);
     expect(
@@ -598,6 +631,19 @@ describe('NewApiAdapter', () => {
           && r.headers.cookie.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`),
       ),
     ).toBe(true);
+  });
+
+  it('uses the model endpoint only for explicit API Key verification', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.verifyToken(credentialContext(baseUrl, '', { mode: 'apikey', token: API_KEY_VERIFICATION_TOKEN }));
+
+    expect(result).toMatchObject({
+      tokenType: 'apikey',
+      models: ['gpt-4o-mini'],
+    });
+    expect(requests.some((r) => r.url === '/v1/models')).toBe(true);
+    expect(requests.some((r) => r.url === '/api/user/self')).toBe(false);
+    expect(requests.some((r) => r.url?.startsWith('/api/token/'))).toBe(false);
   });
 
   it('reports an anyrouter pricing endpoint blocked after the shield retry', async () => {
@@ -622,17 +668,100 @@ describe('NewApiAdapter', () => {
     baseUrl = `http://127.0.0.1:${addr.port}`;
 
     const adapter = new AnyRouterAdapter();
-    await expect(adapter.getPricingCatalog(baseUrl, {
-      token: 'session-token',
-      tokenKind: 'access_token',
-    })).rejects.toThrow('HTTP 403: provider pricing endpoint returned text/html; charset=utf-8 instead of JSON.');
+    await expect(adapter.getPricingCatalog(credentialContext(baseUrl, 'session-token', { credentialKind: 'session_cookie' })))
+      .rejects.toThrow('HTTP 403: provider pricing endpoint returned text/html; charset=utf-8 instead of JSON.');
   });
 
   it('parses token list response with data.items[] shape', async () => {
     const adapter = new NewApiAdapter();
-    const token = await adapter.getApiToken(baseUrl, 'session-token', 11494);
+    const token = await adapter.getApiToken(credentialContext(baseUrl, 'session-token', { platformUserId: 11494 }));
 
     expect(token).toBe('api-key-from-token-list');
+  });
+
+  it('uses only the selected access-token transport when listing model keys', async () => {
+    const adapter = new NewApiAdapter();
+    const tokens = await adapter.getApiTokens(credentialContext(baseUrl, 'session-token', { platformUserId: 11494, credentialKind: 'access_token' }));
+
+    expect(tokens[0]?.key).toBe('api-key-from-token-list');
+    expect(
+      requests.filter((request) => request.url?.startsWith('/api/token/'))
+        .every((request) => request.headers.authorization === 'Bearer session-token' && !request.headers.cookie),
+    ).toBe(true);
+  });
+
+  it('uses only the selected cookie transport when listing model keys', async () => {
+    const adapter = new NewApiAdapter();
+    const tokens = await adapter.getApiTokens(credentialContext(baseUrl, COOKIE_SESSION_TOKEN, { credentialKind: 'session_cookie' }));
+
+    expect(tokens[0]?.key).toBe('cookie-api-key');
+    expect(
+      requests.filter((request) => request.url?.startsWith('/api/token/'))
+        .every((request) => typeof request.headers.cookie === 'string' && !request.headers.authorization),
+    ).toBe(true);
+  });
+
+  it('keeps pricing requests on the selected credential transport', async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+    server = createServer((req, res) => {
+      requests.push({ method: req.method || 'GET', url: req.url || '/', headers: req.headers });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ model_name: 'gpt-4o-mini', model_ratio: 1 }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const adapter = new NewApiAdapter();
+    await adapter.getPricingCatalog(credentialContext(baseUrl, 'cookie-value', { credentialKind: 'session_cookie' }));
+    await adapter.getPricingCatalog(credentialContext(baseUrl, 'access-value', { credentialKind: 'access_token' }));
+
+    const pricingRequests = requests.filter((request) => request.url === '/api/pricing');
+    expect(pricingRequests).toHaveLength(2);
+    expect(pricingRequests[0]?.headers.cookie).toContain('session=cookie-value');
+    expect(pricingRequests[0]?.headers.authorization).toBeUndefined();
+    expect(pricingRequests[1]?.headers.authorization).toBe('Bearer access-value');
+    expect(pricingRequests[1]?.headers.cookie).toBeUndefined();
+  });
+
+  it('does not treat a failed model-key listing as a successful deletion', async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+    server = createServer((req, res) => {
+      requests.push({ method: req.method || 'GET', url: req.url || '/', headers: req.headers });
+      if (req.url?.startsWith('/api/token/')) {
+        if (req.headers.authorization === 'Bearer list-failure') {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'temporary upstream failure' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: { items: [] } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const adapter = new NewApiAdapter();
+    const failed = await adapter.deleteApiToken(credentialContext(baseUrl, 'list-failure', {
+      credentialKind: 'access_token',
+      platformUserId: 1,
+      token: 'sk-target',
+    }));
+    const absent = await adapter.deleteApiToken(credentialContext(baseUrl, 'list-empty', {
+      credentialKind: 'access_token',
+      platformUserId: 1,
+      token: 'sk-target',
+    }));
+
+    expect(failed).toBe(false);
+    expect(absent).toBe(true);
   });
 
   it('solves anyrouter acw challenge for account-password login', async () => {
@@ -671,25 +800,28 @@ describe('NewApiAdapter', () => {
 
   it('detects cookie session values as session cookies for anyrouter-like deployments', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.verifyToken(baseUrl, COOKIE_SESSION_TOKEN);
+    const result = await adapter.verifyToken(credentialContext(baseUrl, COOKIE_SESSION_TOKEN, { credentialKind: 'session_cookie' }));
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('cookie-user');
-    expect(result.managementApiToken).toBeUndefined();
-    expect(result.apiToken).toBeUndefined();
+    expect(result.discoveredModelToken).toBe('cookie-api-key');
     expect(
       requests.some((r) => r.url === '/api/user/self' && typeof r.headers.cookie === 'string' && r.headers.cookie.includes(`session=${COOKIE_SESSION_TOKEN}`)),
     ).toBe(true);
+    expect(
+      requests.filter((r) => r.url === '/api/user/self' || r.url?.startsWith('/api/token/'))
+        .every((r) => typeof r.headers.cookie === 'string' && !r.headers.authorization),
+    ).toBe(true);
+    expect(requests.some((r) => r.url === '/v1/models')).toBe(false);
   });
 
   it('auto-probes New-Api-User for cookie sessions when header is required', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.verifyToken(baseUrl, COOKIE_REQUIRES_USER_TOKEN);
+    const result = await adapter.verifyToken(credentialContext(baseUrl, COOKIE_REQUIRES_USER_TOKEN, { credentialKind: 'session_cookie' }));
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('cookie-user-id-required');
-    expect(result.managementApiToken).toBeUndefined();
-    expect(result.apiToken).toBeUndefined();
+    expect(result.discoveredModelToken).toBe('cookie-user-key');
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '8899'),
     ).toBe(true);
@@ -697,28 +829,27 @@ describe('NewApiAdapter', () => {
 
   it('sends X-User-Id for cookie sessions when the site requires that New API variant', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.verifyToken(baseUrl, COOKIE_REQUIRES_X_USER_ID_TOKEN, 448);
+    const result = await adapter.verifyToken(credentialContext(baseUrl, COOKIE_REQUIRES_X_USER_ID_TOKEN, { credentialKind: 'session_cookie', platformUserId: 448 }));
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('x-user-id-cookie-user');
-    expect(result.managementApiToken).toBeUndefined();
-    expect(result.apiToken).toBeUndefined();
+    expect(result.discoveredModelToken).toBe('cookie-x-user-id-key');
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['x-user-id'] === '448'),
     ).toBe(true);
     expect(
       requests.some((r) => r.url?.startsWith('/api/token/') && r.headers['x-user-id'] === '448'),
-    ).toBe(false);
+    ).toBe(true);
+    expect(requests.some((r) => r.url === '/v1/models')).toBe(false);
   });
 
   it('solves anyrouter acw challenge and probes user id from session payload', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.verifyToken(baseUrl, COOKIE_SHIELDED_TOKEN);
+    const result = await adapter.verifyToken(credentialContext(baseUrl, COOKIE_SHIELDED_TOKEN, { credentialKind: 'session_cookie' }));
 
     expect(result.tokenType).toBe('session');
     expect(result.userInfo?.username).toBe('linuxdo_131936');
-    expect(result.managementApiToken).toBeUndefined();
-    expect(result.apiToken).toBeUndefined();
+    expect(result.discoveredModelToken).toBe('shielded-cookie-key');
     expect(
       requests.some(
         (r) =>
@@ -730,11 +861,12 @@ describe('NewApiAdapter', () => {
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '131936'),
     ).toBe(true);
+    expect(requests.some((r) => r.url === '/v1/models')).toBe(false);
   });
 
   it('extracts gob-encoded user id from anyrouter session cookie when reading balance', async () => {
     const adapter = new NewApiAdapter();
-    const balance = await adapter.getBalance(baseUrl, COOKIE_GOB_USER_TOKEN);
+    const balance = await adapter.getBalance(credentialContext(baseUrl, COOKIE_GOB_USER_TOKEN, { credentialKind: 'session_cookie' }));
 
     expect(balance.balance).toBe(100);
     expect(
@@ -744,7 +876,7 @@ describe('NewApiAdapter', () => {
 
   it('recovers from mismatched provided user id by probing gob-encoded session payload', async () => {
     const adapter = new NewApiAdapter();
-    const balance = await adapter.getBalance(baseUrl, COOKIE_GOB_USER_TOKEN, 159);
+    const balance = await adapter.getBalance(credentialContext(baseUrl, COOKIE_GOB_USER_TOKEN, { credentialKind: 'session_cookie', platformUserId: 159 }));
 
     expect(balance.balance).toBe(100);
     expect(
@@ -757,8 +889,8 @@ describe('NewApiAdapter', () => {
 
   it('uses shielded cookie flow for balance and checkin', async () => {
     const adapter = new NewApiAdapter();
-    const balance = await adapter.getBalance(baseUrl, COOKIE_SHIELDED_TOKEN);
-    const checkin = await adapter.checkin(baseUrl, COOKIE_SHIELDED_TOKEN);
+    const balance = await adapter.getBalance(credentialContext(baseUrl, COOKIE_SHIELDED_TOKEN, { credentialKind: 'session_cookie' }));
+    const checkin = await adapter.checkin(credentialContext(baseUrl, COOKIE_SHIELDED_TOKEN, { credentialKind: 'session_cookie' }));
 
     expect(balance).toEqual({
       quota: 8.4,
@@ -774,19 +906,19 @@ describe('NewApiAdapter', () => {
   it('preserves upstream balance failure message for UI feedback', async () => {
     const adapter = new NewApiAdapter();
 
-    await expect(adapter.getBalance(baseUrl, BALANCE_FAIL_TOKEN)).rejects.toThrow('access token');
+    await expect(adapter.getBalance(credentialContext(baseUrl, BALANCE_FAIL_TOKEN))).rejects.toThrow('access token');
   });
 
   it('prefers post-challenge cookie failure over raw html parse error when reading balance', async () => {
     const adapter = new AnyRouterAdapter();
 
-    await expect(adapter.getBalance(baseUrl, BALANCE_SHIELD_FAILURE_TOKEN)).rejects
+    await expect(adapter.getBalance(credentialContext(baseUrl, BALANCE_SHIELD_FAILURE_TOKEN, { credentialKind: 'session_cookie' }))).rejects
       .toThrow('无权进行此操作，未登录且未提供 access token');
   });
 
   it('preserves nested checkin error message instead of generic fallback', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.checkin(baseUrl, CHECKIN_INVALID_URL_TOKEN, 11494);
+    const result = await adapter.checkin(credentialContext(baseUrl, CHECKIN_INVALID_URL_TOKEN, { platformUserId: 11494 }));
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('Invalid URL');
@@ -794,7 +926,7 @@ describe('NewApiAdapter', () => {
 
   it('prefers cookie session auth failure over invalid-url fallback when cookie session is expired', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.checkin(baseUrl, CHECKIN_INVALID_URL_EXPIRED_SESSION_TOKEN, 131936);
+    const result = await adapter.checkin(credentialContext(baseUrl, CHECKIN_INVALID_URL_EXPIRED_SESSION_TOKEN, { credentialKind: 'session_cookie', platformUserId: 131936 }));
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('access token');
@@ -803,7 +935,7 @@ describe('NewApiAdapter', () => {
 
   it('treats forbidden self probe responses as cookie session auth failures', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.checkin(baseUrl, CHECKIN_INVALID_URL_FORBIDDEN_SESSION_TOKEN, 131936);
+    const result = await adapter.checkin(credentialContext(baseUrl, CHECKIN_INVALID_URL_FORBIDDEN_SESSION_TOKEN, { credentialKind: 'session_cookie', platformUserId: 131936 }));
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('forbidden');
@@ -812,7 +944,7 @@ describe('NewApiAdapter', () => {
 
   it('summarizes cloudflare tunnel HTML failures to concise checkin error', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.checkin(baseUrl, CHECKIN_CLOUDFLARE_530_TOKEN, 11494);
+    const result = await adapter.checkin(credentialContext(baseUrl, CHECKIN_CLOUDFLARE_530_TOKEN, { platformUserId: 11494 }));
 
     expect(result.success).toBe(false);
     expect(result.message).toBe('HTTP 530: Cloudflare Tunnel error (Error 1033)');
@@ -820,7 +952,7 @@ describe('NewApiAdapter', () => {
 
   it('preserves already-checked-in message instead of overriding with cookie fallback error', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.checkin(baseUrl, CHECKIN_ALREADY_TOKEN, 11494);
+    const result = await adapter.checkin(credentialContext(baseUrl, CHECKIN_ALREADY_TOKEN, { platformUserId: 11494 }));
 
     expect(result.success).toBe(false);
     expect(result.message).toBe('今天已经签到过啦');
@@ -828,16 +960,24 @@ describe('NewApiAdapter', () => {
 
   it('returns clean groups from data object without envelope keys', async () => {
     const adapter = new NewApiAdapter();
-    const groups = await adapter.getUserGroups(baseUrl, 'session-token', 11494);
+    const groups = await adapter.getUserGroups(credentialContext(baseUrl, 'session-token', { platformUserId: 11494 }));
 
     expect(groups).toEqual(['default', 'gemini']);
     expect(groups).not.toContain('success');
     expect(groups).not.toContain('message');
   });
 
+  it('returns the adapter dummy group for API Key connections without calling management APIs', async () => {
+    const adapter = new NewApiAdapter();
+    const groups = await adapter.getAccountTokenGroups(credentialContext(baseUrl, '', { mode: 'apikey' }));
+
+    expect(groups).toEqual(['default']);
+    expect(requests).toEqual([]);
+  });
+
   it('throws expired-session error when group endpoint reports invalid access token', async () => {
     const adapter = new NewApiAdapter();
-    await expect(adapter.getUserGroups(baseUrl, GROUP_EXPIRED_TOKEN, 11494)).rejects.toThrow('账号会话可能已过期');
+    await expect(adapter.getUserGroups(credentialContext(baseUrl, GROUP_EXPIRED_TOKEN, { platformUserId: 11494 }))).rejects.toThrow('账号会话可能已过期');
   });
 
   it('sends all compatibility user-id headers when userId is known', async () => {
@@ -863,7 +1003,7 @@ describe('NewApiAdapter', () => {
 
     const adapter = new NewApiAdapter();
     const fakeJwt = `header.${Buffer.from(JSON.stringify({ id: 42 })).toString('base64url')}.sig`;
-    await adapter.getBalance(baseUrl, fakeJwt, 42);
+    await adapter.getBalance(credentialContext(baseUrl, fakeJwt, { platformUserId: 42 }));
 
     expect(receivedHeaders['new-api-user']).toBe('42');
     expect(receivedHeaders['veloera-user']).toBe('42');
@@ -906,11 +1046,10 @@ describe('NewApiAdapter', () => {
     baseUrl = `http://127.0.0.1:${addr.port}`;
 
     const adapter = new NewApiAdapter();
-    const catalog = await adapter.getPricingCatalog(baseUrl, {
-      token: 'session=session-token',
-      tokenKind: 'access_token',
+    const catalog = await adapter.getPricingCatalog(credentialContext(baseUrl, 'session=session-token', {
+      credentialKind: 'session_cookie',
       platformUserId: 42,
-    });
+    }));
 
     expect(receivedHeaders).toMatchObject({
       'new-api-user': '42',
@@ -930,15 +1069,20 @@ describe('NewApiAdapter', () => {
 
   it('does not echo a Bearer management credential as a discovered model key', async () => {
     const adapter = new NewApiAdapter();
-    const result = await adapter.verifyToken(baseUrl, 'session-token');
+    const result = await adapter.verifyToken(credentialContext(baseUrl, 'session-token', { credentialKind: 'access_token' }));
 
     expect(result.tokenType).toBe('session');
-    expect(result.discoveredModelToken).toBeUndefined();
+    expect(result.discoveredModelToken).toBe('api-key-from-token-list');
+    expect(requests.some((r) => r.url === '/v1/models')).toBe(false);
+    expect(
+      requests.filter((r) => r.url === '/api/user/self' || r.url?.startsWith('/api/token/'))
+        .every((r) => r.headers.authorization === 'Bearer session-token' && !r.headers.cookie),
+    ).toBe(true);
   });
 
   it('normalizes the global site notice from /api/notice', async () => {
     const adapter = new NewApiAdapter();
-    const rows = await adapter.getSiteAnnouncements(baseUrl, 'session-token');
+    const rows = await adapter.getSiteAnnouncements(credentialContext(baseUrl, 'session-token'));
 
     expect(rows).toEqual([
       {

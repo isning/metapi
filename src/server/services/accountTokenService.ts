@@ -7,6 +7,7 @@ type UpstreamApiToken = {
   key?: string | null;
   enabled?: boolean | null;
   tokenGroup?: string | null;
+  extraConfig?: string | null;
 };
 
 export type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
@@ -403,6 +404,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
     const tokenName = normalizeTokenName(upstream.name, index);
     const enabled = upstream.enabled ?? true;
     const tokenGroup = normalizeTokenGroup(upstream.tokenGroup, tokenName);
+    const extraConfig = upstream.extraConfig ?? null;
     const nextValueStatus = isMaskedTokenValue(tokenValue)
       ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
       : ACCOUNT_TOKEN_VALUE_STATUS_READY;
@@ -416,6 +418,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         .set({
           name: tokenName,
           tokenGroup,
+          extraConfig,
           valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
           source: 'sync',
           enabled,
@@ -425,6 +428,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         .run();
       byToken.name = tokenName;
       byToken.tokenGroup = tokenGroup;
+      byToken.extraConfig = extraConfig;
       byToken.valueStatus = ACCOUNT_TOKEN_VALUE_STATUS_READY;
       byToken.enabled = enabled;
       byToken.source = 'sync';
@@ -457,6 +461,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         .set({
           name: tokenName,
           tokenGroup,
+          extraConfig,
           valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
           source: 'sync',
           enabled,
@@ -466,6 +471,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         .run();
       readyMaskedMatch.name = tokenName;
       readyMaskedMatch.tokenGroup = tokenGroup;
+      readyMaskedMatch.extraConfig = extraConfig;
       readyMaskedMatch.valueStatus = ACCOUNT_TOKEN_VALUE_STATUS_READY;
       readyMaskedMatch.enabled = enabled;
       readyMaskedMatch.source = 'sync';
@@ -502,6 +508,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
           name: tokenName,
           token: tokenValue,
           tokenGroup,
+          extraConfig,
           valueStatus: nextValueStatus,
           source: 'sync',
           enabled: nextEnabled,
@@ -513,6 +520,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       matchingPlaceholder.name = tokenName;
       matchingPlaceholder.token = tokenValue;
       matchingPlaceholder.tokenGroup = tokenGroup;
+      matchingPlaceholder.extraConfig = extraConfig;
       matchingPlaceholder.valueStatus = nextValueStatus;
       matchingPlaceholder.source = 'sync';
       matchingPlaceholder.enabled = nextEnabled;
@@ -532,6 +540,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         name: tokenName,
         token: tokenValue,
         tokenGroup,
+        extraConfig,
         valueStatus: nextValueStatus,
         source: 'sync',
         enabled: nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY ? enabled : false,
@@ -570,7 +579,8 @@ export async function listTokensWithRelations(accountId?: number) {
   const base = db.select()
     .from(schema.accountTokens)
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokenHealth, eq(schema.accountTokens.id, schema.accountTokenHealth.tokenId));
 
   const rows = accountId
     ? await base.where(eq(schema.accountTokens.accountId, accountId)).all()
@@ -582,6 +592,12 @@ export async function listTokensWithRelations(accountId?: number) {
       ...tokenMeta,
       valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
       tokenMasked: maskToken(token, row.sites.platform),
+      health: row.account_token_health ? {
+        state: row.account_token_health.state,
+        reason: row.account_token_health.reason,
+        source: row.account_token_health.source,
+        checkedAt: row.account_token_health.checkedAt,
+      } : null,
       account: {
         id: row.accounts.id,
         username: row.accounts.username,
