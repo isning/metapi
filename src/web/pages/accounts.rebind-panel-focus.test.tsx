@@ -56,6 +56,12 @@ describe('Accounts rebind modal', () => {
         checkinEnabled: true,
         siteId: 10,
         site: { id: 10, name: 'Demo Site', status: 'active', url: 'https://example.com' },
+        capabilities: {
+          canCheckin: false,
+          canRefreshBalance: false,
+          canRebindSession: true,
+          proxyOnly: false,
+        },
         runtimeHealth: { state: 'unhealthy', reason: '访问令牌失效' },
       },
     ]);
@@ -100,8 +106,8 @@ describe('Accounts rebind modal', () => {
       });
       await flushMicrotasks();
 
-      expect(JSON.stringify(root.toJSON())).toContain('重新绑定 Session Token');
-      expect(JSON.stringify(root.toJSON())).toContain('粘贴新的 Session Token');
+      expect(JSON.stringify(root.toJSON())).toContain('重新绑定连接凭据');
+      expect(JSON.stringify(root.toJSON())).toContain('粘贴连接凭据');
     } finally {
       root?.unmount();
     }

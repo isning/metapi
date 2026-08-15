@@ -16,6 +16,11 @@ const { apiMock } = vi.hoisted(() => ({
     deleteRouteGroup: vi.fn(),
     restoreAutomaticRouteGroupCandidate: vi.fn(),
     restoreAutomaticRouteGroupCandidates: vi.fn(),
+    createRouteGroupFallbackStage: vi.fn(),
+    updateRouteGroupFallbackStage: vi.fn(),
+    reorderRouteGroupFallbackStages: vi.fn(),
+    deleteRouteGroupFallbackStage: vi.fn(),
+    moveRouteGroupCandidatesToFallbackStages: vi.fn(),
   },
 }));
 
@@ -180,6 +185,18 @@ describe("TokenRoutes desktop detail panel", () => {
       restoredCount: 1,
       stages: [],
     });
+    apiMock.createRouteGroupFallbackStage.mockResolvedValue({
+      stage: automaticStages[0],
+      stages: automaticStages,
+    });
+    apiMock.updateRouteGroupFallbackStage.mockResolvedValue({});
+    apiMock.reorderRouteGroupFallbackStages.mockResolvedValue({
+      stages: automaticStages,
+    });
+    apiMock.deleteRouteGroupFallbackStage.mockResolvedValue({ success: true });
+    apiMock.moveRouteGroupCandidatesToFallbackStages.mockResolvedValue({
+      stages: automaticStages,
+    });
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -312,6 +329,88 @@ describe("TokenRoutes desktop detail panel", () => {
         (node) => node.props["aria-label"] === "回退阶段",
       );
       expect(stageSelect.props.disabled).not.toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it("lets automatic explicit groups edit their fallback priority groups", async () => {
+    const secondaryStage = {
+      ...automaticStages[0]!,
+      id: "stage:auto:secondary",
+      label: "Secondary",
+      order: 1,
+      candidates: [],
+    };
+    const stages = [automaticStages[0]!, secondaryStage];
+    apiMock.getRouteGroupPage.mockResolvedValue({
+      items: [automaticGroup],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+    });
+    apiMock.getRouteGroupFallbackStages.mockResolvedValue({ stages });
+    let root: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flush();
+      const summary = root!.root.find((node) =>
+        String(node.props.className || "").includes("route-card-collapsed"),
+      );
+      await act(async () => summary.props.onClick());
+      await flush();
+
+      const addStage = root!.root.find(
+        (node) => node.type === "button" && text(node).includes("添加回退阶段"),
+      );
+      await act(async () => addStage.props.onClick());
+      expect(apiMock.createRouteGroupFallbackStage).toHaveBeenCalledWith(
+        automaticGroup.id,
+        { label: null, enabled: true },
+      );
+
+      const primaryLabel = root!.root.find(
+        (node) => node.type === "input" && node.props.defaultValue === "Primary",
+      );
+      await act(async () =>
+        primaryLabel.props.onBlur({ currentTarget: { value: "Fast lane" } }),
+      );
+      expect(apiMock.updateRouteGroupFallbackStage).toHaveBeenCalledWith(
+        automaticGroup.id,
+        "stage:auto:primary",
+        { label: "Fast lane" },
+      );
+
+      const primaryStage = root!.root.find(
+        (node) => node.props["data-testid"] === "route-group-stage-stage:auto:primary",
+      );
+      const movePrimaryLater = primaryStage.find(
+        (node) => node.type === "button" && node.props["aria-label"] === "下一页",
+      );
+      await act(async () => movePrimaryLater.props.onClick());
+      expect(apiMock.reorderRouteGroupFallbackStages).toHaveBeenCalledWith(
+        automaticGroup.id,
+        ["stage:auto:secondary", "stage:auto:primary"],
+      );
+
+      expect(
+        root!.root.findAll(
+          (node) => node.type === "button" && text(node).includes("添加候选"),
+        ),
+      ).toHaveLength(0);
+      expect(
+        root!.root.find(
+          (node) =>
+            node.props["data-testid"] ===
+            "route-group-new-stage-drop-zone-stage:auto:primary",
+        ),
+      ).toBeTruthy();
     } finally {
       root?.unmount();
     }

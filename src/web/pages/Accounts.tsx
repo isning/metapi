@@ -55,10 +55,6 @@ import { shouldIgnoreRowSelectionClick } from "./helpers/rowSelection.js";
 import { SITE_DOCS_URL } from "../docsLink.js";
 import { getSiteInitializationPreset } from "../../shared/siteInitializationPresets.js";
 import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
-import {
-  getPlatformCredentialCapabilities,
-  supportsInteractiveCredentialMode,
-} from "../../shared/platformCredentialCapabilities.js";
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
 import {
@@ -124,41 +120,74 @@ function createLoginForm() {
   return { siteId: 0, username: "", password: "" };
 }
 
-function createTokenForm(credentialMode: "session" | "apikey" = "session") {
+function createTokenForm() {
   return {
     siteId: 0,
     username: "",
-    cred: "",
-    platformUserId: "",
-    refreshToken: "",
-    tokenExpiresAt: "",
-    credentialMode,
+    credential: "",
+    credentialKind: "",
     skipModelFetch: false,
+    connectionValues: {} as Record<string, string>,
   };
 }
 
-function createRebindForm(platformUserId = "") {
+function createRebindForm() {
   return {
-    cred: "",
-    platformUserId,
-    refreshToken: "",
-    tokenExpiresAt: "",
+    credential: "",
+    credentialKind: "",
+    connectionValues: {} as Record<string, string>,
   };
 }
 
-function sessionCredentialPlaceholderKeyForPlatform(platform?: string | null): string {
-  const kind = getPlatformCredentialCapabilities(platform).sessionCredentialKind;
-  if (kind === "session_cookie_or_api_token") {
-    return "pages.accounts.credentialPlaceholderCookieOrApiToken";
-  }
-  if (kind === "session_cookie") return "pages.accounts.credentialPlaceholderCookie";
-  if (kind === "access_token") return "pages.accounts.credentialPlaceholderAccessToken";
+function connectionFieldsFor(subject: any): any[] {
+  const fields = subject?.accountConnectionFields || subject?.site?.accountConnectionFields;
+  return Array.isArray(fields) ? fields : [];
+}
+
+function credentialOptionsFor(subject: any): any[] {
+  const capabilities = subject?.credentialCapabilities || subject?.site?.credentialCapabilities;
+  return Array.isArray(capabilities?.sessionCredentialOptions)
+    ? capabilities.sessionCredentialOptions
+    : [];
+}
+
+function selectedSessionCredentialKind(value: string): "session_cookie" | "access_token" | undefined {
+  return value === "session_cookie" || value === "access_token" ? value : undefined;
+}
+
+function initialConnectionValues(subject: any): Record<string, string> {
+  const values = subject?.connectionValues;
+  if (!values || typeof values !== 'object') return {};
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
+    key,
+    value && typeof value === 'object' && 'hasValue' in (value as any) ? '' : String(value ?? ''),
+  ]));
+}
+
+function runtimeArgumentNumber(
+  subject: any,
+  values: Record<string, string>,
+  runtimeArgument: 'platformUserId',
+): number | undefined {
+  const field = connectionFieldsFor(subject).find(
+    (candidate: any) => candidate?.runtimeArgument === runtimeArgument,
+  );
+  const parsed = Number.parseInt(String(field ? values[field.key] || '' : ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function sessionCredentialPlaceholderKeyFor(subject: any): string {
+  const capabilities = subject?.credentialCapabilities || subject?.site?.credentialCapabilities;
+  const options = Array.isArray(capabilities?.sessionCredentialOptions)
+    ? capabilities.sessionCredentialOptions
+    : [];
+  if (options.length === 1 && options[0]?.placeholderI18nKey) return options[0].placeholderI18nKey;
   return "pages.accounts.credentialPlaceholderDefault";
 }
 
-function usesNewApiApiTokenCredential(platform?: string | null): boolean {
-  const normalized = String(platform || "").trim().toLowerCase();
-  return normalized === "new-api" || normalized === "anyrouter";
+function supportsCredentialModeForSite(site: any, mode: "session" | "apikey"): boolean {
+  const capabilities = site?.credentialCapabilities;
+  return mode === "session" ? capabilities?.session === true : capabilities?.apiKey === true;
 }
 
 function resolveConnectionsSegment(search: string): ConnectionsSegment {
@@ -373,7 +402,7 @@ export default function Accounts() {
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<"token" | "login">("token");
   const [loginForm, setLoginForm] = useState(createLoginForm);
-  const [tokenForm, setTokenForm] = useState(() => createTokenForm("session"));
+  const [tokenForm, setTokenForm] = useState(() => createTokenForm());
   const [createIntentPresetId, setCreateIntentPresetId] = useState<
     string | null
   >(null);
@@ -399,12 +428,12 @@ export default function Accounts() {
     username: "",
     status: "active",
     credentialMode: "session" as "session" | "apikey" | "oauth",
+    credentialKind: "",
     checkinEnabled: true,
     unitCost: "",
-    cred: "",
+    credential: "",
     isPinned: false,
-    refreshToken: "",
-    tokenExpiresAt: "",
+    connectionValues: {} as Record<string, string>,
     proxyUrl: "",
   });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -467,8 +496,6 @@ export default function Accounts() {
   const toast = useToast();
   if (rebindTarget) lastRebindTargetRef.current = rebindTarget;
   const activeRebindTarget = rebindTarget || lastRebindTargetRef.current;
-  const isRebindSub2Api =
-    (activeRebindTarget?.site?.platform || "").toLowerCase() === "sub2api";
 
   const load = async (forceRefresh = false) => {
     try {
@@ -503,17 +530,17 @@ export default function Accounts() {
   const parsedApiKeys = useMemo(
     () =>
       activeSegment === "apikey"
-        ? parseBatchApiKeys(tokenForm.cred)
+        ? parseBatchApiKeys(tokenForm.credential)
         : [],
-    [activeSegment, tokenForm.cred],
+    [activeSegment, tokenForm.credential],
   );
   const isBatchApiKeyInput =
     activeSegment === "apikey" && parsedApiKeys.length > 1;
   const siteSelectOptions = useMemo(
     () => [
       { value: "0", label: tr('pages.accounts.selectSite') },
-      ...sites.filter((site: any) => supportsInteractiveCredentialMode(
-        site.platform,
+      ...sites.filter((site: any) => supportsCredentialModeForSite(
+        site,
         activeSegment === "apikey" ? "apikey" : "session",
       )).map((site: any) => ({
         value: String(site.id),
@@ -523,26 +550,19 @@ export default function Accounts() {
     ],
     [activeSegment, sites],
   );
-  const isSub2ApiSelected =
-    (selectedTokenSite?.platform || "").toLowerCase() === "sub2api";
-  const usesNewApiApiToken = usesNewApiApiTokenCredential(selectedTokenSite?.platform);
   const sessionCredentialPlaceholder = useMemo(
-    () => tr(sessionCredentialPlaceholderKeyForPlatform(selectedTokenSite?.platform)),
-    [selectedTokenSite?.platform],
+    () => tr(sessionCredentialPlaceholderKeyFor(selectedTokenSite)),
+    [selectedTokenSite],
   );
-  const activeAddCredentialMode =
-    activeSegment === "apikey" ? "apikey" : "session";
   const createIntentPreset = useMemo(
     () => getSiteInitializationPreset(createIntentPresetId),
     [createIntentPresetId],
   );
 
-  const resetAddForms = (
-    credentialMode: "session" | "apikey" = activeAddCredentialMode,
-  ) => {
+  const resetAddForms = () => {
     setAddMode("token");
     setLoginForm(createLoginForm());
-    setTokenForm(createTokenForm(credentialMode));
+    setTokenForm(createTokenForm());
     setCreateIntentPresetId(null);
     setApplyCreatePresetModels(false);
     setVerifyResult(null);
@@ -657,7 +677,7 @@ export default function Accounts() {
     const requestedSiteId = parsePositiveInt(params.get("siteId"));
     if (!shouldOpenCreate || !requestedSiteId) return;
 
-    const credentialMode = activeSegment === "apikey" ? "apikey" : "session";
+    const isApiKeySegment = activeSegment === "apikey";
     const initializationPreset = getSiteInitializationPreset(
       params.get("initPreset"),
     );
@@ -670,10 +690,10 @@ export default function Accounts() {
     );
     setLoginForm(createLoginForm());
     setTokenForm({
-      ...createTokenForm(credentialMode),
+      ...createTokenForm(),
       siteId: requestedSiteId,
       skipModelFetch:
-        credentialMode === "apikey" &&
+        isApiKeySegment &&
         initializationPreset?.recommendedSkipModelFetch === true,
     });
 
@@ -722,37 +742,26 @@ export default function Accounts() {
   };
 
   const handleVerifyToken = async () => {
-    if (!tokenForm.siteId || !tokenForm.cred) return;
-    if (isBatchApiKeyInput) {
-      toast.info(
-        `检测到 ${parsedApiKeys.length} 个 API Key，批量模式会在添加时逐条校验`,
-      );
-      return;
-    }
-    const credentialMode = activeSegment === "apikey" ? "apikey" : "session";
+    if (activeSegment !== "session" || !tokenForm.siteId || !tokenForm.credential) return;
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const result = await api.verifyToken({
+      const result = await api.verifyConnectionCredential({
         siteId: tokenForm.siteId,
-        cred: activeSegment === "session" ? tokenForm.cred : "",
-        apiKey: activeSegment === "apikey" ? tokenForm.cred : undefined,
-        platformUserId: tokenForm.platformUserId
-          ? parseInt(tokenForm.platformUserId)
-          : undefined,
-        credentialMode,
+        credential: tokenForm.credential,
+        platformUserId: runtimeArgumentNumber(
+          selectedTokenSite,
+          tokenForm.connectionValues,
+          'platformUserId',
+        ),
+        credentialKind: selectedSessionCredentialKind(tokenForm.credentialKind),
+        connectionValues: tokenForm.connectionValues,
       });
       setVerifyResult(result);
       if (result.success) {
-        if (result.tokenType === "apikey") {
-          toast.success(
-            `API Key 验证成功（可用模型 ${result.modelCount || 0} 个）`,
-          );
-        } else {
-          toast.success(
-            `Session 验证成功: ${result.userInfo?.username || tr('pages.accounts.unknown')}`,
-          );
-        }
+        toast.success(
+          `连接凭据验证成功: ${result.userInfo?.username || tr('pages.accounts.unknown')}`,
+        );
       } else {
         toast.error(
           normalizeVerifyFailureMessage(result.message || tr('pages.accounts.tokenInvalid')),
@@ -767,9 +776,9 @@ export default function Accounts() {
   };
 
   const handleTokenAdd = async () => {
-    if (!tokenForm.siteId || !tokenForm.cred) return;
+    if (!tokenForm.siteId || !tokenForm.credential) return;
     if (
-      !isBatchApiKeyInput &&
+      activeSegment === "session" &&
       !verifyResult?.success &&
       !tokenForm.skipModelFetch
     ) {
@@ -783,20 +792,15 @@ export default function Accounts() {
       const result = await api.addAccount({
         siteId: tokenForm.siteId,
         username: tokenForm.username.trim() || undefined,
-        cred: activeSegment === "session" ? tokenForm.cred : undefined,
-        apiKey: activeSegment === "apikey" ? tokenForm.cred : undefined,
-        platformUserId: tokenForm.platformUserId
-          ? parseInt(tokenForm.platformUserId)
-          : undefined,
-        refreshToken:
-          isSub2ApiSelected && tokenForm.refreshToken.trim()
-            ? tokenForm.refreshToken.trim()
-            : undefined,
-        tokenExpiresAt:
-          isSub2ApiSelected && tokenForm.tokenExpiresAt.trim()
-            ? Number.parseInt(tokenForm.tokenExpiresAt.trim(), 10)
-            : undefined,
-        credentialMode,
+        credential: activeSegment === "session" ? tokenForm.credential : undefined,
+        apiKey: activeSegment === "apikey" ? tokenForm.credential : undefined,
+        platformUserId: runtimeArgumentNumber(
+          selectedTokenSite,
+          tokenForm.connectionValues,
+          'platformUserId',
+        ),
+        connectionValues: tokenForm.connectionValues,
+        credentialKind: activeSegment === "session" ? selectedSessionCredentialKind(tokenForm.credentialKind) : undefined,
         skipModelFetch: tokenForm.skipModelFetch,
       });
       if (result?.batch) {
@@ -1105,6 +1109,11 @@ export default function Accounts() {
   };
 
   const resolveRuntimeHealth = (account: any) => {
+    if (account.apiKeyHealth) {
+      const state = account.apiKeyHealth.state;
+      const cfg = runtimeHealthMap[state] || runtimeHealthMap.unknown;
+      return { state, reason: account.apiKeyHealth.reason || tr('pages.accounts.runningHealthInformationHasNotBeenObtained'), ...cfg };
+    }
     if (account.status === "expired") {
       return {
         ...runtimeHealthMap.unhealthy,
@@ -1133,21 +1142,11 @@ export default function Accounts() {
 
   const resolveAccountCapabilities = (account: any) => {
     const fromServer = account?.capabilities;
-    if (fromServer && typeof fromServer === "object") {
-      return {
-        canCheckin: !!fromServer.canCheckin,
-        canRefreshBalance: !!fromServer.canRefreshBalance,
-        proxyOnly: !!fromServer.proxyOnly,
-      };
-    }
-    const hasSession =
-      account?.credentialMode !== "apikey" &&
-      typeof account?.credential === "string" &&
-      account.credential.trim().length > 0;
     return {
-      canCheckin: hasSession,
-      canRefreshBalance: hasSession,
-      proxyOnly: !hasSession,
+      canCheckin: fromServer?.canCheckin === true,
+      canRefreshBalance: fromServer?.canRefreshBalance === true,
+      canRebindSession: fromServer?.canRebindSession === true,
+      proxyOnly: fromServer?.proxyOnly === true,
     };
   };
 
@@ -1265,24 +1264,15 @@ export default function Accounts() {
     }
   };
 
-  const extractManagedSub2ApiAuth = (account: any) => {
-    const parsed = parseAccountExtraConfig(account);
-    const auth = parsed?.sub2apiAuth || {};
-    return {
-      refreshToken:
-        typeof auth.refreshToken === "string" ? auth.refreshToken : "",
-      tokenExpiresAt: auth.tokenExpiresAt ? String(auth.tokenExpiresAt) : "",
-    };
-  };
-
   const openEditPanel = (account: any) => {
-    const managedAuth = extractManagedSub2ApiAuth(account);
     const accountExtraConfig = parseAccountExtraConfig(account);
     const proxyUrl = accountExtraConfig.proxyUrl || "";
     const rawCredentialMode = String(account?.credentialMode || "").trim().toLowerCase();
-    const credentialMode = rawCredentialMode === "apikey" || rawCredentialMode === "oauth"
-      ? rawCredentialMode
-      : "session";
+    const credentialMode = account?.oauthProvider
+      ? "oauth"
+      : rawCredentialMode === "apikey" || rawCredentialMode === "oauth"
+        ? rawCredentialMode
+        : "session";
     closeAddPanel();
     setRebindTarget(null);
     setEditingAccount(account);
@@ -1290,15 +1280,15 @@ export default function Accounts() {
       username: account?.username || "",
       status: account?.status || "active",
       credentialMode,
+      credentialKind: account?.credentialKind || "",
       checkinEnabled: account?.checkinEnabled !== false,
       unitCost:
         account?.unitCost === null || account?.unitCost === undefined
           ? ""
           : String(account.unitCost),
-      cred: account?.credential || "",
+      credential: account?.credential || "",
       isPinned: !!account?.isPinned,
-      refreshToken: managedAuth.refreshToken,
-      tokenExpiresAt: managedAuth.tokenExpiresAt,
+      connectionValues: initialConnectionValues(account),
       proxyUrl,
     });
   };
@@ -1320,19 +1310,14 @@ export default function Accounts() {
           ? Number(editForm.unitCost.trim())
           : null,
         credential:
-          editForm.credentialMode !== "apikey"
-            ? editForm.cred.trim()
+          editForm.credentialMode === "session"
+            ? editForm.credential.trim()
             : undefined,
-        credentialKind: editForm.credentialMode === "oauth"
-          ? "oauth_access_token"
-          : editForm.credentialMode === "session"
-            ? editingAccount?.credentialKind || "adapter_default"
+        credentialKind: editForm.credentialMode === "session"
+            ? editForm.credentialKind || undefined
             : undefined,
         isPinned: editForm.isPinned,
-        refreshToken: editForm.refreshToken.trim() || null,
-        tokenExpiresAt: editForm.tokenExpiresAt.trim()
-          ? Number.parseInt(editForm.tokenExpiresAt.trim(), 10)
-          : null,
+        connectionValues: editForm.connectionValues,
         proxyUrl: editForm.proxyUrl.trim() || null,
       });
       toast.success(tr('pages.accounts.accounts'));
@@ -1445,23 +1430,15 @@ export default function Accounts() {
     toggleAccountSelection(accountId, !isSelected);
   };
 
-  const extractPlatformUserId = (account: any): string => {
-    const parsed = parseAccountExtraConfig(account);
-    const raw = parsed?.platformUserId;
-    const value = Number.parseInt(String(raw ?? ""), 10);
-    if (Number.isFinite(value) && value > 0) return String(value);
-    const guessed = Number.parseInt(
-      String(account?.username || "").match(/(\d{3,8})$/)?.[1] || "",
-      10,
-    );
-    return Number.isFinite(guessed) && guessed > 0 ? String(guessed) : "";
-  };
-
   const openRebindPanel = (account: any) => {
     closeAddPanel();
     setEditingAccount(null);
     setRebindTarget(account);
-    setRebindForm(createRebindForm(extractPlatformUserId(account)));
+    setRebindForm({
+      ...createRebindForm(),
+      credentialKind: account?.credentialKind || "",
+      connectionValues: initialConnectionValues(account),
+    });
     setRebindVerifyResult(null);
   };
 
@@ -1474,17 +1451,20 @@ export default function Accounts() {
   };
 
   const handleVerifyRebindToken = async () => {
-    if (!rebindTarget || !rebindForm.cred.trim()) return;
+    if (!rebindTarget || !rebindForm.credential.trim()) return;
     setRebindVerifying(true);
     setRebindVerifyResult(null);
     try {
-      const result = await api.verifyToken({
+      const result = await api.verifyConnectionCredential({
         siteId: rebindTarget.siteId,
-        cred: rebindForm.cred.trim(),
-        platformUserId: rebindForm.platformUserId
-          ? Number.parseInt(rebindForm.platformUserId, 10)
-          : undefined,
-        credentialMode: "session",
+        credential: rebindForm.credential.trim(),
+        platformUserId: runtimeArgumentNumber(
+          rebindTarget,
+          rebindForm.connectionValues,
+          'platformUserId',
+        ),
+        credentialKind: selectedSessionCredentialKind(rebindForm.credentialKind),
+        connectionValues: rebindForm.connectionValues,
       });
       setRebindVerifyResult(result);
       if (result.success && result.tokenType === "session") {
@@ -1505,7 +1485,7 @@ export default function Accounts() {
   };
 
   const handleSubmitRebind = async () => {
-    if (!rebindTarget || !rebindForm.cred.trim()) return;
+    if (!rebindTarget || !rebindForm.credential.trim()) return;
     if (
       !(
         rebindVerifyResult?.success &&
@@ -1515,23 +1495,17 @@ export default function Accounts() {
       toast.error(tr('pages.accounts.verifySessionTokenSuccess'));
       return;
     }
-    const isSub2ApiRebindTarget =
-      (rebindTarget?.site?.platform || "").toLowerCase() === "sub2api";
     setRebindSaving(true);
     try {
       await api.rebindAccountSession(rebindTarget.id, {
-        cred: rebindForm.cred.trim(),
-        platformUserId: rebindForm.platformUserId
-          ? Number.parseInt(rebindForm.platformUserId, 10)
-          : undefined,
-        refreshToken:
-          isSub2ApiRebindTarget && rebindForm.refreshToken.trim()
-            ? rebindForm.refreshToken.trim()
-            : undefined,
-        tokenExpiresAt:
-          isSub2ApiRebindTarget && rebindForm.tokenExpiresAt.trim()
-            ? Number.parseInt(rebindForm.tokenExpiresAt, 10)
-            : undefined,
+        credential: rebindForm.credential.trim(),
+        platformUserId: runtimeArgumentNumber(
+          rebindTarget,
+          rebindForm.connectionValues,
+          'platformUserId',
+        ),
+        connectionValues: rebindForm.connectionValues,
+        credentialKind: selectedSessionCredentialKind(rebindForm.credentialKind),
       });
       toast.success(tr('pages.accounts.accountsrebindsuccessStatus'));
       closeRebindPanel();
@@ -1570,7 +1544,7 @@ export default function Accounts() {
     if (
       openRebind &&
       target.status === "expired" &&
-      !resolveAccountCapabilities(target).proxyOnly
+      resolveAccountCapabilities(target).canRebindSession
     ) {
       setShowAdd(false);
       if (!rebindTarget || rebindTarget.id !== target.id) {
@@ -1595,14 +1569,12 @@ export default function Accounts() {
 
   const canAddVerifiedConnection = Boolean(
     verifyResult?.success &&
-    ((activeSegment === "apikey" && verifyResult.tokenType === "apikey") ||
-      (activeSegment === "session" && verifyResult.tokenType === "session")),
+    activeSegment === "session" &&
+    verifyResult.tokenType === "session",
   );
   const canSubmitApiKeyConnection =
     activeSegment === "apikey"
-      ? isBatchApiKeyInput ||
-        canAddVerifiedConnection ||
-        !!tokenForm.skipModelFetch
+      ? true
       : canAddVerifiedConnection;
 
   return (
@@ -1684,7 +1656,7 @@ export default function Accounts() {
                 setEditingAccount(null);
                 closeRebindPanel();
                 setShowAdd(true);
-                resetAddForms(activeAddCredentialMode);
+                resetAddForms();
               }}
             />
           </PageActionBar>
@@ -1941,7 +1913,7 @@ export default function Accounts() {
                       value={String(tokenForm.siteId || 0)}
                       onChange={(nextValue) => {
                         const nextSiteId = Number.parseInt(nextValue, 10) || 0;
-                        setTokenForm((f) => ({ ...f, siteId: nextSiteId }));
+                        setTokenForm((f) => ({ ...f, siteId: nextSiteId, credentialKind: "" }));
                         setVerifyResult(null);
                       }}
                       options={siteSelectOptions}
@@ -1959,81 +1931,46 @@ export default function Accounts() {
                         }))
                       }
                     />
+                    {activeSegment === "session" && credentialOptionsFor(selectedTokenSite).length > 1 ? (
+                      <ModernSelect
+                        value={tokenForm.credentialKind}
+                        onChange={(value) => setTokenForm((f) => ({ ...f, credentialKind: value }))}
+                        options={credentialOptionsFor(selectedTokenSite).map((option: any) => ({
+                          value: option.kind,
+                          label: tr(option.labelI18nKey),
+                          description: option.commentI18nKey ? tr(option.commentI18nKey) : undefined,
+                        }))}
+                        placeholder={tr('pages.accounts.selectCredentialType')}
+                      />
+                    ) : null}
                     <Textarea
                       placeholder={sessionCredentialPlaceholder}
-                      value={tokenForm.cred}
+                      value={tokenForm.credential}
                       onChange={(e) => {
                         setTokenForm((f) => ({
                           ...f,
-                          cred: e.target.value.trim(),
+                          credential: e.target.value.trim(),
                         }));
                         setVerifyResult(null);
                       }}
                       className="h-[72px] resize-none font-mono"
                     />
-                    {usesNewApiApiToken ? (
-                      <div className="text-xs text-muted-foreground">
-                        Session Cookie 或站点 Access Token 均保存在这一连接凭据中。
-                      </div>
-                    ) : null}
-                    <div className="grid gap-1">
-                      <Input
-                        placeholder={tr('pages.accounts.id')}
-                        value={tokenForm.platformUserId}
-                        onChange={(e) => {
-                          setTokenForm((f) => ({
+                    {connectionFieldsFor(selectedTokenSite).map((field: any) => (
+                      <div className="grid gap-1" key={`connection-${field.key}`}>
+                        <Input
+                          type={field.inputType === 'password' ? 'password' : 'text'}
+                          inputMode={field.inputType === 'number' ? 'numeric' : undefined}
+                          placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
+                          value={tokenForm.connectionValues[field.key] || ''}
+                          onChange={(e) => setTokenForm((f) => ({
                             ...f,
-                            platformUserId: e.target.value.replace(/\D/g, ""),
-                          }));
-                          setVerifyResult(null);
-                        }}
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {tr('pages.accounts.sitesNewApiUserUserId')}
+                            connectionValues: { ...f.connectionValues, [field.key]: e.target.value },
+                          }))}
+                          className={field.secret ? 'font-mono' : undefined}
+                        />
+                        {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
                       </div>
-                    </div>
-                    {isSub2ApiSelected && (
-                      <>
-                        <div className="grid gap-1">
-                          <Input
-                            placeholder={tr('pages.accounts.sub2apiRefreshTokenAutomatic')}
-                            value={tokenForm.refreshToken}
-                            onChange={(e) =>
-                              setTokenForm((f) => ({
-                                ...f,
-                                refreshToken: e.target.value.trim(),
-                              }))
-                            }
-                            className="font-mono"
-                          />
-                          <div className="text-xs text-muted-foreground">
-                            {tr('pages.accounts.console')}{" "}
-                            <code className="font-mono">
-                              localStorage.getItem('refresh_token')
-                            </code>{" "}
-                            {tr('pages.accounts.fetch')}
-                          </div>
-                        </div>
-                        <div className="grid gap-1">
-                          <Input
-                            placeholder={tr('pages.accounts.tokenExpiresSecondstime')}
-                            value={tokenForm.tokenExpiresAt}
-                            onChange={(e) =>
-                              setTokenForm((f) => ({
-                                ...f,
-                                tokenExpiresAt: e.target.value.replace(
-                                  /\D/g,
-                                  "",
-                                ),
-                              }))
-                            }
-                          />
-                          <div className="text-xs text-muted-foreground">
-                            {tr('pages.accounts.configurationRefreshTokenMetapiJwtExpired401')}
-                          </div>
-                        </div>
-                      </>
-                    )}
+                    ))}
                     {verifyResult &&
                       verifyResult.success &&
                       verifyResult.tokenType === "session" && (
@@ -2114,7 +2051,7 @@ export default function Accounts() {
                         disabled={
                           verifying ||
                           !tokenForm.siteId ||
-                          !tokenForm.cred
+                          !tokenForm.credential
                         }
 
 
@@ -2133,7 +2070,7 @@ export default function Accounts() {
                         disabled={
                           saving ||
                           !tokenForm.siteId ||
-                          !tokenForm.cred ||
+                          !tokenForm.credential ||
                           !canAddVerifiedConnection
                         }
 
@@ -2256,7 +2193,6 @@ export default function Accounts() {
                     setTokenForm((f) => ({
                       ...f,
                       siteId: nextSiteId,
-                      credentialMode: "apikey",
                     }));
                     setVerifyResult(null);
                     if (
@@ -2279,18 +2215,16 @@ export default function Accounts() {
                     setTokenForm((f) => ({
                       ...f,
                       username: e.target.value,
-                      credentialMode: "apikey",
                     }))
                   }
                 />
                 <Textarea
                   placeholder={tr('pages.accounts.apiKey3')}
-                  value={tokenForm.cred}
+                  value={tokenForm.credential}
                   onChange={(e) => {
                     setTokenForm((f) => ({
                       ...f,
-                      cred: e.target.value,
-                      credentialMode: "apikey",
+                      credential: e.target.value,
                     }));
                     setVerifyResult(null);
                   }}
@@ -2307,23 +2241,22 @@ export default function Accounts() {
                 <div className="text-xs text-muted-foreground">
                   {tr('pages.accounts.supportedApiKey')}
                 </div>
-                <div className="grid gap-1">
-                  <Input
-                    placeholder={tr('pages.accounts.id')}
-                    value={tokenForm.platformUserId}
-                    onChange={(e) => {
-                      setTokenForm((f) => ({
+                {connectionFieldsFor(selectedTokenSite).map((field: any) => (
+                  <div className="grid gap-1" key={`apikey-connection-${field.key}`}>
+                    <Input
+                      type={field.inputType === 'password' ? 'password' : 'text'}
+                      inputMode={field.inputType === 'number' ? 'numeric' : undefined}
+                      placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
+                      value={tokenForm.connectionValues[field.key] || ''}
+                      onChange={(e) => setTokenForm((f) => ({
                         ...f,
-                        platformUserId: e.target.value.replace(/\D/g, ""),
-                        credentialMode: "apikey",
-                      }));
-                      setVerifyResult(null);
-                    }}
-                  />
-                  <div className="text-xs text-muted-foreground">
-                    {tr('pages.accounts.sitesNewApiUserUserId')}
+                        connectionValues: { ...f.connectionValues, [field.key]: e.target.value },
+                      }))}
+                      className={field.secret ? 'font-mono' : undefined}
+                    />
+                    {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
                   </div>
-                </div>
+                ))}
                 <label className="flex cursor-pointer items-center gap-2 self-start text-sm">
                   <Checkbox
 
@@ -2402,34 +2335,12 @@ export default function Accounts() {
                     </Alert>
                   )}
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline"
-                    onClick={handleVerifyToken}
-                    disabled={
-                      verifying ||
-                      !tokenForm.siteId ||
-                      !tokenForm.cred ||
-                      isBatchApiKeyInput
-                    }
-
-
-                  >
-                    {verifying ? (
-                      <>
-                        <LoaderCircle className="size-4 animate-spin" />
-                        {tr('app.verifying')}
-                      </>
-                    ) : isBatchApiKeyInput ? (
-                      tr('pages.accounts.addCheck')
-                    ) : (
-                      tr('pages.accounts.verifyApiKey')
-                    )}
-                  </Button>
                   <Button type="button"
                     onClick={handleTokenAdd}
                     disabled={
                       saving ||
                       !tokenForm.siteId ||
-                      !tokenForm.cred ||
+                      !tokenForm.credential ||
                       !canSubmitApiKeyConnection
                     }
 
@@ -2446,13 +2357,6 @@ export default function Accounts() {
                     )}
                   </Button>
                 </div>
-                {!verifyResult?.success && (
-                  <div className="text-xs text-muted-foreground">
-                    {isBatchApiKeyInput
-                      ? tr('pages.accounts.modeNoneVerifyItemscheck')
-                      : addAccountPrereqHint}
-                  </div>
-                )}
               </div>
             )}
           </CenteredModal>
@@ -2477,62 +2381,48 @@ export default function Accounts() {
                     {activeRebindTarget.site?.name || "-"}{tr('pages.accounts.sessionTokenVerifyBeforeBind')}
                   </div>
 
-                  <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
+                  <div className="mb-2.5">
+                    {credentialOptionsFor(activeRebindTarget).length > 1 ? (
+                      <ModernSelect
+                        value={rebindForm.credentialKind}
+                        onChange={(value) => setRebindForm((prev) => ({ ...prev, credentialKind: value }))}
+                        options={credentialOptionsFor(activeRebindTarget).map((option: any) => ({
+                          value: option.kind,
+                          label: tr(option.labelI18nKey),
+                          description: option.commentI18nKey ? tr(option.commentI18nKey) : undefined,
+                        }))}
+                        placeholder={tr('pages.accounts.selectCredentialType')}
+                      />
+                    ) : null}
                     <Textarea
-                      placeholder={tr('pages.accounts.sessionToken2')}
-                      value={rebindForm.cred}
+                      placeholder={tr(sessionCredentialPlaceholderKeyFor(activeRebindTarget))}
+                      value={rebindForm.credential}
                       onChange={(e) => {
                         setRebindForm((prev) => ({
                           ...prev,
-                          cred: e.target.value.trim(),
+                          credential: e.target.value.trim(),
                         }));
                         setRebindVerifyResult(null);
                       }}
                       className="h-[74px] resize-none font-mono"
                     />
-                    <Input
-                      placeholder={tr('pages.accounts.id')}
-                      value={rebindForm.platformUserId}
-                      onChange={(e) => {
-                        setRebindForm((prev) => ({
-                          ...prev,
-                          platformUserId: e.target.value.replace(/\D/g, ""),
-                        }));
-                        setRebindVerifyResult(null);
-                      }}
-                    />
                   </div>
-                  {isRebindSub2Api && (
-                    <>
-                      <div className="mb-1 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
-                        <Input
-                          placeholder={tr('pages.accounts.sub2apiRefreshToken')}
-                          value={rebindForm.refreshToken}
-                          onChange={(e) =>
-                            setRebindForm((prev) => ({
-                              ...prev,
-                              refreshToken: e.target.value.trim(),
-                            }))
-                          }
-                          className="font-mono"
-                        />
-                        <Input
-                          placeholder={tr('pages.accounts.tokenExpires')}
-                          value={rebindForm.tokenExpiresAt}
-                          onChange={(e) =>
-                            setRebindForm((prev) => ({
-                              ...prev,
-                              tokenExpiresAt: e.target.value.replace(/\D/g, ""),
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="mb-2.5 text-xs text-muted-foreground">
-                        {tr('pages.accounts.refreshTokenConfigurationAvailableAutomatic')}
-                      </div>
-                    </>
-                  )}
-
+                  {connectionFieldsFor(activeRebindTarget).map((field: any) => (
+                    <div className="mb-2 grid gap-1" key={`rebind-${field.key}`}>
+                      <Input
+                        type={field.inputType === 'password' ? 'password' : 'text'}
+                        inputMode={field.inputType === 'number' ? 'numeric' : undefined}
+                        placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
+                        value={rebindForm.connectionValues[field.key] || ''}
+                        onChange={(e) => setRebindForm((prev) => ({
+                          ...prev,
+                          connectionValues: { ...prev.connectionValues, [field.key]: e.target.value },
+                        }))}
+                        className={field.secret ? 'font-mono' : undefined}
+                      />
+                      {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
+                    </div>
+                  ))}
                   {rebindVerifyResult &&
                     rebindVerifyResult.success &&
                     rebindVerifyResult.tokenType === "session" && (
@@ -2559,7 +2449,7 @@ export default function Accounts() {
                     <Button type="button" variant="outline"
                       onClick={handleVerifyRebindToken}
                       disabled={
-                        rebindVerifying || !rebindForm.cred.trim()
+                        rebindVerifying || !rebindForm.credential.trim()
                       }
 
 
@@ -2672,7 +2562,7 @@ export default function Accounts() {
                   </ResponsiveFormGrid>
                 </section>
 
-                {editForm.credentialMode !== "apikey" ? (
+                {editForm.credentialMode === "session" ? (
                   <section className="grid gap-3 border-t pt-4">
                     <div>
                       <h3 className="text-sm font-medium">
@@ -2682,47 +2572,57 @@ export default function Accounts() {
                         此凭据用于账号管理、健康检查与令牌同步，不作为模型调用 Key。
                       </p>
                     </div>
+                    {editForm.credentialMode === "session" && credentialOptionsFor(editingAccount).length > 1 ? (
+                      <ModernSelect
+                        value={editForm.credentialKind}
+                        onChange={(value) => setEditForm((prev) => ({ ...prev, credentialKind: value }))}
+                        options={credentialOptionsFor(editingAccount).map((option: any) => ({
+                          value: option.kind,
+                          label: tr(option.labelI18nKey),
+                          description: option.commentI18nKey ? tr(option.commentI18nKey) : undefined,
+                        }))}
+                        placeholder={tr('pages.accounts.selectCredentialType')}
+                      />
+                    ) : null}
                     <Input
-                      placeholder={tr(sessionCredentialPlaceholderKeyForPlatform(editingAccount?.site?.platform))}
-                      value={editForm.cred}
+                      placeholder={tr(sessionCredentialPlaceholderKeyFor(editingAccount))}
+                      value={editForm.credential}
                       onChange={(e) =>
-                        setEditForm((prev) => ({ ...prev, cred: e.target.value }))
+                        setEditForm((prev) => ({ ...prev, credential: e.target.value }))
                       }
                       className="font-mono"
                     />
                   </section>
-                ) : (
+                ) : editForm.credentialMode === "apikey" ? (
                   <section className="border-t pt-4">
                     <InfoNote>
                       此账号使用 API Key 连接。模型 API Key 由「账号令牌管理」维护，不在此处编辑。
                     </InfoNote>
                   </section>
+                ) : (
+                  <section className="border-t pt-4">
+                    <InfoNote>
+                      {tr('pages.accounts.oauthCredentialManaged')}
+                    </InfoNote>
+                  </section>
                 )}
 
-                {editForm.credentialMode !== "apikey" && (editingAccount?.site?.platform || "").toLowerCase() === "sub2api" ? (
-                  <section className="grid gap-3 border-t pt-4">
-                    <ResponsiveFormGrid>
-                      <Input
-                        placeholder={tr('pages.accounts.sub2apiRefreshToken')}
-                        value={editForm.refreshToken}
-                        onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, refreshToken: e.target.value }))
-                        }
-                        className="font-mono"
-                      />
-                      <Input
-                        placeholder={tr('pages.accounts.tokenExpires')}
-                        value={editForm.tokenExpiresAt}
-                        onChange={(e) =>
-                          setEditForm((prev) => ({
-                            ...prev,
-                            tokenExpiresAt: e.target.value.replace(/\D/g, ""),
-                          }))
-                        }
-                      />
-                    </ResponsiveFormGrid>
+                {connectionFieldsFor(editingAccount).map((field: any) => (
+                  <section className="grid gap-2 border-t pt-4" key={`edit-${field.key}`}>
+                    <Input
+                      type={field.inputType === 'password' ? 'password' : 'text'}
+                      inputMode={field.inputType === 'number' ? 'numeric' : undefined}
+                      placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
+                      value={editForm.connectionValues[field.key] || ''}
+                      onChange={(e) => setEditForm((prev) => ({
+                        ...prev,
+                        connectionValues: { ...prev.connectionValues, [field.key]: e.target.value },
+                      }))}
+                      className={field.secret ? 'font-mono' : undefined}
+                    />
+                    {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
                   </section>
-                ) : null}
+                ))}
 
                 <section className="grid gap-2 border-t pt-4">
                   <h3 className="text-sm font-medium">网络</h3>
@@ -2753,7 +2653,7 @@ export default function Accounts() {
                     const health = resolveRuntimeHealth(a);
                     const isExpanded = expandedAccountIds.includes(a.id);
                     const hintMessage =
-                      a.status === "expired" && !capabilities.proxyOnly
+                      a.status === "expired" && capabilities.canRebindSession
                         ? tr('pages.accounts.accountsExpiredRebind')
                         : health.reason || "-";
                     return (
@@ -3018,7 +2918,7 @@ export default function Accounts() {
                                 </Button>
                               )}
                               {a.status === "expired" &&
-                                !capabilities.proxyOnly && (
+                                capabilities.canRebindSession && (
                                   <Button type="button" variant="secondary" size="sm"
                                     onClick={() => openRebindPanel(a)}
 
@@ -3295,7 +3195,7 @@ export default function Accounts() {
                                 >
                                   {tr('components.modelAnalysisPanel.model')}
                                 </Button>
-                                {a.status === "expired" && !capabilities.proxyOnly && (
+                                {a.status === "expired" && capabilities.canRebindSession && (
                                   <Button
                                     type="button"
                                     variant="secondary"
@@ -3377,7 +3277,7 @@ export default function Accounts() {
                                         {tr('components.notificationPanel.sign')}
                                       </DropdownMenu.Item>
                                     )}
-                                    {a.status === "expired" && !capabilities.proxyOnly && (
+                                    {a.status === "expired" && capabilities.canRebindSession && (
                                       <DropdownMenu.Item onSelect={() => openRebindPanel(a)}>
                                         <RefreshCw className="size-4" />
                                         {tr('pages.accounts.rebind')}

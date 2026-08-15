@@ -10,7 +10,6 @@ import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSe
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
-import { getAuthToken } from '../authSession.js';
 import { getBrand } from '../components/BrandIcon.js';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
@@ -75,7 +74,6 @@ import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.j
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
-import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group/index.js';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 import * as Dialog from '../components/ui/dialog/index.js';
@@ -125,10 +123,6 @@ type SiteRow = {
   totalBalance?: number;
   subscriptionSummary?: SiteSubscriptionSummary | null;
   createdAt?: string;
-  postRefreshProbeEnabled?: boolean;
-  postRefreshProbeModel?: string | null;
-  postRefreshProbeScope?: string | null;
-  postRefreshProbeLatencyThresholdMs?: number | null;
   apiEndpoints?: Array<{
     id?: number;
     url: string;
@@ -579,19 +573,8 @@ export default function Sites() {
   const [disabledModelInput, setDisabledModelInput] = useState('');
   const [disabledModelsLoading, setDisabledModelsLoading] = useState(false);
   const [disabledModelsSaving, setDisabledModelsSaving] = useState(false);
-  const [probeEnabled, setProbeEnabled] = useState(false);
-  const [probeModel, setProbeModel] = useState('');
-  const [probeScope, setProbeScope] = useState<'single' | 'all'>('single');
-  const [probeSaving, setProbeSaving] = useState(false);
   const [resettingEndpointHealth, setResettingEndpointHealth] = useState(false);
   const [resettingEndpointId, setResettingEndpointId] = useState<number | null>(null);
-  const [probeLatencyThreshold, setProbeLatencyThreshold] = useState('0');
-  const [probing, setProbing] = useState(false);
-  type ProbeLogEntry = { time: string; text: string; color?: string };
-  const [probeLog, setProbeLog] = useState<ProbeLogEntry[]>([]);
-  const [probeCompleted, setProbeCompleted] = useState(false);
-  const probeAbortRef = useRef<AbortController | null>(null);
-  const probeLogEndRef = useRef<HTMLDivElement | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [siteCostModelName, setSiteCostModelName] = useState<string | null>(null);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
@@ -626,18 +609,6 @@ export default function Sites() {
   useEffect(() => {
     latestInitializationPresetIdRef.current = selectedInitializationPresetId;
   }, [selectedInitializationPresetId]);
-
-  useEffect(() => {
-    if (!editor) {
-      probeAbortRef.current?.abort();
-      probeAbortRef.current = null;
-    }
-  }, [editor]);
-
-  useEffect(() => () => {
-    probeAbortRef.current?.abort();
-    probeAbortRef.current = null;
-  }, []);
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -809,14 +780,6 @@ export default function Sites() {
     setDiscoveredModels([]);
     setSiteCostModelName(null);
     setDisabledModelSearch('');
-    setProbeEnabled(!!site.postRefreshProbeEnabled);
-    setProbeModel(typeof site.postRefreshProbeModel === 'string' ? site.postRefreshProbeModel : '');
-    setProbeScope(site.postRefreshProbeScope === 'all' ? 'all' : 'single');
-    setProbeLatencyThreshold(String(site.postRefreshProbeLatencyThresholdMs ?? 0));
-    setProbeLog([]);
-    setProbeCompleted(false);
-    probeAbortRef.current?.abort();
-    probeAbortRef.current = null;
     let pendingLoads = 2;
     const markLoadFinished = () => {
       pendingLoads -= 1;
@@ -876,28 +839,6 @@ export default function Sites() {
     }
   };
 
-  const handleSaveProbeSettings = async () => {
-    if (!editor || editor.mode !== 'edit') return;
-    setProbeSaving(true);
-    try {
-      await api.updateSite(editor.editingSiteId, {
-        postRefreshProbeEnabled: probeEnabled,
-        postRefreshProbeModel: probeModel.trim(),
-        postRefreshProbeScope: probeScope,
-        postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0),
-      });
-      setSites((prev) => prev.map((s) => s.id === editor.editingSiteId
-        ? { ...s, postRefreshProbeEnabled: probeEnabled, postRefreshProbeModel: probeModel.trim(), postRefreshProbeScope: probeScope, postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0) }
-        : s,
-      ));
-      toast.success(tr('pages.sites.refreshSettingsSave'));
-    } catch (e: any) {
-      toast.error(e.message || tr('pages.accounts.saveFailed'));
-    } finally {
-      setProbeSaving(false);
-    }
-  };
-
   const handleResetApiEndpointHealth = async () => {
     if (!editor || editor.mode !== 'edit') return;
     setResettingEndpointHealth(true);
@@ -932,139 +873,6 @@ export default function Sites() {
       toast.error(error?.message || tr('pages.sites.apiEndpointHealthResetFailed'));
     } finally {
       setResettingEndpointId(null);
-    }
-  };
-
-  const handleProbeNow = async () => {
-    if (!editor || editor.mode !== 'edit') return;
-    const siteId = editor.editingSiteId;
-    const now = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    const addLog = (text: string, color?: string) =>
-      setProbeLog((prev) => [...prev, { time: now(), text, color }]);
-
-    probeAbortRef.current?.abort();
-    const controller = new AbortController();
-    probeAbortRef.current = controller;
-    setProbing(true);
-    setProbeLog([]);
-    setProbeCompleted(false);
-
-    try {
-      const token = getAuthToken(localStorage);
-      const params = new URLSearchParams({ scope: probeScope });
-      if (probeScope === 'single' && probeModel.trim()) params.set('modelName', probeModel.trim());
-      const threshold = parseInt(probeLatencyThreshold, 10);
-      if (Number.isFinite(threshold) && threshold > 0) params.set('latencyThresholdMs', String(threshold));
-
-      const res = await fetch(`/api/sites/${siteId}/probe-stream?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: controller.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        let errMsg = `连接失败 (HTTP ${res.status})`;
-        try { const j = await res.json() as any; errMsg = j?.error || j?.message || errMsg; } catch { /* ignore */ }
-        addLog(errMsg, 'var(--color-error, #ef4444)');
-        toast.error(errMsg);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      const handleSseEvent = (type: string, rawData: string) => {
-        try {
-          const d = JSON.parse(rawData);
-          if (type === 'start') {
-            addLog(`开始探测，范围：${d.scope === 'all' ? tr('pages.sites.allmodel') : tr('pages.sites.model2')}，共 ${d.modelsCount} 个`);
-          } else if (type === 'model') {
-            const s = d.status === 'supported' ? tr('pages.sites.available2')
-              : d.status === 'unsupported'
-                ? (d.latencyExceeded ? `✗ 延迟超限 (${d.latencyMs}ms)` : tr('pages.sites.notAvailable'))
-              : d.status === 'skipped' ? tr('pages.sites.jumpOver')
-              : tr('pages.sites.notAvailable');
-            const lat = d.latencyMs != null && d.status !== 'skipped' ? ` (${d.latencyMs}ms)` : '';
-            const c = d.status === 'supported' ? 'var(--color-success, #22c55e)'
-              : d.status === 'skipped' ? 'var(--color-text-muted)'
-              : 'var(--color-error, #ef4444)';
-            const reasonText = (() => {
-              if (!d.reason || d.status === 'supported' || d.status === 'skipped') return '';
-              const r = d.reason;
-              if (/timeout/i.test(r)) return tr('pages.dashboard.timeOut');
-              if (/missing credential|no.*token/i.test(r)) return tr('pages.sites.noneToken');
-              if (/no compatible.*endpoint|no.*endpoint candidate/i.test(r)) return tr('pages.sites.noneavailable');
-              if (/no such model|unknown model/i.test(r)) return tr('pages.sites.model');
-              if (/not found/i.test(r)) return tr('pages.accounts.notFound');
-              if (/access denied|forbidden|permission/i.test(r)) return tr('pages.sites.noPermission');
-              if (/rate.?limit|too many request/i.test(r)) return tr('pages.sites.hitRateLimit');
-              if (/响应延迟/.test(r)) return r;
-              return r.length > 60 ? r.slice(0, 57) + '…' : r;
-            })();
-            addLog(`${s}${lat}  ${d.modelName}${reasonText ? `  —  ${reasonText}` : ''}`, c);
-            setTimeout(() => probeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
-          } else if (type === 'action') {
-            if (d.action === 'disabled') addLog(`  ↳ 已加入站点禁用列表: ${d.modelName}`, 'var(--color-text-muted)');
-          } else if (type === 'complete') {
-            if (d.unsupported > 0) {
-              addLog(`完成：${d.probed} 个模型已探测，${d.unsupported} 个不可用已自动加入禁用列表`, 'var(--color-error, #ef4444)');
-              toast.error(`${d.unsupported} 个模型不可用，已自动加入站点禁用列表`);
-            } else {
-              addLog(`完成：${d.probed} 个模型均可用`, 'var(--color-success, #22c55e)');
-              toast.success(`探测完成：${d.probed} 个模型均可用`);
-            }
-            setTimeout(() => probeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
-            // Refresh model lists to reflect probe results
-            Promise.all([
-              api.getSiteAvailableModels(siteId).then((res: any) => {
-                setDiscoveredModels(Array.isArray(res?.models) ? res.models : []);
-              }),
-              api.getSiteDisabledModels(siteId).then((res: any) => {
-                setDisabledModels(Array.isArray(res?.models) ? res.models : []);
-              }),
-            ]).catch(() => {}).finally(() => setProbeCompleted(true));
-          } else if (type === 'error') {
-            addLog(d.message || tr('pages.sites.failed3'), 'var(--color-error, #ef4444)');
-            toast.error(d.message || tr('pages.sites.failed3'));
-            // Refresh model state even on error
-            Promise.all([
-              api.getSiteAvailableModels(siteId).then((res: any) => {
-                setDiscoveredModels(Array.isArray(res?.models) ? res.models : []);
-              }),
-              api.getSiteDisabledModels(siteId).then((res: any) => {
-                setDisabledModels(Array.isArray(res?.models) ? res.models : []);
-              }),
-            ]).catch(() => {}).finally(() => setProbeCompleted(true));
-          }
-        } catch { /* ignore parse errors */ }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop() ?? '';
-        for (const part of parts) {
-          let eventType = 'message';
-          let data = '';
-          for (const line of part.split('\n')) {
-            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-            else if (line.startsWith('data: ')) data = line.slice(6).trim();
-          }
-          if (data) handleSseEvent(eventType, data);
-        }
-      }
-    } catch (e: any) {
-      if (e?.name === 'AbortError') {
-        setProbeLog((prev) => [...prev, { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: tr('pages.sites.manualstop'), color: 'var(--color-text-muted)' }]);
-        return;
-      }
-      addLog(e?.message || tr('pages.sites.failed3'), 'var(--color-error, #ef4444)');
-      toast.error(e?.message || tr('pages.sites.failed3'));
-    } finally {
-      setProbing(false);
-      probeAbortRef.current = null;
     }
   };
 
@@ -1103,10 +911,6 @@ export default function Sites() {
       customHeaders: serializedCustomHeaders.customHeaders,
       compatibilityPolicy: serializedCompatibilityPolicy.policy,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
-      postRefreshProbeEnabled: probeEnabled,
-      postRefreshProbeModel: probeModel.trim(),
-      postRefreshProbeScope: probeScope,
-      postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0),
     };
     if (!payload.name || !payload.url) {
       toast.error(tr('pages.sites.pleaseFillSiteNameUrl'));
@@ -2075,132 +1879,6 @@ export default function Sites() {
                     </div>
                   </>
                 )}
-            </ConfigSection>
-          )}
-
-          {isEditing && (
-            <ConfigSection
-              title={tr('pages.sites.refreshAutomaticRequest')}
-              description={tr('pages.sites.turnAutomaticModelSuccessModelsendActualMeasurement')}
-            >
-              <label className="mb-2.5 flex cursor-pointer items-start gap-2.5">
-                <Checkbox
-                  checked={probeEnabled}
-                  onCheckedChange={(checked) => setProbeEnabled(checked === true)}
-                  className="mt-0.5 shrink-0"
-                />
-                <span className="text-sm text-muted-foreground">{tr('pages.sites.turnOnrefreshAutomatic')}</span>
-              </label>
-              <RadioGroup value={probeScope} onValueChange={(nextValue) => setProbeScope(nextValue as typeof probeScope)} className="mb-3 flex flex-wrap gap-2" disabled={!probeEnabled}>
-                {([['single', tr('pages.sites.model2')] , ['all', tr('pages.sites.allmodel')]] as const).map(([val, label]) => (
-                  <label
-                    key={val}
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <RadioGroupItem
-                      value={val}
-                      disabled={!probeEnabled}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </RadioGroup>
-              {probeScope === 'single' && (
-                <Input
-                  type="text"
-                  placeholder={tr('pages.sites.modelAutomaticModels')}
-                  value={probeModel}
-                  onChange={(e) => setProbeModel(e.target.value)}
-                  disabled={!probeEnabled}
-                  className="mb-2.5 font-mono"
-                />
-              )}
-              <div className="mb-2.5 flex items-center gap-2">
-                <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.sites.latency')}</span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="500"
-                  placeholder="0"
-                  value={probeLatencyThreshold}
-                  onChange={(e) => setProbeLatencyThreshold(e.target.value)}
-                  className="w-24"
-                />
-                <span className="text-xs text-muted-foreground">{tr('pages.sites.msResponseTimeAutomaticdisabled0Unlimited')}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <Button type="button" variant="outline"
-                  onClick={() => void handleSaveProbeSettings()}
-                  disabled={probeSaving || probing}
-
-
-                >
-                  {probeSaving ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.sites.saveSettings')}
-                </Button>
-                <Button type="button"
-                  onClick={() => void handleProbeNow()}
-                  disabled={probing || probeSaving}
-
-
-                >
-                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.sites.probing')}</> : tr('pages.sites.detectNow')}
-                </Button>
-                {probing && (
-                  <Button type="button" variant="outline"
-                    onClick={() => { probeAbortRef.current?.abort(); }}
-
-
-                  >
-                    {tr('pages.modelTester.stop')}
-                  </Button>
-                )}
-                <span className="text-xs text-muted-foreground">
-                  {probeEnabled ? tr('pages.sites.timeOutBatchHealthChecktimeOutSettings') : tr('pages.sites.close')}
-                </span>
-              </div>
-              {probeLog.length > 0 && (
-                <div className="mt-2.5 max-h-50 overflow-y-auto rounded-lg border bg-card px-2.5 py-2 font-mono text-xs leading-relaxed">
-                  {probeLog.map((entry, i) => (
-                    <div key={i} className={entry.color ? 'text-foreground' : 'text-muted-foreground'}>
-                      <span className="mr-2 text-muted-foreground">{entry.time}</span>
-                      {entry.text}
-                    </div>
-                  ))}
-                  <div ref={probeLogEndRef} />
-                </div>
-              )}
-              {probeCompleted && brandGroups.length > 0 && (
-                <div className="mt-2.5">
-                  <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
-                    {tr('pages.sites.modelstatus')}
-                    <span className="ml-1.5 font-normal text-muted-foreground">
-                      {tr('pages.sites.available')} {discoveredModels.filter((m) => !disabledModelSet.has(m)).length} {tr('pages.sites.disabled2')} {disabledModels.length} {tr('pages.accounts.model')}
-                    </span>
-                  </div>
-                  <div className="max-h-50 overflow-y-auto rounded-lg border py-1">
-                    {brandGroups.map(([brandName, models]) => (
-                      <div key={brandName}>
-                        <div className="border-b bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
-                          {brandName} ({models.length})
-                        </div>
-                        <div className="flex flex-wrap gap-1 px-3 py-1.5">
-                          {models.map((model) => {
-                            const isDisabled = disabledModelSet.has(model);
-                            return (
-                              <span
-                                key={model}
-                                className={`rounded-full border px-2 py-0.5 font-mono text-xs ${isDisabled ? 'text-destructive' : 'text-foreground'}`}
-                              >
-                                {model}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </ConfigSection>
           )}
 

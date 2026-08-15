@@ -136,6 +136,45 @@ describe('SearchModal results', () => {
     await rendered.cleanup();
   });
 
+  it('opens OAuth management for OAuth account search results', async () => {
+    apiMock.search.mockResolvedValue({
+      models: [],
+      sites: [],
+      checkinLogs: [],
+      proxyLogs: [],
+      accountTokens: [],
+      accounts: [{
+        id: 9,
+        username: 'oauth-user',
+        balance: 0,
+        segment: 'oauth',
+        site: { name: 'OAuth Site' },
+      }],
+    });
+
+    const rendered = await renderSearchModal();
+
+    await act(async () => {
+      const input = document.body.querySelector<HTMLInputElement>('input[cmdk-input]')!;
+      const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      valueSetter.call(input, 'oauth');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flushSearch();
+
+    const accountItem = Array.from(document.body.querySelectorAll<HTMLElement>('[cmdk-item]'))
+      .find((item) => item.textContent?.includes('oauth-user'));
+    expect(accountItem).toBeTruthy();
+
+    await act(async () => {
+      accountItem!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      accountItem!.click();
+    });
+
+    expect(document.body.querySelector('#location-probe')?.textContent).toBe('/oauth');
+    await rendered.cleanup();
+  });
+
   it('closes through the shadcn dialog close control', async () => {
     apiMock.search.mockResolvedValue({
       models: [],

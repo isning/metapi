@@ -50,10 +50,6 @@ export type SiteSavePayload = {
   customHeaders: string;
   globalWeight: number;
   compatibilityPolicy?: unknown;
-  postRefreshProbeEnabled?: boolean;
-  postRefreshProbeModel?: string;
-  postRefreshProbeScope?: 'single' | 'all';
-  postRefreshProbeLatencyThresholdMs?: number;
 };
 
 type SiteSaveAction =

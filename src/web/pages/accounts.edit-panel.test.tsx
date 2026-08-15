@@ -206,6 +206,48 @@ describe('Accounts edit panel', () => {
     }
   });
 
+  it('does not submit OAuth credentials through the ordinary account edit flow', async () => {
+    apiMock.getAccounts.mockResolvedValue([{
+      id: 1,
+      siteId: 1,
+      username: 'oauth-user',
+      // A cached pre-migration overview may still label this as Session.
+      credentialMode: 'session',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'codex',
+      status: 'active',
+      site: { id: 1, name: 'Site A', status: 'active', platform: 'codex' },
+    }]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider><Accounts /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      const editButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '编辑'
+      ));
+      await act(async () => { editButton.props.onClick(); });
+      await flushMicrotasks();
+      const saveButton = root.root.find((node) => node.props['data-testid'] === 'account-edit-save');
+      await act(async () => { await saveButton.props.onClick(); });
+
+      const [, payload] = apiMock.updateAccount.mock.calls[0] as [number, Record<string, unknown>];
+      expect(payload.credential).toBeUndefined();
+      expect(payload.credentialKind).toBeUndefined();
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('uses the adapter-specific credential label in the edit panel', async () => {
     apiMock.getSites.mockResolvedValue([
       { id: 1, name: 'AnyRouter', platform: 'anyrouter', status: 'active' },
@@ -245,7 +287,7 @@ describe('Accounts edit panel', () => {
       await flushMicrotasks();
 
       expect(root.root.find((node) => (
-        node.type === 'input' && node.props.placeholder === '粘贴 Session Cookie 或 API Token'
+        node.type === 'input' && node.props.placeholder === '粘贴连接凭据'
       )).props.value).toBe('session-alpha');
       expect(collectText(root.root)).toContain('此凭据用于账号管理、健康检查与令牌同步，不作为模型调用 Key。');
       expect(root.root.findAll((node) => (
@@ -300,7 +342,7 @@ describe('Accounts edit panel', () => {
 
       expect(apiMock.updateAccount).toHaveBeenCalledWith(1, expect.not.objectContaining({
         apiToken: expect.anything(),
-        cred: expect.anything(),
+        modelApiKey: expect.anything(),
       }));
     } finally {
       root?.unmount();

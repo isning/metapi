@@ -36,7 +36,7 @@ interface AccountResult {
   username: string | null;
   status?: string | null;
   balance?: number | null;
-  segment?: 'session' | 'apikey';
+  segment?: 'session' | 'apikey' | 'oauth';
   site?: { name: string } | null;
 }
 
@@ -47,7 +47,7 @@ interface AccountTokenResult {
   tokenGroup?: string | null;
   account?: {
     username?: string | null;
-    segment?: 'session' | 'apikey';
+    segment?: 'session' | 'apikey' | 'oauth';
   } | null;
   site?: { name: string } | null;
 }
@@ -136,6 +136,15 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
     navigate(path);
   };
 
+  const accountResultPath = (account: AccountResult): string => (
+    account.segment === 'oauth'
+      ? '/oauth'
+      : buildAccountFocusPath(account.id, {
+          openRebind: account.status === 'expired',
+          segment: account.segment,
+        })
+  );
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) onClose();
@@ -207,10 +216,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
                 <CommandItem
                   key={a.id}
                   value={`account-${a.id}`}
-                  onSelect={() => goTo(buildAccountFocusPath(a.id, {
-                    openRebind: a.status === 'expired',
-                    segment: a.segment,
-                  }))}
+                  onSelect={() => goTo(accountResultPath(a))}
                 >
                   <UserRound className="size-4" />
                   <div className="min-w-0">
@@ -220,6 +226,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
                     <div className="text-xs text-muted-foreground">
                       {a.site?.name || t('components.searchModal.unlinkedSite')}
                       {a.segment === 'apikey' ? ` · ${t('components.searchModal.apiKey')}` : ''}
+                      {a.segment === 'oauth' ? ` · ${t('app.oauth')}` : ''}
                       {' · '}
                       {t('components.notificationPanel.balance')} ${(a.balance || 0).toFixed(2)}
                     </div>

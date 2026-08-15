@@ -16,7 +16,7 @@ const { apiMock } = vi.hoisted(() => ({
     getAccounts: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
-    verifyToken: vi.fn(),
+    verifyConnectionCredential: vi.fn(),
   },
 }));
 
@@ -54,7 +54,7 @@ describe('Accounts verify feedback', () => {
     apiMock.getSites.mockResolvedValue([
       { id: 10, name: 'Demo Site', platform: 'new-api', status: 'active' },
     ]);
-    apiMock.verifyToken.mockRejectedValueOnce(new Error('Failed to fetch'));
+    apiMock.verifyConnectionCredential.mockRejectedValueOnce(new Error('Failed to fetch'));
 
     let root!: WebTestRenderer;
     try {

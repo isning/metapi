@@ -123,8 +123,8 @@ export const pagesResources = {
       "当前分段仅接受 API Key，请切到「Session 连接」分段创建。",
     "pages.accounts.apiKeySessionToken": "当前是 API Key，不是 Session Token",
     "pages.accounts.apiKeyVerified": "API Key 验证成功",
+    "pages.accounts.oauthCredentialManaged": "OAuth 连接凭据由授权流程维护，不能在此处修改。",
     "pages.accounts.credentialMode": "凭据模式",
-    "pages.accounts.credentialMode.auto": "自动判断",
     "pages.accounts.credentialMode.apikey": "API Key",
     "pages.accounts.credentialMode.session": "Session（Access Token / Cookie）",
     "pages.accounts.availablemodel": "可用模型:",
@@ -142,6 +142,11 @@ export const pagesResources = {
     "pages.accounts.credentialPlaceholderCookie": "粘贴 Session Cookie",
     "pages.accounts.credentialPlaceholderCookieOrApiToken": "粘贴 Session Cookie 或 API Token",
     "pages.accounts.credentialPlaceholderDefault": "粘贴连接凭据",
+    "pages.accounts.credentialKindSessionCookie": "Session Cookie",
+    "pages.accounts.credentialKindSessionCookieComment": "使用浏览器会话 Cookie 访问上游。",
+    "pages.accounts.credentialKindAccessToken": "Access Token",
+    "pages.accounts.credentialKindAccessTokenComment": "使用 Bearer Access Token 访问上游。",
+    "pages.accounts.selectCredentialType": "选择连接凭据类型",
     "pages.accounts.checkToken": "请检查 Token 是否正确",
     "pages.accounts.clickCloseSignAllSignInsWill":
       "点击关闭签到，全部签到会忽略此账号",
@@ -288,7 +293,7 @@ export const pagesResources = {
     "pages.accounts.pinTop": "置顶",
     "pages.accounts.rebind": "重新绑定",
     "pages.accounts.rebindfailed": "重新绑定失败",
-    "pages.accounts.rebindSessionToken": "重新绑定 Session Token",
+    "pages.accounts.rebindSessionToken": "重新绑定连接凭据",
     "pages.accounts.recentHealthCheckFailed": "最近健康检查失败",
     "pages.accounts.recognized": "已识别",
     "pages.accounts.recommended": "推荐",
@@ -323,9 +328,9 @@ export const pagesResources = {
     "pages.accounts.sessionToken": "Session Token 有效",
     "pages.accounts.sessionToken2": "粘贴新的 Session Token",
     "pages.accounts.sessionTokenVerifyBeforeBind":
-      "。请粘贴新的 Session Token，验证成功后再绑定。",
+      "。请粘贴新的连接凭据，验证成功后再绑定。",
     "pages.accounts.sessionTokenVerifiedCanRebind":
-      "Session Token 验证成功，可以重新绑定",
+      "连接凭据验证成功，可以重新绑定",
     "pages.accounts.signBalanceStatus": "用于签到、余额、状态维护",
     "pages.accounts.signClosedAllSignInsWillIgnore":
       "已关闭签到（全部签到会忽略此账号）",
@@ -2353,12 +2358,10 @@ export const pagesResources = {
     "pages.sites.automaticOfficialUrl":
       "当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。",
     "pages.sites.available": "— 可用",
-    "pages.sites.available2": "✓ 可用",
     "pages.sites.balance": "总余额",
     "pages.sites.brandsselectAll": "按品牌全选：",
     "pages.sites.cancelselectVisibleItems": "取消全选可见项",
     "pages.sites.clickAddSiteStart": "点击“添加站点”开始使用。",
-    "pages.sites.close": "当前已关闭",
     "pages.sites.disableSystemProxy": "关闭系统代理",
     "pages.sites.codexOauthSession": "Codex OAuth / Session 优先入口",
     "pages.sites.configured": "已配置",
@@ -2370,7 +2373,6 @@ export const pagesResources = {
     "pages.sites.deletesites": "确认删除站点",
     "pages.sites.deletesites2": "确定要删除站点",
     "pages.sites.detecting": "检测中",
-    "pages.sites.detectNow": "立即探测",
     "pages.sites.disabled": "（已禁用）",
     "pages.sites.disabled2": "个，已禁用",
     "pages.sites.disabledmodelManagement": "禁用模型管理",
@@ -2383,7 +2385,6 @@ export const pagesResources = {
     "pages.sites.expired": "已到期",
     "pages.sites.failed": "最近失败:",
     "pages.sites.failed2": "更新排序失败",
-    "pages.sites.failed3": "探测失败",
     "pages.sites.failedLoadSiteList": "加载站点列表失败",
     "pages.sites.failedSwitchSiteStatus": "切换站点状态失败",
     "pages.sites.generalClaudeAnthropic": "通用 Claude / Anthropic 兼容接口",
@@ -2394,32 +2395,17 @@ export const pagesResources = {
       "经典聚合面板，常见于通用 OpenAI 中转",
     "pages.sites.header": "Header 值",
     "pages.sites.headerName": "Header 名称",
-    "pages.sites.hitRateLimit": "触发频率限制",
     "pages.sites.siteProxyDescription":
       "这里只是 HTTP/SOCKS 代理地址，不是上游 API 请求地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。",
     "pages.sites.inputmodelNameGpt4o": "输入模型名称，如 gpt-4o",
-    "pages.sites.jumpOver": "— 已跳过",
     "pages.sites.keyValueItemsAutomaticRequestRequestRequest":
       "按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。",
-    "pages.sites.latency": "延迟",
-    "pages.sites.manualstop": "已手动停止",
-    "pages.sites.model": "模型不存在",
-    "pages.sites.model2": "指定模型",
-    "pages.sites.modelAutomaticModels":
-      "探测模型名（留空则自动取第一个发现的模型）",
-    "pages.sites.modelstatus": "探测后模型状态",
     "pages.sites.moveDown": "下移",
     "pages.sites.moveUp": "上移",
-    "pages.sites.msResponseTimeAutomaticdisabled0Unlimited":
-      "ms（响应超过该时间则自动禁用，0=不限）",
-    "pages.sites.noneavailable": "无可用端点",
     "pages.sites.nonematchmodel": "无匹配模型",
     "pages.sites.noneModelManualaddModels":
       "暂无已发现模型，仍可手动添加需要屏蔽的模型名。",
-    "pages.sites.noneToken": "无 Token",
-    "pages.sites.noPermission": "无权限",
     "pages.sites.noSites": "暂无站点",
-    "pages.sites.notAvailable": "✗ 不可用",
     "pages.sites.officialPresetApplied": "已应用官方预设 ·",
     "pages.sites.order": "顺序 #",
     "pages.sites.pinTopfailed": "切换置顶失败",
@@ -2428,15 +2414,12 @@ export const pagesResources = {
       "平台类型（可自动检测）",
     "pages.sites.pleaseEnterUrlFirst": "请先输入 URL",
     "pages.sites.pleaseFillSiteNameUrl": "请填写站点名称和 URL",
-    "pages.sites.refreshAutomaticRequest": "刷新后自动测试请求",
-    "pages.sites.refreshSettingsSave": "刷新后探测设置已保存",
     "pages.sites.weightSuggestion":
       "越大越容易被路由选中。建议 0.5-3，默认 1。",
     "pages.sites.saveAutoDetectSitesUrl":
       "保存或自动检测时会将主站点 URL 调整为",
     "pages.sites.savedisabled": "保存禁用列表",
     "pages.sites.savedisabledmodelfailed": "保存禁用模型失败",
-    "pages.sites.saveSettings": "保存探测设置",
     "pages.sites.saveSite": "保存站点",
     "pages.sites.searchModelName": "搜索模型名称...",
     "pages.sites.selectedCount": "已选 {count} 个站点",
@@ -2463,11 +2446,6 @@ export const pagesResources = {
     "pages.sites.siteWeightDescription":
       "站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同一回退阶段内越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。",
     "pages.sites.time": "创建时间",
-    "pages.sites.timeOutBatchHealthChecktimeOutSettings":
-      "实际探测超时复用「批量测活超时」设置",
-    "pages.sites.turnAutomaticModelSuccessModelsendActualMeasurement":
-      "开启后，每次自动获取模型列表成功后，会对指定模型发送一次真实测试请求。若判定不可用，自动加入站点禁用列表并重建路由。",
-    "pages.sites.turnOnrefreshAutomatic": "开启刷新后自动探测",
     "pages.sites.enableSystemProxy": "开启系统代理",
     "pages.sites.unableIdentifyPlatformType": "无法识别平台类型",
     "pages.sites.urlApiSitesUrlApiRequestApi":
@@ -2481,7 +2459,6 @@ export const pagesResources = {
     "pages.sites.visibleCount": "当前显示 {count} 个站点",
     "pages.sites.weight": "权重",
     "pages.sites.weight0": "全局权重必须是大于 0 的数字",
-    "pages.sites.probing": "探测中...",
     "pages.sites.sub2apiSyncBalanceDescription":
       "订阅式中转面板，可同步套餐与余额信息",
     "pages.tokenRoutes.0Candidatesroutes": "显示 0 候选路由",
@@ -4046,8 +4023,8 @@ export const pagesResources = {
       "This section only accepts API Keys. Switch to Session Connection to create a session.",
     "pages.accounts.apiKeySessionToken": "API Key, Session Token",
     "pages.accounts.apiKeyVerified": "API Key verified",
+    "pages.accounts.oauthCredentialManaged": "OAuth connection credentials are managed by the authorization flow and cannot be changed here.",
     "pages.accounts.credentialMode": "Credential mode",
-    "pages.accounts.credentialMode.auto": "Automatic",
     "pages.accounts.credentialMode.apikey": "API Key",
     "pages.accounts.credentialMode.session": "Session (Access Token / Cookie)",
     "pages.accounts.availablemodel": "Available models:",
@@ -4065,6 +4042,11 @@ export const pagesResources = {
     "pages.accounts.credentialPlaceholderCookie": "Paste session cookie",
     "pages.accounts.credentialPlaceholderCookieOrApiToken": "Paste session cookie or API token",
     "pages.accounts.credentialPlaceholderDefault": "Paste connection credential",
+    "pages.accounts.credentialKindSessionCookie": "Session Cookie",
+    "pages.accounts.credentialKindSessionCookieComment": "Authenticate upstream requests with the browser session cookie.",
+    "pages.accounts.credentialKindAccessToken": "Access Token",
+    "pages.accounts.credentialKindAccessTokenComment": "Authenticate upstream requests with a Bearer access token.",
+    "pages.accounts.selectCredentialType": "Select connection credential type",
     "pages.accounts.checkToken": "Check Token",
     "pages.accounts.clickCloseSignAllSignInsWill":
       "Click to close sign-in. All sign-ins will ignore this account.",
@@ -4217,7 +4199,7 @@ export const pagesResources = {
     "pages.accounts.pinTop": "Pin to top",
     "pages.accounts.rebind": "Rebind",
     "pages.accounts.rebindfailed": "Rebind failed",
-    "pages.accounts.rebindSessionToken": "Rebind Session Token",
+    "pages.accounts.rebindSessionToken": "Rebind connection credential",
     "pages.accounts.recentHealthCheckFailed": "Recent health check failed",
     "pages.accounts.recognized": "Recognized",
     "pages.accounts.recommended": "Recommended",
@@ -4252,9 +4234,9 @@ export const pagesResources = {
     "pages.accounts.sessionToken": "Session Token",
     "pages.accounts.sessionToken2": "Session Token",
     "pages.accounts.sessionTokenVerifyBeforeBind":
-      "Paste a new Session Token and verify it before binding.",
+      "Paste a new connection credential and verify it before binding.",
     "pages.accounts.sessionTokenVerifiedCanRebind":
-      "Session Token verified. You can rebind now.",
+      "Connection credential verified. You can rebind now.",
     "pages.accounts.signBalanceStatus": "Sign in, Balance, Status",
     "pages.accounts.signClosedAllSignInsWillIgnore":
       "Sign-in is closed (all sign-ins will ignore this account)",
@@ -6383,12 +6365,10 @@ export const pagesResources = {
     "pages.sites.automaticOfficialUrl":
       "The official URL has been filled in automatically. You can still change it if you use a self-hosted gateway.",
     "pages.sites.available": "— Available",
-    "pages.sites.available2": "✓ Available",
     "pages.sites.balance": "Balance",
     "pages.sites.brandsselectAll": "Select all by brand:",
     "pages.sites.cancelselectVisibleItems": "Clear visible selection",
     "pages.sites.clickAddSiteStart": 'Click "Add site" to start.',
-    "pages.sites.close": "Close",
     "pages.sites.disableSystemProxy": "Disable system proxy",
     "pages.sites.codexOauthSession": "Codex OAuth / Session",
     "pages.sites.configured": "Configured",
@@ -6400,7 +6380,6 @@ export const pagesResources = {
     "pages.sites.deletesites": "Delete site",
     "pages.sites.deletesites2": "Delete site",
     "pages.sites.detecting": "Detecting",
-    "pages.sites.detectNow": "Detect now",
     "pages.sites.disabled": "(Disabled)",
     "pages.sites.disabled2": ", Disabled",
     "pages.sites.disabledmodelManagement": "Disabled model management",
@@ -6414,7 +6393,6 @@ export const pagesResources = {
     "pages.sites.expired": "Expired",
     "pages.sites.failed": "Failed:",
     "pages.sites.failed2": "Failed to update order",
-    "pages.sites.failed3": "Detection failed",
     "pages.sites.failedLoadSiteList": "Failed to load site list",
     "pages.sites.failedSwitchSiteStatus": "Failed to switch site status",
     "pages.sites.generalClaudeAnthropic": "General Claude / Anthropic",
@@ -6425,32 +6403,17 @@ export const pagesResources = {
       "Classic aggregation panel, commonly used by generic OpenAI relays",
     "pages.sites.header": "Header value",
     "pages.sites.headerName": "Header name",
-    "pages.sites.hitRateLimit": "Hit rate limit",
     "pages.sites.siteProxyDescription":
       "This is an HTTP/SOCKS proxy URL, not an upstream API request URL. When set, the site proxy is used first; when empty, Metapi uses the system proxy or direct connection depending on settings.",
     "pages.sites.inputmodelNameGpt4o": "Enter a model name, e.g. gpt-4o",
-    "pages.sites.jumpOver": "— Skipped",
     "pages.sites.keyValueItemsAutomaticRequestRequestRequest":
       "Enter headers as key/value rows. Empty rows are ignored automatically. Duplicate header names are not allowed. Headers explicitly provided by the request take precedence.",
-    "pages.sites.latency": "Latency",
-    "pages.sites.manualstop": "Stopped manually",
-    "pages.sites.model": "Model",
-    "pages.sites.model2": "Model",
-    "pages.sites.modelAutomaticModels":
-      "Probe model name (leave empty to use the first discovered model)",
-    "pages.sites.modelstatus": "Model status after probing",
     "pages.sites.moveDown": "Move down",
     "pages.sites.moveUp": "Move up",
-    "pages.sites.msResponseTimeAutomaticdisabled0Unlimited":
-      "ms (auto-disable when response exceeds this time; 0 = unlimited)",
-    "pages.sites.noneavailable": "No available endpoints",
     "pages.sites.nonematchmodel": "No matching models",
     "pages.sites.noneModelManualaddModels":
       "No discovered models yet. You can still add model names to block manually.",
-    "pages.sites.noneToken": "None Token",
-    "pages.sites.noPermission": "No permission",
     "pages.sites.noSites": "No sites",
-    "pages.sites.notAvailable": "✗ Not available",
     "pages.sites.officialPresetApplied": "Official preset applied ·",
     "pages.sites.order": "Order #",
     "pages.sites.pinTopfailed": "Failed to toggle pin",
@@ -6459,15 +6422,12 @@ export const pagesResources = {
       "Platform type (can be automatically detected)",
     "pages.sites.pleaseEnterUrlFirst": "Please enter URL first",
     "pages.sites.pleaseFillSiteNameUrl": "Please fill in the site name and URL",
-    "pages.sites.refreshAutomaticRequest": "Probe automatically after refresh",
-    "pages.sites.refreshSettingsSave": "Probe settings saved",
     "pages.sites.weightSuggestion":
       "Higher values make this site more likely to be selected. Recommended range: 0.5-3. Default: 1.",
     "pages.sites.saveAutoDetectSitesUrl":
       "When saving or auto-detecting, the main site URL will be adjusted to",
     "pages.sites.savedisabled": "Save disabled list",
     "pages.sites.savedisabledmodelfailed": "Failed to save disabled models",
-    "pages.sites.saveSettings": "Save Settings",
     "pages.sites.saveSite": "Save Site",
     "pages.sites.searchModelName": "Search model name...",
     "pages.sites.selectedCount": "{count} sites selected",
@@ -6494,11 +6454,6 @@ export const pagesResources = {
     "pages.sites.siteWeightDescription":
       "Site weight: final site multiplier = global site weight × site multiplier on downstream API Key settings. It combines with routing policy signals such as base weight, value score, cost, balance, and usage frequency. Higher values make this site more likely to be selected within the same fallback stage. Recommended range: 0.5-3; default: 1. Avoid values above 5 for long-term use.",
     "pages.sites.time": "Created at",
-    "pages.sites.timeOutBatchHealthChecktimeOutSettings":
-      "Actual probe timeout reuses the batch health-check timeout setting",
-    "pages.sites.turnAutomaticModelSuccessModelsendActualMeasurement":
-      "When enabled, each successful automatic model refresh sends one real test request to the specified model. If it is unavailable, it is added to the site disabled list and routes are rebuilt.",
-    "pages.sites.turnOnrefreshAutomatic": "Probe automatically after refresh",
     "pages.sites.enableSystemProxy": "Enable system proxy",
     "pages.sites.unableIdentifyPlatformType":
       "Unable to identify platform type",
@@ -6513,7 +6468,6 @@ export const pagesResources = {
     "pages.sites.visibleCount": "{count} sites visible",
     "pages.sites.weight": "Weight",
     "pages.sites.weight0": "Global weight must be a number greater than 0",
-    "pages.sites.probing": "Probing...",
     "pages.sites.sub2apiSyncBalanceDescription":
       "Subscription-style relay panel that can sync plan and balance information",
     "pages.tokenRoutes.0Candidatesroutes": "Show routes with 0 candidates",

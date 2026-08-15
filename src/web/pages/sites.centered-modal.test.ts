@@ -39,7 +39,6 @@ describe('Sites centered modal adoption', () => {
       'pages.sites.apiRequest2',
       'pages.sites.sitescustomRequest',
       'pages.sites.disabledmodelManagement',
-      'pages.sites.refreshAutomaticRequest',
     ]) {
       expect(source).toContain(`title={tr('${titleKey}')}`);
     }

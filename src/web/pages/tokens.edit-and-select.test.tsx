@@ -104,7 +104,13 @@ describe('Tokens edit modal and row selection', () => {
         accessToken: 'session-token',
         status: 'active',
         credentialMode: 'session',
-        capabilities: { canCheckin: true, canRefreshBalance: true, proxyOnly: false },
+        capabilities: {
+          canCheckin: true,
+          canRefreshBalance: true,
+          canSyncAccountTokens: true,
+          canCreateAccountTokens: true,
+          proxyOnly: false,
+        },
         site: { id: 10, name: 'Session Site', platform: 'new-api', status: 'active', url: 'https://session.example.com' },
       },
     ]);
@@ -177,7 +183,7 @@ describe('Tokens edit modal and row selection', () => {
     vi.clearAllMocks();
   });
 
-  it('includes API Key accounts in the account-token selector', async () => {
+  it('filters sync selection by capability while retaining manually creatable accounts', async () => {
     apiMock.getAccounts.mockResolvedValue([
       {
         id: 2,
@@ -185,7 +191,13 @@ describe('Tokens edit modal and row selection', () => {
         credential: '',
         status: 'active',
         credentialMode: 'apikey',
-        capabilities: { proxyOnly: true },
+        capabilities: {
+          canCheckin: false,
+          canRefreshBalance: false,
+          canSyncAccountTokens: false,
+          canCreateAccountTokens: true,
+          proxyOnly: true,
+        },
         site: { id: 20, name: 'API Key Site', platform: 'openai', status: 'active', url: 'https://api-key.example.com' },
       },
     ]);
@@ -210,10 +222,10 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
-      const selectors = root.root.findAll((node) => node.type === ModernSelect);
-      expect(selectors.some((selector) => (
-        selector.props.options as Array<{ value: string }>
-      ).some((option) => option.value === '2'))).toBe(true);
+      const syncSelector = root.root.findAllByType(ModernSelect)
+        .find((selector) => selector.props.placeholder === '选择账号后同步站点令牌');
+      expect(syncSelector).toBeTruthy();
+      expect((syncSelector!.props.options as Array<{ value: string }>).some((option) => option.value === '2')).toBe(false);
 
       const syncButton = root.root.findAll((node) => node.type === 'button')
         .find((node) => collectText(node).trim() === '同步站点令牌');
@@ -230,7 +242,7 @@ describe('Tokens edit modal and row selection', () => {
       const createSelector = root.root.findAllByType(ModernSelect)
         .find((selector) => selector.props.placeholder === '选择账号');
       expect(createSelector).toBeTruthy();
-      expect((createSelector!.props.options as Array<{ value: string }>).some((option) => option.value === '2')).toBe(false);
+      expect((createSelector!.props.options as Array<{ value: string }>).some((option) => option.value === '2')).toBe(true);
     } finally {
       root?.unmount();
     }
@@ -382,7 +394,13 @@ describe('Tokens edit modal and row selection', () => {
         accessToken: 'session-token',
         status: 'active',
         credentialMode: 'session',
-        capabilities: { canCheckin: true, canRefreshBalance: true, proxyOnly: false },
+        capabilities: {
+          canCheckin: true,
+          canRefreshBalance: true,
+          canSyncAccountTokens: true,
+          canCreateAccountTokens: true,
+          proxyOnly: false,
+        },
         site: { id: 10, name: 'Session Site', platform: 'new-api', status: 'active', url: 'https://session.example.com' },
       },
       {
@@ -391,7 +409,13 @@ describe('Tokens edit modal and row selection', () => {
         accessToken: 'codex-token',
         status: 'active',
         credentialMode: 'session',
-        capabilities: { canCheckin: true, canRefreshBalance: true, proxyOnly: false },
+        capabilities: {
+          canCheckin: true,
+          canRefreshBalance: true,
+          canSyncAccountTokens: true,
+          canCreateAccountTokens: true,
+          proxyOnly: false,
+        },
         site: { id: 11, name: 'Codex Workspace', platform: 'codex', status: 'active', url: 'https://workspace.example.com' },
       },
     ]);

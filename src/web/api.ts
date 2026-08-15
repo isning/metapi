@@ -1423,20 +1423,6 @@ export const api = {
     ),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
-  probeSiteNow: (
-    siteId: number,
-    options?: {
-      scope?: "single" | "all";
-      modelName?: string;
-      latencyThresholdMs?: number;
-    },
-  ) =>
-    requestJson(`/api/sites/${siteId}/probe-now`, {
-      method: "POST",
-      body: options || {},
-      timeoutMs: options?.scope === "all" ? 120_000 : 30_000,
-    }),
-
   // Accounts
   getAccounts: async (params?: { includeOauth?: boolean }) => {
     const result = await request<any>(
@@ -1463,12 +1449,12 @@ export const api = {
       method: "POST",
       body: data,
     }),
-  verifyToken: (data: {
+  verifyConnectionCredential: (data: {
     siteId: number;
-    cred: string;
-    apiKey?: string;
+    credential: string;
     platformUserId?: number;
-    credentialMode?: "auto" | "session" | "apikey";
+    credentialKind?: "session_cookie" | "access_token";
+    connectionValues?: Record<string, unknown>;
   }) =>
     requestJson("/api/accounts/verify-token", {
       method: "POST",
@@ -1477,10 +1463,10 @@ export const api = {
   rebindAccountSession: (
     id: number,
     data: {
-      cred: string;
+      credential: string;
+      credentialKind?: "session_cookie" | "access_token";
       platformUserId?: number;
-      refreshToken?: string;
-      tokenExpiresAt?: number;
+      connectionValues?: Record<string, unknown>;
     },
   ) =>
     requestJson(`/api/accounts/${id}/rebind-session`, {

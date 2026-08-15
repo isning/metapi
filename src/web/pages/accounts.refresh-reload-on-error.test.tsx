@@ -68,6 +68,12 @@ describe('Accounts refresh action', () => {
           status: 'active',
           checkinEnabled: true,
           site: { id: 10, name: 'Demo Site', status: 'active', url: 'https://example.com' },
+          capabilities: {
+            canCheckin: true,
+            canRefreshBalance: true,
+            canRebindSession: true,
+            proxyOnly: false,
+          },
           runtimeHealth: { state: 'healthy', reason: 'ok' },
         },
       ])
@@ -83,6 +89,12 @@ describe('Accounts refresh action', () => {
           status: 'expired',
           checkinEnabled: true,
           site: { id: 10, name: 'Demo Site', status: 'active', url: 'https://example.com' },
+          capabilities: {
+            canCheckin: false,
+            canRefreshBalance: false,
+            canRebindSession: true,
+            proxyOnly: false,
+          },
           runtimeHealth: { state: 'unhealthy', reason: '访问令牌失效' },
         },
       ]);

@@ -10,7 +10,6 @@ import { formatDateTimeLocal } from '../helpers/checkinLogTime.js';
 import {
   isTruthyFlag,
   parsePositiveInt,
-  resolveAccountCredentialMode,
 } from '../helpers/accountConnection.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../../components/MobileCard.js';
@@ -74,6 +73,8 @@ type SyncableAccount = {
   credentialMode?: string | null;
   capabilities?: {
     proxyOnly?: boolean;
+    canSyncAccountTokens?: boolean;
+    canCreateAccountTokens?: boolean;
   } | null;
   site?: {
     status?: string | null;
@@ -88,7 +89,11 @@ const isAccountActive = (account: any) =>
   && account?.site?.status !== 'disabled';
 
 const isAccountSyncable = (account: any) =>
-  resolveAccountCredentialMode(account) === 'session'
+  account?.capabilities?.canSyncAccountTokens === true
+  && isAccountActive(account);
+
+const isAccountTokenCreatable = (account: any) =>
+  account?.capabilities?.canCreateAccountTokens === true
   && isAccountActive(account);
 
 const resolveSyncStatus = (result: AccountTokenSyncResult | null | undefined): SyncStatus => {
@@ -122,7 +127,6 @@ type TokenHealth = {
 };
 
 const resolveTokenHealth = (token: any): TokenHealth => {
-  const accountHealth = token?.account?.runtimeHealth;
   if (token?.valueStatus === 'masked_pending') {
     return {
       state: 'unhealthy',
@@ -143,7 +147,8 @@ const resolveTokenHealth = (token: any): TokenHealth => {
       reason: tr('pages.accounts.accountSiteHasBeenDisabled'),
     };
   }
-  const state = accountHealth?.state;
+  const tokenHealth = token?.health;
+  const state = tokenHealth?.state;
   if (state === 'healthy' || state === 'unhealthy' || state === 'degraded' || state === 'disabled') {
     const map: Record<string, Omit<TokenHealth, 'state' | 'reason'>> = {
       healthy: { label: tr('pages.accounts.healthy'), tone: 'success', dotClass: 'status-dot-success', pulse: true },
@@ -151,7 +156,7 @@ const resolveTokenHealth = (token: any): TokenHealth => {
       degraded: { label: tr('pages.accounts.downgrade'), tone: 'warning', dotClass: 'status-dot-pending', pulse: true },
       disabled: { label: tr('pages.accounts.disabled2'), tone: 'muted', dotClass: 'status-dot-muted', pulse: false },
     };
-    return { state, ...map[state], reason: accountHealth.reason || tr('pages.accounts.runningHealthInformationHasNotBeenObtained') };
+    return { state, ...map[state], reason: tokenHealth.reason || tr('pages.accounts.runningHealthInformationHasNotBeenObtained') };
   }
   return {
     state: 'unknown',
@@ -198,6 +203,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
   const initialCreateForm = {
     accountId: 0,
     name: '',
+    token: '',
     group: 'default',
     unlimitedQuota: true,
     remainQuota: '',
@@ -421,18 +427,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
 
   const activeAccounts = useMemo(() => accounts.filter(isAccountActive), [accounts]);
   const syncableAccounts = useMemo(() => activeAccounts.filter(isAccountSyncable), [activeAccounts]);
-  const managementAccountSelectOptions = useMemo(() => (
-    activeAccounts.map((account) => {
-      const accountName = account.username || `account-${account.id}`;
-      const siteName = account.site?.name || '-';
-      const isSyncable = isAccountSyncable(account);
-      return {
-        value: String(account.id),
-        label: `${accountName} @ ${siteName}${isSyncable ? '' : ' · API Key'}`,
-        description: isSyncable ? siteName : tr('pages.tokens.apiKeyAccountManagementOnly'),
-      };
-    })
-  ), [activeAccounts]);
+  const creatableAccounts = useMemo(() => activeAccounts.filter(isAccountTokenCreatable), [activeAccounts]);
   const syncableAccountSelectOptions = useMemo(() => (
     syncableAccounts.map((account) => ({
       value: String(account.id),
@@ -440,6 +435,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
       description: account.site?.name || '-',
     }))
   ), [syncableAccounts]);
+  const creatableAccountSelectOptions = useMemo(() => (
+    creatableAccounts.map((account) => ({
+      value: String(account.id),
+      label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
+      description: account.site?.name || '-',
+    }))
+  ), [creatableAccounts]);
   const selectedAccountIsSyncable = syncableAccounts.some((account) => account.id === syncingAccountId);
 
   useEffect(() => {
@@ -781,6 +783,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
       await api.addAccountToken({
         accountId: form.accountId,
         name: form.name,
+        token: form.token.trim() || undefined,
         group: form.group || 'default',
         unlimitedQuota: form.unlimitedQuota,
         remainQuota,
@@ -943,7 +946,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
               options={[
                 { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
-                ...managementAccountSelectOptions,
+                ...syncableAccountSelectOptions,
               ]}
               placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
               searchable
@@ -975,7 +978,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
         {showAdd ? tr('app.cancel') : tr('pages.tokens.newToken')}
       </Button>
     </div>
-  ), [allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, managementAccountSelectOptions, selectedAccountIsSyncable, showAdd, syncableAccounts.length, syncing, syncingAccountId, syncingAll]);
+  ), [allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, selectedAccountIsSyncable, showAdd, syncableAccountSelectOptions, syncableAccounts.length, syncing, syncingAccountId, syncingAll]);
 
   useEffect(() => {
     if (!embedded || !onEmbeddedActionsChange) return;
@@ -1008,7 +1011,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
                 options={[
                   { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
-                  ...managementAccountSelectOptions,
+                ...syncableAccountSelectOptions,
                 ]}
                 placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
                 searchable
@@ -1197,7 +1200,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
               }}
               options={[
                 { value: '0', label: tr('pages.tokens.selectAccount') },
-                ...syncableAccountSelectOptions,
+                ...creatableAccountSelectOptions,
               ]}
               placeholder={tr('pages.tokens.selectAccount')}
               searchable
@@ -1215,6 +1218,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               placeholder={tr('pages.tokens.exampleMetapi')}
+            />
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.token')}</div>
+            <Input
+              value={form.token}
+              onChange={(e) => setForm((prev) => ({ ...prev, token: e.target.value }))}
+              placeholder="sk-..."
+              className="font-mono"
             />
           </div>
           <div>
