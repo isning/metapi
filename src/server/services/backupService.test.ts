@@ -2,13 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { eq } from 'drizzle-orm';
 import { parseRouteGraphSource } from '../../shared/routeGraph.js';
 import { executionTargetIdForRouteGraphEndpoint } from './routeGraphExecutionTargetEndpointService.js';
-import {
-  insertRouteGroupMember,
-  listAllRouteGroupMembers,
-} from '../../testing/routeGroupMemberTestUtils.js';
+import { insertRouteGroupMember, listAllRouteGroupMembers } from '../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
@@ -20,14 +18,8 @@ type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 type ModelsMarketplaceCacheModule = typeof import('./modelsMarketplaceCacheService.js');
 type RouteRuntimeArtifactModule = typeof import('./routeRuntimeArtifactService.js');
 
-function sourceGraphEndpointIdForExecutionTarget(
-  sourceGraphJson: string | null | undefined,
-  executionTargetId: number,
-): string | null {
-  const endpoint = parseRouteGraphSource(sourceGraphJson).nodes.find((node) => (
-    node.type === 'route_endpoint'
-    && executionTargetIdForRouteGraphEndpoint(node) === executionTargetId
-  ));
+function sourceGraphEndpointIdForExecutionTarget(sourceGraphJson: string | null | undefined, executionTargetId: number): string | null {
+  const endpoint = parseRouteGraphSource(sourceGraphJson).nodes.find((node) => node.type === 'route_endpoint' && executionTargetIdForRouteGraphEndpoint(node) === executionTargetId);
   return endpoint?.type === 'route_endpoint' ? endpoint.routeEndpointId : null;
 }
 
@@ -100,25 +92,37 @@ describe('backupService graph-native route runtime', () => {
   });
 
   async function seedRouteRuntime() {
-    const site = await db.insert(schema.sites).values({
-      name: 'backup-site',
-      url: 'https://backup.example.test',
-      platform: 'openai',
-      status: 'active',
-    }).returning().get();
-    const account = await db.insert(schema.accounts).values({
-      siteId: site.id,
-      username: 'backup-user',
-      credential: 'backup-access',
-      status: 'active',
-    }).returning().get();
-    const token = await db.insert(schema.accountTokens).values({
-      accountId: account.id,
-      name: 'backup-token',
-      token: 'sk-backup',
-      enabled: true,
-      isDefault: true,
-    }).returning().get();
+    const site = await db
+      .insert(schema.sites)
+      .values({
+        name: 'backup-site',
+        url: 'https://backup.example.test',
+        platform: 'openai',
+        status: 'active',
+      })
+      .returning()
+      .get();
+    const account = await db
+      .insert(schema.accounts)
+      .values({
+        siteId: site.id,
+        username: 'backup-user',
+        credential: 'backup-access',
+        status: 'active',
+      })
+      .returning()
+      .get();
+    const token = await db
+      .insert(schema.accountTokens)
+      .values({
+        accountId: account.id,
+        name: 'backup-token',
+        token: 'sk-backup',
+        enabled: true,
+        isDefault: true,
+      })
+      .returning()
+      .get();
 
     const summary = await createRouteGroupFromPayload({
       model: { publicName: 'backup-model' },
@@ -146,7 +150,7 @@ describe('backupService graph-native route runtime', () => {
 
   it('exports current route runtime tables and graph artifact', async () => {
     const seeded = await seedRouteRuntime();
-    const backup = await backupService.exportBackup('accounts') as any;
+    const backup = (await backupService.exportBackup('accounts')) as any;
 
     expect(backup.accounts.sites).toHaveLength(1);
     expect(backup.accounts.accounts).toHaveLength(1);
@@ -157,21 +161,24 @@ describe('backupService graph-native route runtime', () => {
     expect(backup.accounts.runtimeExecutionTargets.length).toBeGreaterThan(0);
     expect(backup.accounts.routeGraph.versions.length).toBeGreaterThan(0);
     expect(backup.accounts.routeGraph.activeVersion.versionId).toBeGreaterThan(0);
-    expect(backup.accounts.routeGraph.versions.some((version: { sourceGraphJson?: string | null }) => (
-      parseRouteGraphSource(version.sourceGraphJson).macros.some((macro) => macro.id === seeded.group.id)
-    ))).toBe(true);
+    expect(
+      backup.accounts.routeGraph.versions.some((version: { sourceGraphJson?: string | null }) => parseRouteGraphSource(version.sourceGraphJson).macros.some((macro) => macro.id === seeded.group.id)),
+    ).toBe(true);
   });
 
   it('excludes unbounded proxy history and preserves local history on import', async () => {
     const { account } = await seedRouteRuntime();
-    await db.insert(schema.proxyLogs).values({
-      accountId: account.id,
-      status: 'success',
-      modelRequested: 'backup-model',
-      billingDetails: 'x'.repeat(1_000_000),
-    }).run();
+    await db
+      .insert(schema.proxyLogs)
+      .values({
+        accountId: account.id,
+        status: 'success',
+        modelRequested: 'backup-model',
+        billingDetails: 'x'.repeat(1_000_000),
+      })
+      .run();
 
-    const exported = await backupService.exportBackup('accounts') as any;
+    const exported = (await backupService.exportBackup('accounts')) as any;
     expect(exported.accounts).not.toHaveProperty('proxyLogs');
 
     const beforeImport = await db.select().from(schema.proxyLogs).all();
@@ -181,7 +188,7 @@ describe('backupService graph-native route runtime', () => {
 
   it('imports current route runtime backup data without legacy route storage', async () => {
     await seedRouteRuntime();
-    const exported = await backupService.exportBackup('accounts') as any;
+    const exported = (await backupService.exportBackup('accounts')) as any;
 
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.compiledRuntimeActiveArtifact).run();
@@ -195,7 +202,10 @@ describe('backupService graph-native route runtime', () => {
     await db.delete(schema.sites).run();
 
     const result = await backupService.importBackup(exported);
-    expect(result).toMatchObject({ allImported: true, sections: { accounts: true } });
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
     expect(await loadRouteGroupManagementReadModel()).toHaveLength(1);
     expect(await listAllRouteGroupMembers()).toHaveLength(1);
     const importedVersions = await db.select().from(schema.routeGraphVersions).all();
@@ -209,19 +219,75 @@ describe('backupService graph-native route runtime', () => {
     expect(typeof exported.version).toBe('string');
   });
 
+  it('rolls back account replacement when imported route graph publication fails', async () => {
+    const seeded = await seedRouteRuntime();
+    const exported = (await backupService.exportBackup('accounts')) as any;
+    const originalSite = await db.select().from(schema.sites).where(eq(schema.sites.id, seeded.site.id)).get();
+    const originalTokens = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, seeded.account.id)).all();
+    const activeVersion = exported.accounts.routeGraph.activeVersion.versionId;
+    const version = exported.accounts.routeGraph.versions.find((row: any) => row.id === activeVersion);
+    version.sourceGraphJson = JSON.stringify({
+      nodes: [],
+      edges: [],
+      macros: [
+        {
+          id: 'macro:invalid-import',
+          kind: 'candidate_selector',
+          ownership: 'system',
+          config: {
+            candidateSource: { kind: 'model_pattern', pattern: 'model-*' },
+            groups: [],
+          },
+        },
+      ],
+    });
+    exported.accounts.sites[0].name = 'must-not-commit';
+
+    await expect(backupService.importBackup(exported)).rejects.toThrow('导入的历史路由无法编译');
+    expect(await db.select().from(schema.sites).where(eq(schema.sites.id, seeded.site.id)).get()).toEqual(originalSite);
+    expect(await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, seeded.account.id)).all()).toEqual(originalTokens);
+  });
+
+  it('preserves every account token across a multi-batch streaming import', async () => {
+    const seeded = await seedRouteRuntime();
+    const exported = (await backupService.exportBackup('accounts')) as any;
+    const tokenCount = 250;
+    exported.accounts.accountTokens = Array.from({ length: tokenCount }, (_, index) => ({
+      ...exported.accounts.accountTokens[0],
+      id: seeded.token.id + index,
+      name: `stream-token-${index + 1}`,
+      token: `sk-stream-${index + 1}`,
+      isDefault: index === 0,
+    }));
+
+    const payload = JSON.stringify(exported);
+    const result = await backupService.importBackupFromJsonStream(Readable.from([payload]), Buffer.byteLength(payload) + 1);
+
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
+    const imported = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, seeded.account.id)).all();
+    expect(imported).toHaveLength(tokenCount);
+    expect(new Set(imported.map((token) => token.id)).size).toBe(tokenCount);
+    expect(new Set(imported.map((token) => token.token)).size).toBe(tokenCount);
+  });
+
   it('normalizes explicitly marked API key connections from historical backups', async () => {
     const payload = {
       version: '2.3',
       timestamp: Date.now(),
       type: 'accounts',
       accounts: {
-        sites: [{
-          id: 1,
-          name: 'legacy-api-key-site',
-          url: 'https://legacy-api-key.example.test',
-          platform: 'new-api',
-          status: 'active',
-        }],
+        sites: [
+          {
+            id: 1,
+            name: 'legacy-api-key-site',
+            url: 'https://legacy-api-key.example.test',
+            platform: 'new-api',
+            status: 'active',
+          },
+        ],
         accounts: [
           {
             id: 1,
@@ -261,35 +327,33 @@ describe('backupService graph-native route runtime', () => {
     await backupService.importBackup(payload as any);
 
     const accounts = await db.select().from(schema.accounts).orderBy(schema.accounts.id).all();
-    expect(accounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        username: 'legacy-api-key',
-        credentialMode: 'apikey',
-        credential: '',
-        credentialKind: 'none',
-        checkinEnabled: false,
-      }),
-      expect.objectContaining({
-        username: 'legacy-auth-type-api-key',
-        credentialMode: 'apikey',
-        credential: '',
-        credentialKind: 'none',
-        checkinEnabled: false,
-      }),
-      expect.objectContaining({
-        username: 'session-account',
-        credentialMode: 'session',
-        credential: 'session-value',
-        credentialKind: 'adapter_default',
-        checkinEnabled: true,
-      }),
-    ]));
+    expect(accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          username: 'legacy-api-key',
+          credentialMode: 'apikey',
+          credential: '',
+          credentialKind: 'none',
+          checkinEnabled: false,
+        }),
+        expect.objectContaining({
+          username: 'legacy-auth-type-api-key',
+          credentialMode: 'apikey',
+          credential: '',
+          credentialKind: 'none',
+          checkinEnabled: false,
+        }),
+        expect.objectContaining({
+          username: 'session-account',
+          credentialMode: 'session',
+          credential: 'session-value',
+          credentialKind: 'access_token',
+          checkinEnabled: true,
+        }),
+      ]),
+    );
     const tokens = await db.select().from(schema.accountTokens).all();
-    expect(tokens.map((token) => token.token).sort()).toEqual([
-      'legacy-api-key-value',
-      'legacy-auth-type-api-key-value',
-      'session-default-api-key',
-    ]);
+    expect(tokens.map((token) => token.token).sort()).toEqual(['legacy-api-key-value', 'legacy-auth-type-api-key-value', 'session-default-api-key']);
   });
 
   it('imports previous-version route backups into current route runtime tables', async () => {
@@ -374,28 +438,35 @@ describe('backupService graph-native route runtime', () => {
 
     const result = await backupService.importBackup(payload as any);
 
-    expect(result).toMatchObject({ allImported: true, sections: { accounts: true } });
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
     const groups = await loadRouteGroupManagementReadModel();
     const supplyEndpoints = await db.select().from(schema.runtimeExecutionTargets).all();
     const candidates = await listAllRouteGroupMembers();
     expect(groups).toHaveLength(3);
     expect(supplyEndpoints).toHaveLength(2);
     expect(candidates).toHaveLength(2);
-    expect(groups).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'automatic',
-        model: expect.objectContaining({ publicName: 'deepseek-v4-flash' }),
-      }),
-      expect.objectContaining({
-        kind: 'automatic',
-        model: expect.objectContaining({ publicName: 'deepseek-v4-chat' }),
-      }),
-      expect.objectContaining({
-        kind: 'manual',
-        presentation: expect.objectContaining({ displayName: 'deepseek-v4-flash-rerouted' }),
-        dispatcherPolicy: { kind: 'builtin', builtin: 'stable_first' },
-      }),
-    ]));
+    expect(groups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'automatic',
+          model: expect.objectContaining({ publicName: 'deepseek-v4-flash' }),
+        }),
+        expect.objectContaining({
+          kind: 'automatic',
+          model: expect.objectContaining({ publicName: 'deepseek-v4-chat' }),
+        }),
+        expect.objectContaining({
+          kind: 'manual',
+          presentation: expect.objectContaining({
+            displayName: 'deepseek-v4-flash-rerouted',
+          }),
+          dispatcherPolicy: { kind: 'builtin', builtin: 'stable_first' },
+        }),
+      ]),
+    );
     const chatEndpoint = supplyEndpoints.find((endpoint) => endpoint.upstreamModelName === 'deepseek-v4-chat');
     const chatAutomaticGroup = groups.find((group) => group.kind === 'automatic' && group.model.publicName === 'deepseek-v4-chat');
     const manualGroup = groups.find((group) => group.kind === 'manual');
@@ -404,17 +475,26 @@ describe('backupService graph-native route runtime', () => {
     expect(manualGroup).toBeTruthy();
     expect(manualGroup).toMatchObject({
       candidateCount: 1,
-      sourceSelection: { kind: 'explicit', sources: [expect.objectContaining({ source: { kind: 'route_group', id: chatAutomaticGroup!.id } })] },
+      sourceSelection: {
+        kind: 'explicit',
+        sources: [
+          expect.objectContaining({
+            source: { kind: 'route_group', id: chatAutomaticGroup!.id },
+          }),
+        ],
+      },
     });
-    expect(candidates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        routeGroupId: chatAutomaticGroup!.id,
-        executionTargetId: chatEndpoint!.id,
-        weight: 20,
-        enabled: true,
-        manualOverride: true,
-      }),
-    ]));
+    expect(candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routeGroupId: chatAutomaticGroup!.id,
+          executionTargetId: chatEndpoint!.id,
+          weight: 20,
+          enabled: true,
+          manualOverride: true,
+        }),
+      ]),
+    );
     expect(await db.select().from(schema.routeGraphActiveVersion).get()).toBeTruthy();
   });
 
@@ -504,9 +584,7 @@ describe('backupService graph-native route runtime', () => {
     const supplyEndpoints = await db.select().from(schema.runtimeExecutionTargets).all();
     expect(groups).toHaveLength(1);
     expect(supplyEndpoints).toHaveLength(1);
-    const activeGraph = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.status, 'active'))
-      .get();
+    const activeGraph = await db.select().from(schema.routeGraphVersions).where(eq(schema.routeGraphVersions.status, 'active')).get();
     const endpointId = sourceGraphEndpointIdForExecutionTarget(activeGraph?.sourceGraphJson, supplyEndpoints[0]!.id);
     expect(endpointId).toBeTruthy();
     expect(activeGraph?.sourceGraphJson).toContain(endpointId!);
@@ -579,7 +657,10 @@ describe('backupService graph-native route runtime', () => {
 
     const result = await backupService.importBackup(payload as any);
 
-    expect(result).toMatchObject({ allImported: true, sections: { accounts: true } });
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
     const groups = await loadRouteGroupManagementReadModel();
     const supplyEndpoints = await db.select().from(schema.runtimeExecutionTargets).all();
     const candidates = await listAllRouteGroupMembers();
@@ -602,9 +683,7 @@ describe('backupService graph-native route runtime', () => {
         enabled: true,
       }),
     ]);
-    const activeGraph = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.status, 'active'))
-      .get();
+    const activeGraph = await db.select().from(schema.routeGraphVersions).where(eq(schema.routeGraphVersions.status, 'active')).get();
     const endpointId = sourceGraphEndpointIdForExecutionTarget(activeGraph?.sourceGraphJson, supplyEndpoints[0]!.id);
     expect(endpointId).toBeTruthy();
     expect(activeGraph?.sourceGraphJson).toContain(endpointId!);
@@ -685,7 +764,10 @@ describe('backupService graph-native route runtime', () => {
 
     const result = await backupService.importBackup(payload as any);
 
-    expect(result).toMatchObject({ allImported: true, sections: { accounts: true } });
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
     const groups = await loadRouteGroupManagementReadModel();
     const manualGroup = groups.find((group) => group.kind === 'manual');
     const automaticGroup = groups.find((group) => group.kind === 'automatic');
@@ -700,12 +782,25 @@ describe('backupService graph-native route runtime', () => {
     expect(manualGroup).toMatchObject({
       candidateCount: 1,
       enabledCandidateCount: 1,
-      sourceSelection: { kind: 'explicit', sources: [expect.objectContaining({ source: { kind: 'route_group', id: automaticGroup!.id } })] },
+      sourceSelection: {
+        kind: 'explicit',
+        sources: [
+          expect.objectContaining({
+            source: { kind: 'route_group', id: automaticGroup!.id },
+          }),
+        ],
+      },
     });
 
     const summaries = await loadRouteGroupManagementReadModel();
-    const publicPage = buildRouteSummaryProjectionPage(summaries, { tab: 'public', pageSize: '20' });
-    const manualPage = buildRouteSummaryProjectionPage(summaries, { tab: 'manual', pageSize: '20' });
+    const publicPage = buildRouteSummaryProjectionPage(summaries, {
+      tab: 'public',
+      pageSize: '20',
+    });
+    const manualPage = buildRouteSummaryProjectionPage(summaries, {
+      tab: 'manual',
+      pageSize: '20',
+    });
     const overview = buildRouteSummaryProjectionOverview(summaries);
     expect(publicPage.items.map((item) => item.id)).toEqual([automaticGroup!.id]);
     expect(manualPage.items.map((item) => item.id)).toEqual([manualGroup!.id]);
@@ -801,22 +896,28 @@ describe('backupService graph-native route runtime', () => {
     const result = await backupService.importBackup(payload as any);
 
     expect(result.warnings?.join('\n')).toContain('公开模型名 deepseek-v4-flash-rerouted 重复');
-    expect(result.notices).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'public_model_conflict_demoted',
-        normalizedModelName: 'deepseek-v4-flash-rerouted',
-      }),
-    ]));
+    expect(result.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'public_model_conflict_demoted',
+          normalizedModelName: 'deepseek-v4-flash-rerouted',
+        }),
+      ]),
+    );
     const groups = await loadRouteGroupManagementReadModel();
     const automaticGroup = groups.find((group) => group.kind === 'automatic');
     const manualGroup = groups.find((group) => group.kind === 'manual');
     expect(automaticGroup).toMatchObject({
       visibility: 'internal',
-      model: expect.objectContaining({ publicName: 'deepseek-v4-flash-rerouted' }),
+      model: expect.objectContaining({
+        publicName: 'deepseek-v4-flash-rerouted',
+      }),
     });
     expect(manualGroup).toMatchObject({
       visibility: 'public',
-      model: expect.objectContaining({ publicName: 'deepseek-v4-flash-rerouted' }),
+      model: expect.objectContaining({
+        publicName: 'deepseek-v4-flash-rerouted',
+      }),
     });
 
     const runtime = await getActiveRouteRuntimeArtifact();
@@ -899,12 +1000,14 @@ describe('backupService graph-native route runtime', () => {
     const result = await backupService.importBackup(payload as any);
 
     expect(result.warnings?.join('\n')).toContain('公开模型名 deepseek-v4-flash-rerouted 重复');
-    expect(result.notices).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'public_model_conflict_demoted',
-        normalizedModelName: 'deepseek-v4-flash-rerouted',
-      }),
-    ]));
+    expect(result.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'public_model_conflict_demoted',
+          normalizedModelName: 'deepseek-v4-flash-rerouted',
+        }),
+      ]),
+    );
     const groups = await loadRouteGroupManagementReadModel();
     const automaticGroup = groups.find((group) => group.kind === 'automatic');
     const manualGroup = groups.find((group) => group.kind === 'manual');
@@ -915,11 +1018,15 @@ describe('backupService graph-native route runtime', () => {
         normalizedName: 'deepseek-v4-flash-rerouted',
         publicName: 'deepseek-v4-flash-rerouted',
       }),
-      presentation: expect.objectContaining({ displayName: 'deepseek-v4-flash-rerouted' }),
+      presentation: expect.objectContaining({
+        displayName: 'deepseek-v4-flash-rerouted',
+      }),
     });
     expect(manualGroup).toMatchObject({
       visibility: 'public',
-      model: expect.objectContaining({ publicName: 'deepseek-v4-flash-rerouted' }),
+      model: expect.objectContaining({
+        publicName: 'deepseek-v4-flash-rerouted',
+      }),
     });
 
     const runtime = await getActiveRouteRuntimeArtifact();
@@ -1013,13 +1120,15 @@ describe('backupService graph-native route runtime', () => {
     const result = await backupService.importBackup(payload as any);
 
     expect(result.warnings?.join('\n')).toContain('自动模型名 DeepSeek-V4-Flash 与 deepseek-v4-flash 归一化后同为 deepseek-v4-flash');
-    expect(result.notices).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'automatic_model_normalized_coalesced',
-        normalizedModelName: 'deepseek-v4-flash',
-        sourceNames: ['DeepSeek-V4-Flash', 'deepseek-v4-flash'],
-      }),
-    ]));
+    expect(result.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'automatic_model_normalized_coalesced',
+          normalizedModelName: 'deepseek-v4-flash',
+          sourceNames: ['DeepSeek-V4-Flash', 'deepseek-v4-flash'],
+        }),
+      ]),
+    );
     const groups = await loadRouteGroupManagementReadModel();
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
@@ -1030,14 +1139,13 @@ describe('backupService graph-native route runtime', () => {
         normalizedName: 'deepseek-v4-flash',
         publicName: 'deepseek-v4-flash',
       }),
-      presentation: expect.objectContaining({ displayName: 'deepseek-v4-flash' }),
+      presentation: expect.objectContaining({
+        displayName: 'deepseek-v4-flash',
+      }),
     });
 
     const supplyEndpoints = await db.select().from(schema.runtimeExecutionTargets).all();
-    expect(supplyEndpoints.map((endpoint) => endpoint.upstreamModelName).sort()).toEqual([
-      'DeepSeek-V4-Flash',
-      'deepseek-v4-flash',
-    ]);
+    expect(supplyEndpoints.map((endpoint) => endpoint.upstreamModelName).sort()).toEqual(['DeepSeek-V4-Flash', 'deepseek-v4-flash']);
     const candidates = await listAllRouteGroupMembers();
     expect(candidates).toHaveLength(2);
     expect(candidates.map((candidate) => candidate.routeGroupId)).toEqual([groups[0]!.id, groups[0]!.id]);
@@ -1121,7 +1229,10 @@ describe('backupService graph-native route runtime', () => {
 
     const result = await backupService.importBackup(payload as any);
 
-    expect(result).toMatchObject({ allImported: true, sections: { accounts: true } });
+    expect(result).toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
     const groups = await loadRouteGroupManagementReadModel();
     const manualGroup = groups.find((group) => group.kind === 'manual');
     const automaticGroup = groups.find((group) => group.kind === 'automatic');
@@ -1138,17 +1249,29 @@ describe('backupService graph-native route runtime', () => {
       normalizedModelName: 'deepseek-v4-flash',
     });
     expect(supplyEndpoints[0]?.upstreamModelName).not.toBe('deepseek-v4-flash-rerouted');
-    expect(JSON.parse(supplyEndpoints[0]?.metadataJson || '{}')).toMatchObject({ source: 'legacy_backup' });
+    expect(JSON.parse(supplyEndpoints[0]?.metadataJson || '{}')).toMatchObject({
+      source: 'legacy_backup',
+    });
 
     const candidates = await listAllRouteGroupMembers();
     const automaticCandidate = candidates.find((candidate) => candidate.routeGroupId === automaticGroup!.id);
     expect(automaticCandidate).toBeTruthy();
     expect(manualGroup).toMatchObject({
       candidateCount: 1,
-      sourceSelection: { kind: 'explicit', sources: [expect.objectContaining({ source: { kind: 'route_group', id: automaticGroup!.id } })] },
+      sourceSelection: {
+        kind: 'explicit',
+        sources: [
+          expect.objectContaining({
+            source: { kind: 'route_group', id: automaticGroup!.id },
+          }),
+        ],
+      },
     });
 
-    const manualPage = buildRouteSummaryProjectionPage(await loadRouteGroupManagementReadModel(), { tab: 'manual', pageSize: '20' });
+    const manualPage = buildRouteSummaryProjectionPage(await loadRouteGroupManagementReadModel(), {
+      tab: 'manual',
+      pageSize: '20',
+    });
     expect(manualPage.items[0]).toMatchObject({
       id: manualGroup!.id,
       candidateCount: 1,

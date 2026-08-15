@@ -35,7 +35,7 @@ describe('backup account credential migration', () => {
     expect(migrated.account).toMatchObject({
       credentialMode: 'session',
       credential: 'opaque-value',
-      credentialKind: 'adapter_default',
+      credentialKind: 'access_token',
     });
     expect(migrated.account.extraConfig).toBeNull();
     expect(migrated.importedCredential.legacyModelToken).toBeNull();
@@ -70,5 +70,18 @@ describe('backup account credential migration', () => {
       keep: true,
       oauth: { refreshToken: 'refresh-token' },
     });
+  });
+
+  it('removes retired model-discovery account health from imported accounts', () => {
+    const migrated = migrateImportedAccountCredential({
+      id: 10,
+      siteId: 2,
+      extraConfig: JSON.stringify({
+        runtimeHealth: { state: 'healthy', source: 'model-discovery', reason: '模型探测成功' },
+        keep: true,
+      }),
+    });
+
+    expect(JSON.parse(migrated.account.extraConfig || '{}')).toEqual({ keep: true });
   });
 });

@@ -31,6 +31,11 @@ function readTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function isLegacyModelDiscoveryRuntimeHealth(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return readTrimmedString(value.source).toLowerCase() === 'model-discovery';
+}
+
 function parseLegacyAccountExtraConfig(value: unknown): JsonRecord {
   if (isRecord(value)) return { ...value };
   if (typeof value !== 'string' || !value.trim()) return {};
@@ -89,15 +94,18 @@ export function migrateImportedAccountCredential(row: unknown): MigratedBackupAc
     ? 'oauth_access_token'
     : credentialMode === 'apikey'
       ? 'none'
-      : ['session_cookie', 'access_token', 'adapter_default'].includes(storedKind)
+      : ['session_cookie', 'access_token'].includes(storedKind)
         ? storedKind
-        : 'adapter_default';
+        : 'access_token';
   const legacyModelToken = credentialMode === 'apikey'
     ? (legacyAccountApiToken || legacyAccessToken || existingCredential || null)
     : (legacyAccountApiToken || null);
 
   delete extraConfig.credentialMode;
   delete extraConfig.authType;
+  if (isLegacyModelDiscoveryRuntimeHealth(extraConfig.runtimeHealth)) {
+    delete extraConfig.runtimeHealth;
+  }
   if (legacyOauth) {
     delete legacyOauth.provider;
     delete legacyOauth.accountId;

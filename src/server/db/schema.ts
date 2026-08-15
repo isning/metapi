@@ -17,10 +17,6 @@ export const sites = sqliteTable('sites', {
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
   apiKey: text('api_key'),
-  postRefreshProbeEnabled: integer('post_refresh_probe_enabled', { mode: 'boolean' }).default(false),
-  postRefreshProbeModel: text('post_refresh_probe_model').default(''),
-  postRefreshProbeScope: text('post_refresh_probe_scope').default('single'),
-  postRefreshProbeLatencyThresholdMs: integer('post_refresh_probe_latency_threshold_ms').default(0),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -126,7 +122,7 @@ export const accounts = sqliteTable('accounts', {
   username: text('username'),
   credentialMode: text('credential_mode').notNull().default('session'),
   credential: text('credential').notNull().default(''),
-  credentialKind: text('credential_kind').notNull().default('adapter_default'),
+  credentialKind: text('credential_kind').notNull().default('access_token'),
   balance: real('balance').default(0),
   balanceUsed: real('balance_used').default(0),
   quota: real('quota').default(0),
@@ -159,6 +155,7 @@ export const accountTokens = sqliteTable('account_tokens', {
   token: text('token').notNull(),
   tokenGroup: text('token_group'),
   compatibilityPolicy: text('compatibility_policy'),
+  extraConfig: text('extra_config'), // Opaque adapter-owned JSON string
   valueStatus: text('value_status').notNull().default('ready'),
   source: text('source').default('manual'), // 'manual' | 'sync' | 'migration'
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
@@ -169,6 +166,19 @@ export const accountTokens = sqliteTable('account_tokens', {
   accountIdIdx: index('account_tokens_account_id_idx').on(table.accountId),
   accountEnabledIdx: index('account_tokens_account_enabled_idx').on(table.accountId, table.enabled),
   enabledIdx: index('account_tokens_enabled_idx').on(table.enabled),
+}));
+
+export const accountTokenHealth = sqliteTable('account_token_health', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  tokenId: integer('token_id').notNull().references(() => accountTokens.id, { onDelete: 'cascade' }),
+  state: text('state').notNull().default('unknown'),
+  reason: text('reason'),
+  source: text('source').notNull().default('proxy-observation'),
+  checkedAt: text('checked_at'),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenUnique: uniqueIndex('account_token_health_token_unique').on(table.tokenId),
+  stateIdx: index('account_token_health_state_idx').on(table.state),
 }));
 
 export const credentialEndpointBindings = sqliteTable('credential_endpoint_bindings', {

@@ -31,7 +31,7 @@ for %%p in (%BACKEND_PORT% %PROXY_PORT% %FRONTEND_PORT%) do (
 ping -n 3 127.0.0.1 >nul
 
 echo [INFO] Syncing database schema...
-call npx drizzle-kit push --force 2>nul || echo     (drizzle-kit push skipped)
+call npm run db:migrate || exit /b 1
 
 echo [INFO] Starting development servers
 echo     Backend:  http://localhost:%BACKEND_PORT%

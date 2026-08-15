@@ -18,6 +18,10 @@ import {
   type RouteGroupFacadeStage,
 } from './routeGroupGraphFacadeService.js';
 import { ensureRouteGraphExecutionTargetEndpoint } from './routeGraphExecutionTargetEndpointService.js';
+import {
+  AVAILABILITY_ROUTE_GROUP_OWNER,
+  normalizeAvailabilityManagedRouteGroups,
+} from './routeGroupAutomaticOwnership.js';
 
 type SiteRow = typeof schema.sites.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
@@ -833,12 +837,6 @@ function materializeHistoricalGroups(input: {
       visibility: group.visibility,
       enabled: group.enabled,
       policy: group.policy,
-      ...(group.kind === 'automatic' ? {
-        candidateSource: {
-          kind: 'model_pattern' as const,
-          pattern: group.normalizedModelName,
-        },
-      } : {}),
       ...((group.filters || group.modelRewrite) ? {
         filters: {
           operations: [
@@ -847,13 +845,11 @@ function materializeHistoricalGroups(input: {
           ],
         },
       } : {}),
-      stages: stages.map((stage, index) => ({
-        ...stage,
-        ...(group.kind === 'automatic' && index === 0 ? { acceptUnassigned: true } : {}),
-      })),
+      stages,
       metadata: {
         canonicalModel: group.normalizedModelName,
         importedFrom: 'legacy_route_backup',
+        ...(group.kind === 'automatic' ? { managementOwner: AVAILABILITY_ROUTE_GROUP_OWNER } : {}),
       },
     });
     source = created.source;
@@ -1097,9 +1093,12 @@ export function migrateImportedRouteGraphSourceJson(sourceGraphJson: unknown): s
     throw new Error('导入数据中的路由图源定义缺失');
   }
   try {
-    return JSON.stringify(migrateImportedExecutionTargetBindingShape(
+    const migrated = migrateImportedExecutionTargetBindingShape(
       migrateImportedDispatchPolicyShape(migrateImportedFallbackControlShape(JSON.parse(sourceGraphJson))),
-    ));
+    );
+    return JSON.stringify(
+      normalizeAvailabilityManagedRouteGroups(migrated as RouteGraphSource).source,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知 JSON 错误';
     throw new Error(`导入数据中的路由图源定义无效：${message}`);

@@ -15,21 +15,20 @@ describe('backup import dispatch policy migration', () => {
     ...overrides,
   }) as unknown as BackupImportRouteRuntimeSection;
 
-  it('materializes legacy automatic routes as model-pattern groups with endpoint overrides, not explicit source pickers', () => {
+  it('materializes legacy automatic routes as availability-managed explicit endpoint groups', () => {
     const migrated = migratePreviousRouteBackupToCurrentRuntime(legacySection(), {
       tokenRoutes: [{ id: 7, modelPattern: 'DeepSeek-V4-Flash' }],
       routeEndpointTargets: [{ routeId: 7, accountId: 1, modelName: 'DeepSeek-V4-Flash' }],
     });
 
     const macro = migrated.graphSource?.macros?.[0];
-    expect(macro).toMatchObject({ ownership: 'system' });
-    expect(macro?.config.candidateSource).toEqual({
-      kind: 'model_pattern',
-      pattern: 'deepseek-v4-flash',
+    expect(macro).toMatchObject({
+      ownership: 'system',
+      metadata: { managementOwner: 'availability-rebuild' },
     });
+    expect(macro?.config.candidateSource).toBeUndefined();
     expect(macro?.config.groups).toEqual([expect.objectContaining({
-      acceptUnassigned: true,
-      input: expect.objectContaining({ kind: 'synthetic', statusCode: 503 }),
+      input: expect.objectContaining({ kind: 'route_endpoints' }),
     })]);
     expect(macro?.config.groups[0]?.members).toEqual([
       expect.objectContaining({
@@ -155,12 +154,10 @@ describe('backup import dispatch policy migration', () => {
     expect(migrated.warnings).toHaveLength(1);
     expect(migrated.section.runtimeExecutionTargets).toEqual([]);
     expect(migrated.graphSource?.nodes).toEqual([]);
-    expect(migrated.graphSource?.macros?.[0]?.config).toMatchObject({
-      candidateSource: { kind: 'model_pattern', pattern: 'missing-account-model' },
-      groups: [expect.objectContaining({
-        input: expect.objectContaining({ kind: 'synthetic' }),
-      })],
-    });
+    expect(migrated.graphSource?.macros?.[0]?.config.candidateSource).toBeUndefined();
+    expect(migrated.graphSource?.macros?.[0]?.config.groups).toEqual([
+      expect.objectContaining({ input: expect.objectContaining({ kind: 'synthetic' }) }),
+    ]);
     expect(migrated.graphSource?.macros?.[0]?.config.groups[0]?.members).toBeUndefined();
   });
 
@@ -173,6 +170,56 @@ describe('backup import dispatch policy migration', () => {
     })));
 
     expect(migrated.nodes[0].policy).toEqual({ kind: 'inherit_default' });
+  });
+
+  it('normalizes modern imported automatic groups without changing manual dynamic selectors', () => {
+    const migrated = JSON.parse(migrateImportedRouteGraphSourceJson(JSON.stringify({
+      nodes: [],
+      edges: [],
+      macros: [
+        {
+          id: 'automatic:model-a',
+          kind: 'candidate_selector',
+          ownership: 'system',
+          enabled: true,
+          config: {
+            surface: { entry: { kind: 'none' }, output: 'route' },
+            policy: { kind: 'inherit_default' },
+            candidateSource: { kind: 'model_pattern', pattern: 'model-a' },
+            groups: [{
+              id: 'primary',
+              enabled: true,
+              acceptUnassigned: true,
+              input: { kind: 'synthetic', statusCode: 503 },
+              members: [{ memberId: 'member:a', endpointId: 'endpoint:a', weight: 23 }],
+            }],
+          },
+          metadata: { canonicalModel: 'model-a' },
+        },
+        {
+          id: 'manual:dynamic',
+          kind: 'candidate_selector',
+          ownership: 'manual',
+          enabled: true,
+          config: {
+            surface: { entry: { kind: 'none' }, output: 'route' },
+            policy: { kind: 'inherit_default' },
+            candidateSource: { kind: 'model_pattern', pattern: 'model-*' },
+            groups: [{ id: 'primary', enabled: true, input: { kind: 'synthetic', statusCode: 503 } }],
+          },
+        },
+      ],
+    })));
+
+    expect(migrated.macros[0].config).not.toHaveProperty('candidateSource');
+    expect(migrated.macros[0]).toMatchObject({
+      metadata: { managementOwner: 'availability-rebuild' },
+      config: { groups: [{ input: { kind: 'route_endpoints', endpointIds: ['endpoint:a'] } }] },
+    });
+    expect(migrated.macros[1].config.candidateSource).toEqual({
+      kind: 'model_pattern',
+      pattern: 'model-*',
+    });
   });
 
   it('moves legacy priority_order dispatchers to the default policy and rejects malformed graph JSON', () => {
