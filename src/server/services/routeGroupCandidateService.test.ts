@@ -453,6 +453,35 @@ describe("routeGroupCandidateService", () => {
       manualOverride: false,
     });
 
+    const activeAfterRestore = await getActiveRouteGraphSourceVersion();
+    expect(
+      activeAfterRestore?.sourceGraph.macros.find(
+        (macro) => macro.id === groupId,
+      )?.metadata?.managementOwner,
+    ).toBe("availability-rebuild");
+
+    const republishedWithoutOwner = await publishRouteGraphSource({
+      sourceGraph: {
+        ...activeAfterRestore!.sourceGraph,
+        macros: activeAfterRestore!.sourceGraph.macros.map((macro) => {
+          if (macro.id !== groupId) return macro;
+          const metadata = { ...macro.metadata };
+          delete metadata.managementOwner;
+          return { ...macro, metadata };
+        }),
+      },
+      createdBy: "route-group-candidate-service-test",
+    });
+    expect(republishedWithoutOwner.ok).toBe(true);
+    await expect(
+      restoreAutomaticRouteGroupCandidateManagement(groupId, [before[1]!.id]),
+    ).resolves.toMatchObject({ restoredCount: 0 });
+    expect(
+      (await getActiveRouteGraphSourceVersion())?.sourceGraph.macros.find(
+        (macro) => macro.id === groupId,
+      )?.metadata?.managementOwner,
+    ).toBe("availability-rebuild");
+
     await synchronizeAutomaticRouteGroups(candidates);
     const activeAfterRestoreSynchronization =
       await getActiveRouteGraphSourceVersion();

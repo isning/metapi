@@ -607,6 +607,7 @@ describe('selectSurfaceExecutionAttempt', () => {
       username: 'oauth-user',
       siteName: 'Codex OAuth',
       credentialKind: 'session',
+      tokenId: null,
       detail: 'HTTP 401',
     });
     expect(reportProxyAllFailedMock).toHaveBeenCalledWith({

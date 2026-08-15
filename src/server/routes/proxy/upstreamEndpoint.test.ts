@@ -31,6 +31,7 @@ import {
 import {
   extractSafePassthroughHeaders,
 } from '../../proxy-core/formats/headerPassthrough.js';
+import { buildPlatformModelRequestCredentialHeaders } from '../../services/platforms/index.js';
 
 const CODEX_DEFAULT_INSTRUCTIONS = 'You are a helpful coding assistant.';
 
@@ -918,6 +919,10 @@ describe('buildUpstreamEndpointRequest', () => {
       modelName: 'gpt-5.2-codex',
       stream: false,
       tokenValue: 'oauth-access-token',
+      modelCredentialHeaders: buildPlatformModelRequestCredentialHeaders('codex', {
+        kind: 'oauth_access_token',
+        credential: 'oauth-access-token',
+      }),
       sitePlatform: 'codex',
       siteUrl: 'https://chatgpt.com/backend-api/codex',
       openaiBody: {
@@ -1214,6 +1219,10 @@ describe('buildUpstreamEndpointRequest', () => {
       modelName: 'gemini-2.5-pro',
       stream: true,
       tokenValue: 'oauth-access-token',
+      modelCredentialHeaders: buildPlatformModelRequestCredentialHeaders('gemini-cli', {
+        kind: 'oauth_access_token',
+        credential: 'oauth-access-token',
+      }),
       oauthProvider: 'gemini-cli',
       oauthProjectId: 'project-demo',
       sitePlatform: 'gemini-cli',
@@ -1261,6 +1270,10 @@ describe('buildUpstreamEndpointRequest', () => {
       modelName: 'gemini-3-pro-preview',
       stream: false,
       tokenValue: 'oauth-access-token',
+      modelCredentialHeaders: buildPlatformModelRequestCredentialHeaders('antigravity', {
+        kind: 'oauth_access_token',
+        credential: 'oauth-access-token',
+      }),
       oauthProvider: 'antigravity',
       oauthProjectId: 'project-demo',
       sitePlatform: 'antigravity',

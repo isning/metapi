@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { isUsableAccountToken } from './accountTokenService.js';
+import { requiresManagedAccountTokens } from './accountExtraConfig.js';
 import type { DownstreamRoutingPolicy } from './downstreamPolicyTypes.js';
 import {
   buildCompiledRuntimeProjection,
@@ -450,6 +451,9 @@ function credentialExcludedByDownstreamPolicy(
 
 function resolveTokenValue(identity: ExecutionTargetIdentity): string | null {
   if (identity.token) {
+    // A stale manually authored artifact must not turn an OAuth connection
+    // into a token-key route. OAuth credentials are direct account routes.
+    if (!requiresManagedAccountTokens(identity.account)) return null;
     if (!isUsableAccountToken(identity.token)) return null;
     return asText(identity.token.token) || null;
   }

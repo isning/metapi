@@ -28,6 +28,7 @@ import {
   executionTargetIdForRouteGraphEndpoint,
 } from "./routeGraphExecutionTargetEndpointService.js";
 import { RouteGroupCommandError } from "./routeGroupCommandError.js";
+import { AVAILABILITY_ROUTE_GROUP_OWNER } from "./routeGroupAutomaticOwnership.js";
 
 export type RouteGroupCandidateCreateInput = {
   routeGroupKey: string;
@@ -641,7 +642,9 @@ export async function restoreAutomaticRouteGroupCandidateManagement(
         }),
       );
       restoredCount = selected.length;
-      if (restoredCount === 0) {
+      const ownershipNeedsRestore =
+        group.metadata?.managementOwner !== AVAILABILITY_ROUTE_GROUP_OWNER;
+      if (restoredCount === 0 && !ownershipNeedsRestore) {
         return { source, result: undefined, publish: false };
       }
       const restoredById = new Map(
@@ -706,6 +709,10 @@ export async function restoreAutomaticRouteGroupCandidateManagement(
         .map((stage) => ({ ...stage, members: materialize(stage.id) }));
       const nextMacro = {
         ...group,
+        metadata: {
+          ...group.metadata,
+          managementOwner: AVAILABILITY_ROUTE_GROUP_OWNER,
+        },
         config: { ...group.config, groups: nextStages },
       };
       return {

@@ -7,6 +7,7 @@ import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
   listAccountTokensByIds,
 } from './accountTokenService.js';
+import { supportsDirectAccountRoutingConnection } from './accountExtraConfig.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
 
@@ -162,21 +163,23 @@ async function loadActiveProbeAccountContext(accountId: number): Promise<ProbeAc
 
 async function loadProbeTargetsForAccount(context: ProbeAccountContext): Promise<ProbeTarget[]> {
   const targets: ProbeTarget[] = [];
-  const accountModels = await db.select()
-    .from(schema.modelAvailability)
-    .where(eq(schema.modelAvailability.accountId, context.account.id))
-    .orderBy(asc(schema.modelAvailability.checkedAt))
-    .all();
-  for (const row of accountModels) {
-    if (row.isManual) continue;
-    targets.push({
-      kind: 'account',
-      rowId: row.id,
-      modelName: row.modelName,
-      lastKnownAvailable: !!row.available,
-      account: context.account,
-      site: context.site,
-    });
+  if (supportsDirectAccountRoutingConnection(context.account)) {
+    const accountModels = await db.select()
+      .from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, context.account.id))
+      .orderBy(asc(schema.modelAvailability.checkedAt))
+      .all();
+    for (const row of accountModels) {
+      if (row.isManual) continue;
+      targets.push({
+        kind: 'account',
+        rowId: row.id,
+        modelName: row.modelName,
+        lastKnownAvailable: !!row.available,
+        account: context.account,
+        site: context.site,
+      });
+    }
   }
 
   const tokenRows = await db.select({

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const adapterMock = {
   getBalance: vi.fn(),
   login: vi.fn(),
+  credentialCapabilities: { session: true },
 };
 
 const selectAllMock = vi.fn();
@@ -138,8 +139,8 @@ describe('balanceService auto relogin', () => {
     expect(result).toEqual({ balance: 12, used: 1, quota: 13 });
     expect(adapterMock.login).toHaveBeenCalledTimes(1);
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
-    expect(adapterMock.getBalance.mock.calls[0][1]).toBe('stale-token');
-    expect(adapterMock.getBalance.mock.calls[1][1]).toBe('fresh-token');
+    expect(adapterMock.getBalance.mock.calls[0][0].account.credential).toBe('stale-token');
+    expect(adapterMock.getBalance.mock.calls[1][0].account.credential).toBe('fresh-token');
     expect(updateSetMock.mock.calls.some((call) => call[0]?.credential === 'fresh-token')).toBe(true);
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
@@ -269,7 +270,7 @@ describe('balanceService auto relogin', () => {
 
     expect(result).toEqual({ balance: 20, used: 1, quota: 21 });
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(1);
-    expect(adapterMock.getBalance.mock.calls[0]?.[1]).toBe('new-access-token');
+    expect(adapterMock.getBalance.mock.calls[0]?.[0].account.credential).toBe('new-access-token');
     expect(updateSetMock.mock.calls.some((call) => call[0]?.credential === 'new-access-token')).toBe(true);
     const updateWithSub2ApiAuth = updateSetMock.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
@@ -327,8 +328,8 @@ describe('balanceService auto relogin', () => {
 
     expect(result).toEqual({ balance: 8, used: 1, quota: 9 });
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
-    expect(adapterMock.getBalance.mock.calls[0]?.[1]).toBe('expired-access-token');
-    expect(adapterMock.getBalance.mock.calls[1]?.[1]).toBe('retried-access-token');
+    expect(adapterMock.getBalance.mock.calls[0]?.[0].account.credential).toBe('expired-access-token');
+    expect(adapterMock.getBalance.mock.calls[1]?.[0].account.credential).toBe('retried-access-token');
     expect(adapterMock.login).not.toHaveBeenCalled();
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });

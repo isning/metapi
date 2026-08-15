@@ -123,11 +123,9 @@ describe('refreshModelsForAccount credential discovery', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('discovers models from account session credential without account_tokens', async () => {
+  it('does not treat an account session credential as a model API key', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'session-token' ? ['claude-sonnet-4-5-20250929', 'claude-opus-4-6'] : []
-    ));
+    getModelsMock.mockResolvedValue(['should-not-be-visible']);
 
     const site = await db.insert(schema.sites).values({
       name: 'site-a',
@@ -148,31 +146,80 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(result).toMatchObject({
       accountId: account.id,
       refreshed: true,
-      status: 'success',
-      errorCode: null,
-      errorMessage: '',
-      modelCount: 2,
-      modelsPreview: ['claude-sonnet-4-5-20250929', 'claude-opus-4-6'],
+      status: 'failed',
+      errorCode: 'empty_models',
+      modelCount: 0,
+      modelsPreview: [],
       tokenScanned: 0,
-      discoveredByCredential: true,
+      discoveredByCredential: false,
     });
 
     const rows = await db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))
       .all();
-    expect(rows.map((row) => row.modelName).sort()).toEqual([
-      'claude-opus-4-6',
-      'claude-sonnet-4-5-20250929',
-    ]);
+    expect(rows).toEqual([]);
 
     const tokenRows = await db.select().from(schema.tokenModelAvailability).all();
     expect(tokenRows).toHaveLength(0);
+    expect(getModelsMock).not.toHaveBeenCalled();
   });
 
-  it('uses the configured ai endpoint for direct model discovery credentials', async () => {
-    getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
-      baseUrl === 'https://api.example.com' && token === 'session-token'
+  it('does not probe account token management for a legacy structured OAuth account', async () => {
+    getApiTokenMock.mockResolvedValue('sk-must-not-be-discovered');
+
+    const site = await db.insert(schema.sites).values({
+      name: 'legacy-oauth-site',
+      url: 'https://legacy-oauth.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'legacy-oauth-user',
+      // Older rows can retain this value while structured OAuth columns are
+      // already present. The structured identity remains authoritative.
+      credentialMode: 'session',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
+      oauthProvider: 'custom-oauth',
+      status: 'active',
+    }).returning().get();
+
+    await refreshModelsForAccount(account.id);
+
+    expect(getApiTokenMock).not.toHaveBeenCalled();
+    expect(getModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not probe account token management for OAuth identity in extraConfig', async () => {
+    getApiTokenMock.mockResolvedValue('sk-must-not-be-discovered');
+
+    const site = await db.insert(schema.sites).values({
+      name: 'legacy-oauth-extra-site',
+      url: 'https://legacy-oauth-extra.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'legacy-oauth-extra-user',
+      credentialMode: 'session',
+      credential: 'oauth-access-token',
+      credentialKind: 'oauth_access_token',
+      status: 'active',
+      extraConfig: JSON.stringify({ oauth: { provider: 'custom-oauth' } }),
+    }).returning().get();
+
+    await refreshModelsForAccount(account.id);
+
+    expect(getApiTokenMock).not.toHaveBeenCalled();
+    expect(getModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured ai endpoint for synced model API keys', async () => {
+    getApiTokenMock.mockResolvedValue('sk-synced-model-key');
+    getModelsMock.mockImplementation(async (context) => (
+      context.endpoint.baseUrl === 'https://api.example.com' && context.token?.token === 'sk-synced-model-key'
         ? ['gpt-4.1']
         : []
     ));
@@ -208,9 +255,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined, {
-      basePathMode: 'protocol_default',
-    });
+    expect(getModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://api.example.com', basePathMode: 'protocol_default' },
+      token: expect.objectContaining({ token: 'sk-synced-model-key' }),
+    }));
   });
 
   it('discovers models from the configured model catalog source before adapter probing', async () => {
@@ -250,6 +298,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'catalog-model-key',
+      token: 'sk-catalog-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -259,7 +315,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       status: 'success',
       modelCount: 2,
       modelsPreview: ['catalog-model-a', 'catalog-model-b'],
-      discoveredByCredential: true,
+      discoveredByCredential: false,
     });
     expect(getModelsMock).not.toHaveBeenCalled();
     expect(undiciFetchMock).toHaveBeenCalledWith(
@@ -267,7 +323,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({
-          Authorization: 'Bearer session-token',
+          Authorization: 'Bearer sk-catalog-model-key',
         }),
       }),
     );
@@ -307,6 +363,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'ark-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'ark-model-key',
+      token: 'sk-ark-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -335,6 +399,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'dedupe-model-key',
+      token: 'sk-dedupe-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -398,7 +470,7 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const results = await Promise.allSettled([firstRefresh, secondRefresh]);
     expect(results.every((item) => item.status === 'fulfilled')).toBe(true);
-    expect(getModelsMock).toHaveBeenCalledTimes(2);
+    expect(getModelsMock).toHaveBeenCalledTimes(1);
 
     const modelRows = await db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))
@@ -416,8 +488,8 @@ describe('refreshModelsForAccount credential discovery', () => {
 
   it('updates existing token model availability rows during refresh and rebuild', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'sk-refresh-token'
+    getModelsMock.mockImplementation(async (context) => (
+      context.token?.token === 'sk-refresh-token'
         ? ['claude-haiku-4-5-20251001', 'claude-opus-4-6']
         : []
     ));
@@ -475,7 +547,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
   });
 
-  it('marks runtime health unhealthy when model discovery fails', async () => {
+  it('keeps model discovery failures in the model refresh result, not account health', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));
 
@@ -518,10 +590,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     const parsed = JSON.parse(latest!.extraConfig || '{}');
-    expect(parsed.runtimeHealth?.state).toBe('unhealthy');
-    expect(parsed.runtimeHealth?.source).toBe('model-discovery');
-    expect(parsed.runtimeHealth?.reason).toBe('模型获取失败，API Key 已无效');
-    expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(parsed.runtimeHealth).toBeUndefined();
   });
 
   it('normalizes anyrouter html challenge parse errors during model discovery', async () => {
@@ -541,6 +610,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'shielded-model-key',
+      token: 'sk-shielded-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -559,7 +636,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.accounts.id, account.id))
       .get();
     const parsed = JSON.parse(latest!.extraConfig || '{}');
-    expect(parsed.runtimeHealth?.reason).toBe('模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型');
+    expect(parsed.runtimeHealth).toBeUndefined();
   });
 
   it('keeps shield guidance when challenge html arrives with http 403 discovery failure', async () => {
@@ -579,6 +656,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'shielded-403-model-key',
+      token: 'sk-shielded-403-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     const result = await refreshModelsForAccount(account.id);
 
@@ -593,8 +678,8 @@ describe('refreshModelsForAccount credential discovery', () => {
 
   it('discovers API Key account models only through its managed account token', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'sk-migration-hidden' ? ['gpt-4.1'] : ['unexpected-credential']
+    getModelsMock.mockImplementation(async (context) => (
+      context.token?.token === 'sk-migration-hidden' ? ['gpt-4.1'] : ['unexpected-credential']
     ));
 
     const site = await db.insert(schema.sites).values({
@@ -793,8 +878,8 @@ describe('refreshModelsForAccount credential discovery', () => {
 
   it('does not scan masked_pending placeholders as token credentials', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'sk-mask***tail' ? ['gpt-5.2-codex'] : []
+    getModelsMock.mockImplementation(async (context) => (
+      context.token?.token === 'sk-mask***tail' ? ['gpt-5.2-codex'] : []
     ));
 
     const site = await db.insert(schema.sites).values({
@@ -1573,7 +1658,50 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.oauth).not.toHaveProperty('provider');
     expect(parsed.oauth.lastModelSyncError).toContain('HTTP 403');
     expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
-    expect(parsed.runtimeHealth?.state).toBe('unhealthy');
+    expect(parsed.runtimeHealth).toBeUndefined();
+  });
+
+  it('backfills legacy OAuth identity before replacing OAuth discovery state', async () => {
+    undiciFetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'forbidden' }),
+      text: async () => 'forbidden',
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'legacy-codex-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'legacy@example.com',
+      credential: 'oauth-access-token',
+      credentialMode: 'session',
+      credentialKind: 'adapter_default',
+      status: 'active',
+      extraConfig: JSON.stringify({
+        oauth: {
+          provider: 'codex',
+          accountId: 'legacy-codex-account',
+          email: 'legacy@example.com',
+        },
+      }),
+    }).returning().get();
+
+    await refreshModelsForAccount(account.id);
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    expect(latest).toMatchObject({
+      oauthProvider: 'codex',
+      oauthAccountKey: 'legacy-codex-account',
+    });
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({ modelDiscoveryStatus: 'abnormal' });
+    expect(parsed.oauth).not.toHaveProperty('provider');
   });
 
   it('applies account proxy override to codex oauth cloud discovery requests', async () => {
@@ -2264,6 +2392,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'manual-model-key',
+      token: 'sk-manual-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     // Add a manual model before refresh
     await db.insert(schema.modelAvailability).values({
@@ -2311,6 +2447,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       credential: 'session-token',
       status: 'active',
     }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'overlap-model-key',
+      token: 'sk-overlap-model-key',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
 
     // Manual model that also exists upstream
     await db.insert(schema.modelAvailability).values({
@@ -2507,7 +2651,8 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(activeGraph.sourceGraph.nodes).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ endpointKind: 'route_product' }),
     ]));
-    expect(activeGraph.sourceGraph.macros).toEqual(expect.arrayContaining([
+    const automaticMacro = activeGraph.sourceGraph.macros?.find((macro) => macro.id === generatedRoute.id);
+    expect(automaticMacro).toEqual(
       expect.objectContaining({
         id: generatedRoute.id,
         kind: 'candidate_selector',
@@ -2515,11 +2660,16 @@ describe('refreshModelsForAccount credential discovery', () => {
         config: expect.objectContaining({
           policy: { kind: 'builtin', builtin: 'stable_first' },
           groups: expect.arrayContaining([
-            expect.objectContaining({ id: fallbackStage?.id }),
+            expect.objectContaining({
+              id: fallbackStage?.id,
+              input: expect.objectContaining({ kind: 'route_endpoints' }),
+            }),
           ]),
         }),
       }),
-    ]));
+    );
+    expect(automaticMacro?.config).not.toHaveProperty('candidateSource');
+    expect(generatedRoute.sourceSelection).toMatchObject({ kind: 'explicit' });
     const routerPlan = compiled.compiled.compiledRouterBundle?.plans.find((plan) => plan.publicModelName === 'gpt-5.4');
     expect(routerPlan).toEqual(expect.objectContaining({
       publicModelName: 'gpt-5.4',

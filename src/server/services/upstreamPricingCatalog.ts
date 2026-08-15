@@ -67,7 +67,7 @@ export function resolveUpstreamPricingModelGroup(input: {
 
 export interface UpstreamPricingCredential {
   token?: string | null;
-  tokenKind: 'access_token' | 'api_token' | 'site_api_key' | 'public';
+  tokenKind: 'access_token' | 'session_cookie' | 'api_token' | 'site_api_key' | 'public';
   platformUserId?: number;
 }
 

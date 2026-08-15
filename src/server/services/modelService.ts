@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db, runtimeDbDialect, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
+import { buildPlatformCredentialContext } from './adapterCredentialContextService.js';
 import {
   ensureDefaultTokenForAccount,
   listAccountTokens,
@@ -20,7 +21,6 @@ import {
 import { invalidateRouteGraphReadCaches } from './routeGraphService.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
-import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -39,7 +39,6 @@ import {
   discoverCodexModelsFromCloud,
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
-import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
 import {
   discoverModelsFromCatalogSources,
   ensureDefaultModelCatalogSourcesForSite,
@@ -112,16 +111,6 @@ export type ModelRefreshSuccessResult = {
   tokenScanned: number;
   discoveredByCredential: boolean;
   discoveredApiToken: boolean;
-  postProbeResult?: {
-    scope: 'single' | 'all';
-    probed: number;
-    unsupported: number;
-    details: Array<{
-      modelName: string;
-      status: RuntimeModelProbeStatus;
-      latencyMs: number | null;
-    }>;
-  };
 };
 
 export type ModelRefreshResult =
@@ -228,14 +217,14 @@ function normalizeModels(models: string[]): string[] {
 
 async function discoverModelsViaCatalogOrAdapter(input: {
   site: typeof schema.sites.$inferSelect;
-  credential: string;
+  modelApiKey: string;
   catalogSources: ModelCatalogSourceRow[];
   adapterGetModels: () => Promise<string[]>;
   recordFailure: (err: unknown) => void;
 }): Promise<{ models: string[]; latencyMs: number | null; source: 'catalog' | 'adapter' | 'none' }> {
   const catalogResult = await discoverModelsFromCatalogSources({
     site: input.site,
-    credential: input.credential,
+    credential: input.modelApiKey,
     sources: input.catalogSources,
   });
   if (catalogResult.models.length > 0) {
@@ -325,10 +314,17 @@ async function updateOauthModelDiscoveryState(input: {
   lastModelSyncError?: string;
   lastDiscoveredModels?: string[];
 }) {
-  const oauth = getOauthInfoFromAccount(input.account);
+  // OAuth refresh may persist a new account key while discovery is in flight.
+  // Read the current row before writing diagnostics so an older discovery
+  // snapshot cannot restore stale structured identity fields.
+  const currentAccount = await db.select().from(schema.accounts)
+    .where(eq(schema.accounts.id, input.account.id))
+    .get() || input.account;
+  const oauth = getOauthInfoFromAccount(currentAccount)
+    || getOauthInfoFromAccount(input.account);
   if (!oauth) return input.account.extraConfig || null;
-  const extraConfig = mergeAccountExtraConfig(input.account.extraConfig, {
-    oauth: buildStoredOauthStateFromAccount(input.account, {
+  const extraConfig = mergeAccountExtraConfig(currentAccount.extraConfig, {
+    oauth: buildStoredOauthStateFromAccount(currentAccount, {
       provider: oauth.provider,
       modelDiscoveryStatus: input.status,
       lastModelSyncAt: input.checkedAt,
@@ -337,9 +333,16 @@ async function updateOauthModelDiscoveryState(input: {
     }),
   });
   await db.update(schema.accounts).set({
+    // New records keep OAuth identity in structured columns. Backfill the same
+    // identity here before replacing legacy extraConfig.oauth state, otherwise
+    // a status-only refresh would erase the only provider marker.
+    oauthProvider: currentAccount.oauthProvider || oauth.provider,
+    oauthAccountKey: currentAccount.oauthAccountKey || oauth.accountKey || null,
+    oauthProjectId: currentAccount.oauthProjectId || oauth.projectId || null,
     extraConfig,
     updatedAt: input.checkedAt,
   }).where(eq(schema.accounts.id, input.account.id)).run();
+  invalidateRouteGraphReadCaches('account-mutated');
   return extraConfig;
 }
 
@@ -416,7 +419,6 @@ function buildSuccessfulRefreshResult(input: {
   tokenScanned: number;
   discoveredByCredential: boolean;
   discoveredApiToken: boolean;
-  postProbeResult?: ModelRefreshSuccessResult['postProbeResult'];
 }): ModelRefreshSuccessResult {
   return {
     accountId: input.accountId,
@@ -429,7 +431,6 @@ function buildSuccessfulRefreshResult(input: {
     tokenScanned: input.tokenScanned,
     discoveredByCredential: input.discoveredByCredential,
     discoveredApiToken: input.discoveredApiToken,
-    postProbeResult: input.postProbeResult,
   };
 }
 
@@ -474,225 +475,6 @@ async function retryOauthModelDiscoveryWithRefresh<T>(input: {
       throwWithRefreshedOauthAccount(retryError, discoveryAccount);
     }
   }
-}
-
-export type ProbeSiteModelsResult = {
-  success: boolean;
-  error?: string;
-  scope: 'single' | 'all';
-  probed: number;
-  unsupported: number;
-  details: Array<{ modelName: string; status: RuntimeModelProbeStatus; latencyMs: number | null; reason?: string }>;
-};
-
-export type ProbeSiteModelsProgress =
-  | { type: 'start'; scope: 'single' | 'all'; modelsCount: number; modelsToProbe: string[] }
-  | { type: 'model'; modelName: string; status: RuntimeModelProbeStatus; latencyMs: number | null; latencyExceeded?: true; reason?: string }
-  | { type: 'action'; modelName: string; action: 'disabled' };
-
-export async function probeSiteModels(
-  siteId: number,
-  options?: { scope?: 'single' | 'all'; modelName?: string; concurrency?: number; latencyThresholdMs?: number; signal?: AbortSignal },
-  onProgress?: (event: ProbeSiteModelsProgress) => void,
-): Promise<ProbeSiteModelsResult> {
-  const empty = (scope: 'single' | 'all', error: string): ProbeSiteModelsResult =>
-    ({ success: false, error, scope, probed: 0, unsupported: 0, details: [] });
-
-  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
-  if (!site) return empty('single', '站点不存在');
-
-  const account = await db.select().from(schema.accounts)
-    .where(and(eq(schema.accounts.siteId, siteId), eq(schema.accounts.status, 'active')))
-    .get();
-  if (!account) return empty('single', '该站点没有可用的活跃账号');
-
-  const modelRows = await db.select({ modelName: schema.modelAvailability.modelName })
-    .from(schema.modelAvailability)
-    .where(and(
-      eq(schema.modelAvailability.accountId, account.id),
-      eq(schema.modelAvailability.available, true),
-    ))
-    .all();
-
-  const scope = (options?.scope ?? (site.postRefreshProbeScope === 'all' ? 'all' : 'single')) as 'single' | 'all';
-  const availableModels = modelRows.map((r) => r.modelName.trim()).filter((m) => m.length > 0);
-  if (availableModels.length === 0) {
-    return empty(scope, '该站点暂无已发现模型，请先刷新模型列表');
-  }
-
-  let modelsToProbe: string[];
-  if (scope === 'all') {
-    modelsToProbe = availableModels;
-  } else {
-    const configModel = ((options?.modelName ?? site.postRefreshProbeModel) || '').trim().toLowerCase();
-    const found = configModel
-      ? (availableModels.find((m) => m.toLowerCase() === configModel) ?? availableModels[0])
-      : availableModels[0];
-    modelsToProbe = [found];
-  }
-
-  onProgress?.({ type: 'start', scope, modelsCount: modelsToProbe.length, modelsToProbe });
-
-  // Probe models concurrently, limited by modelAvailabilityProbeConcurrency
-  const concurrency = Math.max(1, options?.concurrency ?? 10);
-  const detailsMap = new Map<string, { modelName: string; status: RuntimeModelProbeStatus; latencyMs: number | null; reason?: string }>();
-
-  let cursor = 0;
-  async function worker() {
-    while (cursor < modelsToProbe.length) {
-      if (options?.signal?.aborted) break;
-      const modelName = modelsToProbe[cursor++];
-      try {
-        const result = await probeRuntimeModel({
-          site, account, modelName, timeoutMs: config.modelAvailabilityProbeTimeoutMs,
-        });
-        const threshold = options?.latencyThresholdMs ?? 0;
-        const latencyExceeded = (
-          result.status === 'supported'
-          && threshold > 0
-          && result.latencyMs != null
-          && result.latencyMs > threshold
-        );
-        const effectiveStatus: RuntimeModelProbeStatus = latencyExceeded ? 'unsupported' : result.status;
-        const effectiveReason = latencyExceeded
-          ? `响应延迟 ${result.latencyMs}ms 超过阈值 ${threshold}ms`
-          : result.reason;
-        detailsMap.set(modelName, { modelName, status: effectiveStatus, latencyMs: result.latencyMs, reason: effectiveReason });
-        onProgress?.(latencyExceeded
-          ? { type: 'model', modelName, status: effectiveStatus, latencyMs: result.latencyMs, latencyExceeded: true, reason: effectiveReason }
-          : { type: 'model', modelName, status: effectiveStatus, latencyMs: result.latencyMs, reason: effectiveReason },
-        );
-      } catch (err) {
-        const errReason = err instanceof Error ? err.message : '探测异常';
-        console.warn(`[probe-site-now] probe failed for site ${siteId} model ${modelName}`, err);
-        detailsMap.set(modelName, { modelName, status: 'inconclusive', latencyMs: null, reason: errReason });
-        onProgress?.({ type: 'model', modelName, status: 'inconclusive', latencyMs: null, reason: errReason });
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, modelsToProbe.length) }, worker));
-
-  // Restore original model order for the final details list
-  const details = modelsToProbe.map((m) => detailsMap.get(m)!);
-
-  const unsupportedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive').map((d) => d.modelName);
-  if (unsupportedModels.length > 0) {
-    const checkedAt = new Date().toISOString();
-    for (const modelName of unsupportedModels) {
-      await db.update(schema.modelAvailability)
-        .set({ available: false, checkedAt })
-        .where(and(
-          eq(schema.modelAvailability.accountId, account.id),
-          eq(schema.modelAvailability.modelName, modelName),
-        ))
-        .run();
-      await db.insert(schema.siteDisabledModels)
-        .values({ siteId, modelName })
-        .onConflictDoNothing()
-        .run();
-      onProgress?.({ type: 'action', modelName, action: 'disabled' });
-    }
-    const reason = unsupportedModels.length === 1
-      ? `手动探测失败：模型 ${unsupportedModels[0]} 不可用`
-      : `手动探测失败：${unsupportedModels.length} 个模型不可用（${unsupportedModels.slice(0, 3).join('、')}${unsupportedModels.length > 3 ? '…' : ''}）`;
-    await setAccountRuntimeHealth(account.id, { state: 'unhealthy', reason, source: 'manual-probe', checkedAt });
-    rebuildManagedRouteGroupsFromAvailability().catch((err) => {
-      console.warn('[probe-site-now] route rebuild failed', err);
-    });
-  }
-
-  return { success: true, scope, probed: details.length, unsupported: unsupportedModels.length, details };
-}
-
-async function runPostRefreshProbeIfEnabled(params: {
-  account: typeof schema.accounts.$inferSelect;
-  site: typeof schema.sites.$inferSelect;
-  discoveredModels: string[];
-}): Promise<ModelRefreshSuccessResult['postProbeResult']> {
-  if (!params.site.postRefreshProbeEnabled) return undefined;
-  if (params.discoveredModels.length === 0) return undefined;
-
-  const scope = (params.site.postRefreshProbeScope === 'all' ? 'all' : 'single') as 'single' | 'all';
-
-  // Determine which models to probe
-  let modelsToProbe: string[];
-  if (scope === 'all') {
-    modelsToProbe = params.discoveredModels;
-  } else {
-    const configModel = (params.site.postRefreshProbeModel || '').trim().toLowerCase();
-    const found = configModel
-      ? (params.discoveredModels.find((m) => m.toLowerCase() === configModel) ?? params.discoveredModels[0])
-      : params.discoveredModels[0];
-    modelsToProbe = [found];
-  }
-
-  // runPostRefreshProbeIfEnabled: apply latency threshold from site config
-  const threshold = params.site.postRefreshProbeLatencyThresholdMs ?? 0;
-  // Probe each model sequentially
-  const details: Array<{ modelName: string; status: RuntimeModelProbeStatus; latencyMs: number | null }> = [];
-  for (const modelName of modelsToProbe) {
-    try {
-      const result = await probeRuntimeModel({
-        site: params.site,
-        account: params.account,
-        modelName,
-        timeoutMs: config.modelAvailabilityProbeTimeoutMs,
-      });
-      const latencyExceeded = (
-        result.status === 'supported'
-        && threshold > 0
-        && result.latencyMs != null
-        && result.latencyMs > threshold
-      );
-      const effectiveStatus: RuntimeModelProbeStatus = latencyExceeded ? 'unsupported' : result.status;
-      details.push({ modelName, status: effectiveStatus, latencyMs: result.latencyMs });
-    } catch (err) {
-      console.warn(`[post-refresh-probe] probe failed for account ${params.account.id} model ${modelName}`, err);
-      details.push({ modelName, status: 'inconclusive', latencyMs: null });
-    }
-  }
-
-  // Handle unsupported models
-  const unsupportedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive').map((d) => d.modelName);
-  if (unsupportedModels.length > 0) {
-    const checkedAt = new Date().toISOString();
-    for (const modelName of unsupportedModels) {
-      // Mark model as unavailable
-      await db.update(schema.modelAvailability)
-        .set({ available: false, checkedAt })
-        .where(and(
-          eq(schema.modelAvailability.accountId, params.account.id),
-          eq(schema.modelAvailability.modelName, modelName),
-        ))
-        .run();
-      // Add to site-level disabled models
-      await db.insert(schema.siteDisabledModels)
-        .values({ siteId: params.site.id, modelName })
-        .onConflictDoNothing()
-        .run();
-    }
-    // Update account health
-    const reason = unsupportedModels.length === 1
-      ? `刷新后探测失败：模型 ${unsupportedModels[0]} 不可用`
-      : `刷新后探测失败：${unsupportedModels.length} 个模型不可用（${unsupportedModels.slice(0, 3).join('、')}${unsupportedModels.length > 3 ? '…' : ''}）`;
-    await setAccountRuntimeHealth(params.account.id, {
-      state: 'unhealthy',
-      reason,
-      source: 'post-refresh-probe',
-      checkedAt,
-    });
-    // Single route rebuild for all changes
-    rebuildManagedRouteGroupsFromAvailability().catch((err) => {
-      console.warn('[post-refresh-probe] route rebuild failed', err);
-    });
-  }
-
-  return {
-    scope,
-    probed: details.length,
-    unsupported: unsupportedModels.length,
-    details,
-  };
 }
 
 export async function refreshModelsForAccount(
@@ -825,17 +607,6 @@ export async function refreshModelsForAccount(
         status: 'healthy',
         lastDiscoveredModels: codexModels,
       });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Codex 云端模型探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const codexPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: codexModels,
-      });
       return buildSuccessfulRefreshResult({
         accountId,
         modelCount: codexModels.length,
@@ -843,7 +614,6 @@ export async function refreshModelsForAccount(
         tokenScanned: 0,
         discoveredByCredential: true,
         discoveredApiToken: false,
-        postProbeResult: codexPostProbeResult,
       });
     } catch (err) {
       discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
@@ -856,12 +626,6 @@ export async function refreshModelsForAccount(
         status: 'abnormal',
         lastModelSyncError: errorMessage,
         lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
       });
       await restorePreviousAvailability();
       return buildFailedRefreshResult({
@@ -911,17 +675,6 @@ export async function refreshModelsForAccount(
         status: 'healthy',
         lastDiscoveredModels: claudeModels,
       });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Claude OAuth 模型探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const claudePostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: claudeModels,
-      });
       return buildSuccessfulRefreshResult({
         accountId,
         modelCount: claudeModels.length,
@@ -929,7 +682,6 @@ export async function refreshModelsForAccount(
         tokenScanned: 0,
         discoveredByCredential: true,
         discoveredApiToken: false,
-        postProbeResult: claudePostProbeResult,
       });
     } catch (err) {
       discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
@@ -942,12 +694,6 @@ export async function refreshModelsForAccount(
         status: 'abnormal',
         lastModelSyncError: errorMessage,
         lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
       });
       await restorePreviousAvailability();
       return buildFailedRefreshResult({
@@ -1011,17 +757,6 @@ export async function refreshModelsForAccount(
         status: 'healthy',
         lastDiscoveredModels: GEMINI_CLI_STATIC_MODELS,
       });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Gemini CLI OAuth 健康探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const geminiPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: GEMINI_CLI_STATIC_MODELS,
-      });
       return buildSuccessfulRefreshResult({
         accountId,
         modelCount: GEMINI_CLI_STATIC_MODELS.length,
@@ -1029,7 +764,6 @@ export async function refreshModelsForAccount(
         tokenScanned: 0,
         discoveredByCredential: true,
         discoveredApiToken: false,
-        postProbeResult: geminiPostProbeResult,
       });
     } catch (err) {
       const rawMessage = (err as { message?: string })?.message || 'gemini cli oauth validation failed';
@@ -1041,12 +775,6 @@ export async function refreshModelsForAccount(
         status: 'abnormal',
         lastModelSyncError: errorMessage,
         lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
       });
       await restorePreviousAvailability();
       return buildFailedRefreshResult({
@@ -1097,17 +825,6 @@ export async function refreshModelsForAccount(
         status: 'healthy',
         lastDiscoveredModels: antigravityModels,
       });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Antigravity OAuth 健康探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const antigravityPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: antigravityModels,
-      });
       return buildSuccessfulRefreshResult({
         accountId,
         modelCount: antigravityModels.length,
@@ -1115,7 +832,6 @@ export async function refreshModelsForAccount(
         tokenScanned: 0,
         discoveredByCredential: true,
         discoveredApiToken: false,
-        postProbeResult: antigravityPostProbeResult,
       });
     } catch (err) {
       discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
@@ -1128,12 +844,6 @@ export async function refreshModelsForAccount(
         status: 'abnormal',
         lastModelSyncError: errorMessage,
         lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
       });
       await restorePreviousAvailability();
       return buildFailedRefreshResult({
@@ -1151,15 +861,18 @@ export async function refreshModelsForAccount(
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let discoveredApiToken: string | null = null;
 
   const managementCredential = getAccountManagementCredential(account) || '';
-  if (account.credentialMode !== 'apikey' && managementCredential) {
+  const usesManagedTokens = requiresManagedAccountTokens(account);
+  if (usesManagedTokens && managementCredential) {
     try {
       discoveredApiToken = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(site.url, managementCredential, platformUserId)),
+          () => adapter.getApiToken(buildPlatformCredentialContext({
+            endpoint: { baseUrl: site.url },
+            account,
+          }))),
         API_TOKEN_DISCOVERY_TIMEOUT_MS,
         `api token discovery timeout (${Math.round(API_TOKEN_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
       );
@@ -1171,7 +884,6 @@ export async function refreshModelsForAccount(
     } catch { }
   }
 
-  const usesManagedTokens = requiresManagedAccountTokens(account);
   let enabledTokens = usesManagedTokens
     ? await listUsableAccountTokens(account.id)
     : [];
@@ -1182,12 +894,6 @@ export async function refreshModelsForAccount(
     const rawMessage = '当前站点的 API 请求地址均不可用';
     const errorCode = classifyModelDiscoveryError(rawMessage);
     const errorMessage = rawMessage;
-    await setAccountRuntimeHealth(account.id, {
-      state: 'unhealthy',
-      reason: errorMessage,
-      source: 'model-discovery',
-      checkedAt: new Date().toISOString(),
-    });
     await restorePreviousAvailability();
     return buildFailedRefreshResult({
       accountId,
@@ -1210,7 +916,6 @@ export async function refreshModelsForAccount(
   const catalogSources = await ensureDefaultModelCatalogSourcesForSite(site.id);
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
-  const attemptedCredentials = new Set<string>();
   const failureMessages: string[] = [];
   const recordFailure = (err: unknown) => {
     const message = (err as { message?: string })?.message || String(err || '');
@@ -1231,45 +936,20 @@ export async function refreshModelsForAccount(
     }
   };
 
-  const discoverModelsWithCredential = async (credentialRaw: string | null | undefined) => {
-    const credential = (credentialRaw || '').trim();
-    if (!credential) return;
-    if (isMaskedTokenValue(credential)) return;
-    if (attemptedCredentials.has(credential)) return;
-    attemptedCredentials.add(credential);
-
-    const discovery = await withTimeout(
-      () => withAccountProxyOverride(accountProxyUrl,
-        () => discoverModelsViaCatalogOrAdapter({
-          site,
-          credential,
-          catalogSources,
-          adapterGetModels: () => adapter.getModels(aiBaseUrl, credential, platformUserId, adapterModelDiscoveryOptions),
-          recordFailure,
-        })),
-      MODEL_DISCOVERY_TIMEOUT_MS,
-      `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-    ).catch((error) => {
-      recordFailure(error);
-      return { models: [], latencyMs: null, source: 'none' as const };
-    });
-    const models = discovery.models;
-    if (models.length === 0) return;
-    discoveredByCredential = true;
-    mergeDiscoveredModels(models, discovery.latencyMs);
-  };
-
-  await discoverModelsWithCredential(discoveredApiToken);
-  await discoverModelsWithCredential(managementCredential);
-
+  // A connection credential authorizes account-management APIs only. Every
+  // non-OAuth model discovery request uses a key read back from account_tokens.
   for (const token of enabledTokens) {
     const discovery = await withTimeout(
       () => withAccountProxyOverride(accountProxyUrl,
         () => discoverModelsViaCatalogOrAdapter({
           site,
-          credential: token.token,
+          modelApiKey: token.token,
           catalogSources,
-          adapterGetModels: () => adapter.getModels(aiBaseUrl, token.token, platformUserId, adapterModelDiscoveryOptions),
+          adapterGetModels: () => adapter.getModels(buildPlatformCredentialContext({
+            endpoint: { baseUrl: aiBaseUrl, basePathMode: adapterModelDiscoveryOptions.basePathMode },
+            account,
+            token,
+          })),
           recordFailure,
         })),
       MODEL_DISCOVERY_TIMEOUT_MS,
@@ -1303,12 +983,6 @@ export async function refreshModelsForAccount(
     const firstMessage = failureMessages[0] || '';
     const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
     const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
-    await setAccountRuntimeHealth(account.id, {
-      state: 'unhealthy',
-      reason: errorMessage,
-      source: 'model-discovery',
-      checkedAt: new Date().toISOString(),
-    });
     await restorePreviousAvailability();
     return buildFailedRefreshResult({
       accountId,
@@ -1334,19 +1008,7 @@ export async function refreshModelsForAccount(
     ).run();
   }
 
-  await setAccountRuntimeHealth(account.id, {
-    state: 'healthy',
-    reason: '模型探测成功',
-    source: 'model-discovery',
-    checkedAt,
-  });
-
   const modelsPreview = Array.from(accountModels.values()).slice(0, 10);
-  const standardPostProbeResult = await runPostRefreshProbeIfEnabled({
-    account,
-    site,
-    discoveredModels: Array.from(accountModels.values()),
-  });
   return buildSuccessfulRefreshResult({
     accountId,
     modelCount: accountModels.size,
@@ -1354,7 +1016,6 @@ export async function refreshModelsForAccount(
     tokenScanned: scannedTokenCount,
     discoveredByCredential,
     discoveredApiToken: !!discoveredApiToken,
-    postProbeResult: standardPostProbeResult,
   });
 }
 

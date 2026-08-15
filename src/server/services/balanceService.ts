@@ -21,6 +21,8 @@ import {
   isSub2ApiPlatform,
 } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
+import { buildPlatformCredentialContext } from './adapterCredentialContextService.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -246,8 +248,8 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.credential;
+  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
 
@@ -269,7 +271,10 @@ export async function refreshBalance(accountId: number) {
     }
   }
   const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
-    () => adapter.getBalance(site.url, token, platformUserId));
+    () => adapter.getBalance(buildPlatformCredentialContext({
+      endpoint: { baseUrl: site.url },
+      account: { ...account, credential: token, extraConfig: activeExtraConfig },
+    })));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
     setAccountRuntimeHealth(account.id, {
@@ -313,11 +318,19 @@ export async function refreshBalance(accountId: number) {
         await handleBalanceError(retryErr);
       }
     } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await refreshAccountSessionFromAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+      const refreshedSession = await refreshAccountSessionFromAutoRelogin(account, site);
+      if (refreshedSession) {
+        activeAccessToken = refreshedSession.credential;
         try {
-          balanceInfo = await readBalance(activeAccessToken);
+          balanceInfo = await withAccountProxyOverride(accountProxyUrl,
+            () => adapter.getBalance(buildPlatformCredentialContext({
+              endpoint: { baseUrl: site.url },
+              account: {
+                ...account,
+                credential: refreshedSession.credential,
+                credentialKind: refreshedSession.credentialKind,
+              },
+            })));
         } catch (retryErr: any) {
           await handleBalanceError(retryErr);
         }
@@ -375,10 +388,7 @@ export async function refreshBalance(accountId: number) {
     updates.extraConfig = nextExtraConfig;
   }
 
-  await db.update(schema.accounts)
-    .set(updates)
-    .where(eq(schema.accounts.id, accountId))
-    .run();
+  await updateAccountRuntimeIdentity(accountId, updates);
 
   setAccountRuntimeHealth(account.id, {
     state: keepUnsupportedCheckinDegraded ? 'degraded' : 'healthy',

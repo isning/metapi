@@ -31,6 +31,10 @@ import {
 } from "./runtimeExecutionTargetService.js";
 import { assertNoRouteGroupPublicExposureConflicts } from "./routeGroupPublicExposureService.js";
 import { advanceRouteGroupManagementCatalogRevision } from "./routeGroupManagementCatalogRevisionService.js";
+import {
+  AVAILABILITY_ROUTE_GROUP_OWNER,
+  isAvailabilityManagedRouteGroup,
+} from "./routeGroupAutomaticOwnership.js";
 
 export type AutomaticRouteGroupCandidate = {
   accountId: number;
@@ -67,8 +71,6 @@ export type AutomaticRouteGroupSynchronizationResult = {
   removedRoutes: number;
 };
 
-const AVAILABILITY_SYNC_OWNER = "availability-rebuild";
-
 function text(value: unknown): string {
   return String(value || "").trim();
 }
@@ -85,10 +87,7 @@ function automaticMacrosByModel(
     if (
       macro.kind !== "candidate_selector" ||
       !isAutomaticRouteGroupFacadeMacro(macro) ||
-      (
-        macro.metadata?.managementOwner !== AVAILABILITY_SYNC_OWNER &&
-        routeGroupFacadeVisibility(macro) !== "public"
-      )
+      !isAvailabilityManagedRouteGroup(macro)
     )
       continue;
     const key = modelKey(
@@ -367,24 +366,17 @@ function automaticMacroForModel(input: {
       displayName: input.canonicalModel,
       visibility,
       enabled: true,
-      candidateSource: { kind: "model_pattern", pattern: input.canonicalModel },
       stages: [
         markRouteGroupFacadeGeneratedPrimaryStage({
           id: primaryStageId,
           enabled: true,
-          acceptUnassigned: true,
-          input: {
-            kind: "synthetic",
-            statusCode: 503,
-            message: "No route is available.",
-          },
           members: materializedMembers(primaryStageId).map((member) => ({
             kind: "endpoint" as const,
             ...member,
           })),
         }),
       ],
-      metadata: { managementOwner: AVAILABILITY_SYNC_OWNER },
+      metadata: { managementOwner: AVAILABILITY_ROUTE_GROUP_OWNER },
     });
     return {
       source: created.source,
@@ -397,37 +389,36 @@ function automaticMacroForModel(input: {
   const previousMembers = input.existing.config.groups
     .flatMap((stage) => stage.members || [])
     .filter((member) => !!member.endpointId).length;
-  const stages = input.existing.config.groups.map((stage) =>
-    stage.id === primaryStageId
+  const stages = input.existing.config.groups.map((stage) => {
+    const { acceptUnassigned: _acceptUnassigned, ...explicitStage } = stage;
+    const nextStage = stage.id === primaryStageId
       ? markRouteGroupFacadeGeneratedPrimaryStage({
-          ...stage,
-          acceptUnassigned: true,
+          ...explicitStage,
           members: materializedMembers(stage.id),
         })
-      : { ...stage, acceptUnassigned: undefined, members: materializedMembers(stage.id) },
-  );
+      : { ...explicitStage, members: materializedMembers(stage.id) };
+    return synchronizeRouteGroupFacadeStageInput(nextStage, false);
+  });
   if (!stages.some((stage) => stage.id === primaryStageId)) {
     stages.unshift(
-      markRouteGroupFacadeGeneratedPrimaryStage({
-        id: primaryStageId,
-        enabled: true,
-        acceptUnassigned: true,
-        input: {
-          kind: "synthetic",
-          statusCode: 503,
-          message: "No route is available.",
-        },
-        members: materializedMembers(primaryStageId),
-      }),
+      synchronizeRouteGroupFacadeStageInput(
+        markRouteGroupFacadeGeneratedPrimaryStage({
+          id: primaryStageId,
+          enabled: true,
+          input: { kind: "synthetic", statusCode: 503, message: "No route is available." },
+          members: materializedMembers(primaryStageId),
+        }),
+        false,
+      ),
     );
   }
+  const { candidateSource: _candidateSource, ...existingConfig } = input.existing.config;
   const next = normalizeRouteGraphMacro({
     ...input.existing,
     name: input.canonicalModel,
     enabled: input.existing.enabled !== false,
     config: {
-      ...input.existing.config,
-      candidateSource: { kind: "model_pattern", pattern: input.canonicalModel },
+      ...existingConfig,
       surface:
         visibility === "public"
           ? {
@@ -447,7 +438,7 @@ function automaticMacroForModel(input: {
     metadata: {
       ...input.existing.metadata,
       canonicalModel: input.canonicalModel,
-      managementOwner: AVAILABILITY_SYNC_OWNER,
+      managementOwner: AVAILABILITY_ROUTE_GROUP_OWNER,
     },
   });
   return {

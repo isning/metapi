@@ -83,7 +83,7 @@ async function ensureDummyAccount(siteId: number): Promise<typeof schema.account
     username: DUMMY_ACCOUNT_USERNAME,
     credential: 'dummy-session-token',
     credentialMode: 'session',
-    credentialKind: 'adapter_default',
+    credentialKind: 'access_token',
     status: 'active',
     extraConfig: JSON.stringify({
       dummyUpstream: true,

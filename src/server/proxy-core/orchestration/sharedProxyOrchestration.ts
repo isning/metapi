@@ -4,6 +4,7 @@ import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 import { reportTokenExpired, reportProxyAllFailed } from '../../services/alertService.js';
+import { recordAccountTokenProxySuccess } from '../../services/accountTokenHealthService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { resolveStoredAccountCredentialMode } from '../../services/accountExtraConfig.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
@@ -56,6 +57,7 @@ type SurfaceSelectedExecutionAttempt = {
     username?: string | null;
     credential?: string | null;
     credentialMode?: string | null;
+    credentialKind?: string | null;
     oauthProvider?: string | null;
     extraConfig?: string | null;
   };
@@ -631,6 +633,12 @@ export async function recordSurfaceSuccess(input: {
     }
     console.error(input.bestEffortMetrics.errorLabel, error);
   }
+  if (resolveStoredAccountCredentialMode(input.selected.account) === 'apikey') {
+    const tokenId = input.selected.token?.id ?? input.selected.target.tokenId;
+    if (Number.isSafeInteger(tokenId) && (tokenId || 0) > 0) {
+      void recordAccountTokenProxySuccess(tokenId!);
+    }
+  }
   if (billingDetails != null) {
     await input.recordDownstreamBilling?.({
       billingDetails,
@@ -816,6 +824,7 @@ export function createSurfaceFailureToolkit(input: {
           username: args.selected.account.username,
           siteName: args.selected.site.name,
           credentialKind: credentialFailureKindForAttempt(args.selected),
+          tokenId: args.selected.token?.id ?? args.selected.target.tokenId ?? null,
           detail: `HTTP ${args.status}`,
         }));
       }

@@ -11,13 +11,14 @@ import {
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
-  resolvePlatformUserId,
 } from './accountExtraConfig.js';
 import { refreshAccountSessionFromAutoRelogin } from './accountAutoReloginService.js';
+import { buildPlatformCredentialContext } from './adapterCredentialContextService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { emitInboxItem } from './inboxService.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
 
 type CheckinExecutionStatus = 'success' | 'failed' | 'skipped';
 
@@ -151,19 +152,28 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   const guessedPlatformUserId = storedPlatformUserId
     ? undefined
     : guessPlatformUserIdFromUsername(account.username);
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.credential;
   let result = await withAccountProxyOverride(accountProxyUrl,
-    () => adapter.checkin(site.url, activeAccessToken, platformUserId));
+    () => adapter.checkin(buildPlatformCredentialContext({
+      endpoint: { baseUrl: site.url },
+      account: { ...account, credential: activeAccessToken },
+    })));
 
   if (!result.success && shouldAttemptAutoRelogin(result.message)) {
-    const refreshedAccessToken = await refreshAccountSessionFromAutoRelogin(account, site);
-    if (refreshedAccessToken) {
-      activeAccessToken = refreshedAccessToken;
+    const refreshedSession = await refreshAccountSessionFromAutoRelogin(account, site);
+    if (refreshedSession) {
+      activeAccessToken = refreshedSession.credential;
       result = await withAccountProxyOverride(accountProxyUrl,
-        () => adapter.checkin(site.url, activeAccessToken, platformUserId));
+        () => adapter.checkin(buildPlatformCredentialContext({
+          endpoint: { baseUrl: site.url },
+          account: {
+            ...account,
+            credential: activeAccessToken,
+            credentialKind: refreshedSession.credentialKind,
+          },
+        })));
     }
   }
 
@@ -190,12 +200,6 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       : manualVerificationRequired
         ? manualVerificationMessage
       : (alreadyCheckedIn ? '\u4eca\u65e5\u5df2\u7b7e\u5230' : (result.message || '\u7b7e\u5230\u6210\u529f'));
-    setAccountRuntimeHealth(account.id, {
-      state: healthState,
-      reason: healthReason,
-      source: 'checkin',
-    });
-
     const updates: Record<string, unknown> = {};
     if (shouldAdvanceLastCheckinAt) {
       updates.lastCheckinAt = new Date().toISOString();
@@ -211,11 +215,24 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     }
 
     if (Object.keys(updates).length > 0) {
-      await db.update(schema.accounts)
-        .set(updates)
-        .where(eq(schema.accounts.id, accountId))
-        .run();
+      if (updates.status !== undefined) {
+        await updateAccountRuntimeIdentity(accountId, updates);
+      } else {
+        await db.update(schema.accounts)
+          .set(updates)
+          .where(eq(schema.accounts.id, accountId))
+          .run();
+      }
     }
+
+    // Persist any account metadata first. The health setter reloads and merges
+    // extraConfig, so awaiting it last prevents concurrent writes from
+    // discarding either the inferred user id or the health snapshot.
+    await setAccountRuntimeHealth(account.id, {
+      state: healthState,
+      reason: healthReason,
+      source: 'checkin',
+    });
 
     if (shouldRefreshBalance) {
       try {

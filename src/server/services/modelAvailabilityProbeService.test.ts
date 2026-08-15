@@ -200,6 +200,40 @@ describe('modelAvailabilityProbeService', () => {
     expect(tokenRows.find((row) => row.modelName === 'gpt-ghost')?.available).toBe(false);
   });
 
+  it('does not probe account-level availability for a session connection', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'session-probe-site',
+      url: 'https://session-probe.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'session-probe-user',
+      credentialMode: 'session',
+      credential: 'account-management-session',
+      credentialKind: 'session_cookie',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-session-only',
+      available: true,
+    }).run();
+
+    const result = await executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: false,
+    });
+
+    expect(result.summary).toMatchObject({
+      totalAccounts: 1,
+      scanned: 0,
+      updatedRows: 0,
+    });
+    expect(dispatchRuntimeRequestMock).not.toHaveBeenCalled();
+  });
+
   it('skips probing obvious non-conversation models', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'probe-site',

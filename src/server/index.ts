@@ -33,8 +33,13 @@ import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
+import {
+  migrateLegacyAccountCredentialKinds,
+  removeLegacyModelDiscoveryRuntimeHealth,
+} from './services/accountCredentialKindMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureCurrentConfigVersion } from './services/configMigrationService.js';
+import { migrateAutomaticRouteGroupCandidateSources } from './services/routeGroupCandidateSourceMigrationService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
@@ -191,6 +196,8 @@ try {
   await repairStoredCreatedAtValues();
   await ensureCurrentConfigVersion();
   await migrateSiteApiKeysToAccounts();
+  await removeLegacyModelDiscoveryRuntimeHealth();
+  await migrateLegacyAccountCredentialKinds();
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
 
@@ -198,6 +205,10 @@ try {
 } catch (error) {
   console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
 }
+
+// Graph-shape migrations are authoritative startup work. Do not hide a failed
+// migration behind the best-effort runtime-settings compatibility boundary.
+await migrateAutomaticRouteGroupCandidateSources();
 
 await ensureOauthProviderSitesExist();
 

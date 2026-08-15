@@ -142,6 +142,33 @@ describe('rebuildManagedRouteGroupsFromAvailability graph-native output', () => 
     expect(active?.versionId).toBeGreaterThan(0);
   });
 
+  it('does not create an automatic route from session-scoped model availability alone', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'session-only-site',
+      url: 'https://session-only.example.test',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'session-only-user',
+      credentialMode: 'session',
+      credentialKind: 'session_cookie',
+      credential: 'account-session-cookie',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'session-only-model',
+      available: true,
+    }).run();
+
+    const rebuild = await rebuildManagedRouteGroupsFromAvailability();
+
+    expect(rebuild.models).toBe(0);
+    expect(await db.select().from(schema.runtimeExecutionTargets).all()).toEqual([]);
+  });
+
   it('coalesces casing variants into one automatic route group while preserving source models', async () => {
     await seedAccountWithModel('DeepSeek-v4-Flash', { token: true });
     await seedAccountWithModel('deepseek-v4-flash', { token: true });

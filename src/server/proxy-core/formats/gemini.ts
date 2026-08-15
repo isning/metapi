@@ -341,6 +341,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
       downstreamHeaders: input.downstreamHeaders,
       passthroughHeaders: input.passthroughHeaders,
       platformHeaders: input.platformHeaders,
+      modelCredentialHeaders: input.modelCredentialHeaders,
       runtimePostBuildFilters: input.runtimePostBuildFilters,
       compatibilityPolicy: input.compatibilityPolicy,
     });

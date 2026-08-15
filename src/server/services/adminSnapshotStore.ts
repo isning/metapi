@@ -108,6 +108,14 @@ export async function deleteExpiredAdminSnapshots(beforeIso?: string) {
     .run();
 }
 
+/** Removes one persisted admin snapshot when its source catalog changes. */
+export async function deleteAdminSnapshot(identity: AdminSnapshotIdentity): Promise<void> {
+  await db
+    .delete(schema.adminSnapshots)
+    .where(buildSnapshotWhere(identity))
+    .run();
+}
+
 export function createAdminSnapshotPersistence<T>(
   identity: AdminSnapshotIdentity,
 ): SnapshotPersistenceAdapter<T> {

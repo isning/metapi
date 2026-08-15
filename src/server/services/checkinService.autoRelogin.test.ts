@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const adapterMock = {
   checkin: vi.fn(),
   login: vi.fn(),
+  credentialCapabilities: { session: true },
 };
 
 const notifyMock = vi.fn();
@@ -138,9 +139,9 @@ describe('checkinService auto relogin', () => {
     expect(result.success).toBe(true);
     expect(adapterMock.login).toHaveBeenCalledTimes(1);
     expect(adapterMock.checkin).toHaveBeenCalledTimes(2);
-    expect(adapterMock.checkin.mock.calls[0][1]).toBe('expired-token');
-    expect(adapterMock.checkin.mock.calls[1][1]).toBe('fresh-token');
-    expect(adapterMock.checkin.mock.calls[0][2]).toBe(7659);
+    expect(adapterMock.checkin.mock.calls[0][0].account.credential).toBe('expired-token');
+    expect(adapterMock.checkin.mock.calls[1][0].account.credential).toBe('fresh-token');
+    expect(adapterMock.checkin.mock.calls[0][0].account.username).toBe('linuxdo_7659');
     expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ credential: 'fresh-token' }));
   });
 
@@ -169,7 +170,7 @@ describe('checkinService auto relogin', () => {
     await checkinAccount(2);
 
     expect(adapterMock.checkin).toHaveBeenCalledTimes(1);
-    expect(adapterMock.checkin.mock.calls[0][2]).toBe(11494);
+    expect(adapterMock.checkin.mock.calls[0][0].account.username).toBe('linuxdo_11494');
   });
 
   it('keeps successful checkin as success when message is 签到成功', async () => {

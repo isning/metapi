@@ -7,6 +7,7 @@ import { formatUtcSqlDateTime } from './localTimeService.js';
 import { emitInboxItem } from './inboxService.js';
 import type { SiteAnnouncement } from './platforms/base.js';
 import { getAccountManagementCredential } from './accountExtraConfig.js';
+import { buildPlatformCredentialContext, buildTransientPlatformCredentialContext } from './adapterCredentialContextService.js';
 
 export type SiteAnnouncementSyncResult = {
   scannedSites: number;
@@ -37,7 +38,7 @@ function buildAnnouncementMessage(row: SiteAnnouncement): string {
   return content || title;
 }
 
-async function resolveSiteManagementCredential(siteId: number): Promise<string> {
+async function resolveSiteManagementAccount(siteId: number): Promise<typeof schema.accounts.$inferSelect | null> {
   const accounts = await db.select()
     .from(schema.accounts)
     .where(and(
@@ -47,7 +48,7 @@ async function resolveSiteManagementCredential(siteId: number): Promise<string> 
     .orderBy(asc(schema.accounts.id))
     .all();
 
-  return accounts.map(getAccountManagementCredential).find(Boolean) || '';
+  return accounts.find((account) => !!getAccountManagementCredential(account)) || accounts[0] || null;
 }
 
 async function listTargetSites(siteId?: number | null) {
@@ -87,8 +88,17 @@ export async function syncSiteAnnouncements(options?: { siteId?: number | null }
     }
 
     try {
-      const managementCredential = await resolveSiteManagementCredential(site.id);
-      const announcements = await adapter.getSiteAnnouncements(site.url, managementCredential);
+      const managementAccount = await resolveSiteManagementAccount(site.id);
+      const context = managementAccount
+        ? buildPlatformCredentialContext({ endpoint: { baseUrl: site.url }, account: managementAccount })
+        : buildTransientPlatformCredentialContext({
+            endpoint: { baseUrl: site.url },
+            siteId: site.id,
+            mode: 'session',
+            credential: '',
+            credentialKind: 'access_token',
+          });
+      const announcements = await adapter.getSiteAnnouncements(context);
       const seenAt = formatUtcSqlDateTime(new Date());
 
       for (const announcement of announcements) {

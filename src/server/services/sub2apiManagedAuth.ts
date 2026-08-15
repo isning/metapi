@@ -6,6 +6,7 @@ import {
   resolveProxyUrlFromExtraConfig,
 } from './accountExtraConfig.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
 
 export const SUB2API_MANAGED_REFRESH_LEAD_MS = 120 * 1000;
 
@@ -172,15 +173,11 @@ export async function refreshSub2ApiManagedSession(params: {
       tokenExpiresAt: refreshed.tokenExpiresAt,
     },
   });
-  await db.update(schema.accounts)
-    .set({
-      credential: refreshed.accessToken,
-      extraConfig: nextExtraConfig,
-      status: params.account.status === 'expired' ? 'active' : params.account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, params.account.id))
-    .run();
+  await updateAccountRuntimeIdentity(params.account.id, {
+    credential: refreshed.accessToken,
+    extraConfig: nextExtraConfig,
+    status: params.account.status === 'expired' ? 'active' : params.account.status,
+  });
 
   return {
     accessToken: refreshed.accessToken,

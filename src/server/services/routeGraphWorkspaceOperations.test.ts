@@ -351,5 +351,35 @@ describe('route graph workspace operation batches', () => {
     expect(() => applyRouteGraphWorkspaceOperationsToGraph(systemGraph, [
       { kind: 'remove_edge', edgeId: 'missing-edge' },
     ])).toThrow(expect.objectContaining({ code: 'edge_not_found' }));
+
+    const replayed = applyRouteGraphWorkspaceOperationsToGraph({ nodes: [], edges: [], macros: [] }, [{
+      kind: 'upsert_macro',
+      macro: {
+        id: 'automatic:legacy-pattern',
+        kind: 'candidate_selector',
+        ownership: 'system',
+        enabled: true,
+        config: {
+          surface: { entry: { kind: 'none' }, output: 'route' },
+          policy: { kind: 'inherit_default' },
+          candidateSource: { kind: 'model_pattern', pattern: 'model-a' },
+          groups: [{
+            id: 'primary',
+            enabled: true,
+            acceptUnassigned: true,
+            input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
+            members: [{ memberId: 'member:a', endpointId: 'endpoint:a' }],
+          }],
+        },
+        metadata: { canonicalModel: 'model-a' },
+      },
+    }], { enforceAuthoring: false });
+    expect(replayed.graph.macros?.[0]?.config.candidateSource).toEqual({
+      kind: 'model_pattern',
+      pattern: 'model-a',
+    });
+    expect(replayed.graph.macros?.[0]?.config.groups[0]).toMatchObject({
+      input: { kind: 'synthetic', statusCode: 503 },
+    });
   });
 });

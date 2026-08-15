@@ -9,6 +9,7 @@ import {
   getExecutionTargetIdForMember,
   insertRouteGroupMember,
 } from '../../testing/routeGroupMemberTestUtils.js';
+import { executionTargetIdsForRouteGraphEndpoint } from './routeGraphExecutionTargetEndpointService.js';
 
 type DbModule = typeof import('../db/index.js');
 type RouteGroupManagementModule = typeof import('./routeGroupManagementService.js');
@@ -35,6 +36,8 @@ describe('routeGraphService graph-native route runtime', () => {
   let getActiveRouteRuntimeArtifact: RouteRuntimeArtifactModule['getActiveRouteRuntimeArtifact'];
   let invalidateRouteRuntimeArtifactReadCaches: RouteRuntimeArtifactModule['invalidateRouteRuntimeArtifactReadCaches'];
   let retireAccountFromRouting: AccountRetirementModule['retireAccountFromRouting'];
+  let retireSiteFromRouting: AccountRetirementModule['retireSiteFromRouting'];
+  let retireAccountTokenFromRouting: AccountRetirementModule['retireAccountTokenFromRouting'];
   let loadRouteGroupManagementCatalogRevision: RouteGroupManagementCatalogRevisionModule['loadRouteGroupManagementCatalogRevision'];
   let dataDir = '';
 
@@ -69,6 +72,8 @@ describe('routeGraphService graph-native route runtime', () => {
     getActiveRouteRuntimeArtifact = routeRuntimeArtifact.getActiveRouteRuntimeArtifact;
     invalidateRouteRuntimeArtifactReadCaches = routeRuntimeArtifact.invalidateRouteRuntimeArtifactReadCaches;
     retireAccountFromRouting = accountRetirement.retireAccountFromRouting;
+    retireSiteFromRouting = accountRetirement.retireSiteFromRouting;
+    retireAccountTokenFromRouting = accountRetirement.retireAccountTokenFromRouting;
     loadRouteGroupManagementCatalogRevision = routeGroupManagementCatalogRevision.loadRouteGroupManagementCatalogRevision;
   }, 60_000);
 
@@ -282,6 +287,17 @@ describe('routeGraphService graph-native route runtime', () => {
             }],
           },
         },
+        {
+          id: 'macro:automatic-pattern',
+          kind: 'candidate_selector',
+          ownership: 'system',
+          config: {
+            surface: { entry: { kind: 'none' }, output: 'route' },
+            policy: { kind: 'inherit_default' },
+            candidateSource: { kind: 'model_pattern', pattern: 'model-*' },
+            groups: [],
+          },
+        },
       ],
     };
 
@@ -294,6 +310,10 @@ describe('routeGraphService graph-native route runtime', () => {
         expect.objectContaining({ message: 'Invalid macro dispatcher policy. Legacy strategy policies are not supported.' }),
         expect.objectContaining({ message: 'Invalid fallback stage. Use array order instead of priority.' }),
       ]));
+    expect(validation.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'route_graph.automatic_group_source',
+      message: 'Automatic Route Group macro:automatic-pattern must use explicit fallback-stage members instead of model_pattern.',
+    }));
 
     const published = await publishRouteGraphSource({
       sourceGraph,
@@ -333,6 +353,30 @@ describe('routeGraphService graph-native route runtime', () => {
     expect(runtimeJson).not.toContain('sourceRef');
   });
 
+  it('rejects system-owned model patterns at the draft write boundary', async () => {
+    const sourceGraph = {
+      nodes: [],
+      edges: [],
+      macros: [{
+        id: 'macro:automatic-pattern-draft',
+        kind: 'candidate_selector',
+        ownership: 'system',
+        enabled: true,
+        config: {
+          surface: { entry: { kind: 'none' }, output: 'route' },
+          policy: { kind: 'inherit_default' },
+          candidateSource: { kind: 'model_pattern', pattern: 'model-*' },
+          groups: [],
+        },
+      }],
+    };
+
+    await expect(saveRouteGraphDraft(sourceGraph)).rejects.toThrow(
+      /must use explicit fallback-stage members instead of model_pattern/,
+    );
+    expect(await db.select().from(schema.routeGraphDrafts).all()).toEqual([]);
+  });
+
   it('rejects publication when a compiled transport binding no longer exists', async () => {
     const { account, token } = await seedAccountToken('missing-runtime-binding');
     const group = await createGroup('missing-runtime-binding');
@@ -354,6 +398,29 @@ describe('routeGraphService graph-native route runtime', () => {
     await expect(publishRouteGraphSource({ sourceGraph, createdBy: 'test' }))
       .rejects.toThrow(/execution_target_not_found/);
     expect(await db.select().from(schema.compiledRuntimeActiveArtifact).get()).toEqual(pointerBefore);
+  });
+
+  it('rejects publication when a token binding belongs to an OAuth account', async () => {
+    const { account, token } = await seedAccountToken('oauth-token-binding');
+    const group = await createGroup('oauth-token-binding');
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'oauth-token-binding',
+      enabled: true,
+    });
+    const sourceGraph = await buildRouteGraphSourceFromRouteGroups();
+    await db.update(schema.accounts)
+      .set({
+        oauthProvider: 'codex',
+        extraConfig: JSON.stringify({ oauth: { provider: 'codex' } }),
+      })
+      .where(eq(schema.accounts.id, account.id))
+      .run();
+
+    await expect(publishRouteGraphSource({ sourceGraph, createdBy: 'test' }))
+      .rejects.toThrow(/token_binding_not_allowed_for_oauth/);
   });
 
   it('rejects publication when compiled and persisted credential bindings disagree', async () => {
@@ -497,6 +564,59 @@ describe('routeGraphService graph-native route runtime', () => {
     expect(await db.select().from(schema.compiledRuntimeArtifacts).all()).toEqual(before.artifacts);
     expect(await db.select().from(schema.routeGraphActiveVersion).get()).toEqual(before.graphPointer);
     expect(await db.select().from(schema.compiledRuntimeActiveArtifact).get()).toEqual(before.runtimePointer);
+  });
+
+  it('retires a site atomically with every Graph target rooted at it', async () => {
+    const { account, token } = await seedAccountToken('site-retirement');
+    const siteId = account.siteId;
+    const group = await createGroup('site-retirement');
+    const member = await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'site-retirement',
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(member.id);
+    expect(executionTargetId).toBeTruthy();
+
+    await retireSiteFromRouting(siteId, 'site-retirement-test');
+
+    expect(await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get()).toBeUndefined();
+    expect(await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get()).toBeUndefined();
+    expect(await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get()).toBeUndefined();
+    expect(await db.select().from(schema.runtimeExecutionTargets)
+      .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!)).get()).toBeUndefined();
+    const active = await getActiveRouteGraphVersion();
+    const targetIdsInGraph = (active?.sourceGraph.nodes || []).flatMap((node) => (
+      executionTargetIdsForRouteGraphEndpoint(node)
+    ));
+    expect(targetIdsInGraph).not.toContain(executionTargetId);
+  });
+
+  it('retires a model-call key atomically with its Graph transport binding', async () => {
+    const { account, token } = await seedAccountToken('token-retirement');
+    const group = await createGroup('token-retirement');
+    const member = await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'token-retirement',
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(member.id);
+    expect(executionTargetId).toBeTruthy();
+
+    await retireAccountTokenFromRouting(token.id, 'token-retirement-test');
+
+    expect(await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get()).toBeUndefined();
+    expect(await db.select().from(schema.runtimeExecutionTargets)
+      .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!)).get()).toBeUndefined();
+    const active = await getActiveRouteGraphVersion();
+    const targetIdsInGraph = (active?.sourceGraph.nodes || []).flatMap((node) => (
+      executionTargetIdsForRouteGraphEndpoint(node)
+    ));
+    expect(targetIdsInGraph).not.toContain(executionTargetId);
   });
 
   it('keeps Graph and compiled-runtime pointers consistent across independent publisher processes', async () => {

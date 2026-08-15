@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
@@ -104,6 +105,27 @@ describe('providerPricingCatalogCacheService', () => {
       lastError: 'upstream unavailable',
     });
     expect(failed.record?.catalog?.models.get('kept-model')?.modelName).toBe('kept-model');
+  });
+
+  it('forwards the persisted account credential kind to pricing adapters', async () => {
+    const { site, account } = await seedSubject(db, schema);
+    await db.update(schema.accounts)
+      .set({ credential: 'session=cookie-value', credentialKind: 'session_cookie' })
+      .where(eq(schema.accounts.id, account.id))
+      .run();
+    fetchUpstreamPricingCatalogWithMetadataMock.mockResolvedValue({
+      catalog: catalogWithModel('cookie-priced-model'),
+      credentialKind: 'access_token',
+    });
+
+    await service.refreshProviderPricingCatalog({ siteId: site.id, accountId: account.id });
+
+    expect(fetchUpstreamPricingCatalogWithMetadataMock).toHaveBeenCalledWith(expect.objectContaining({
+      account: expect.objectContaining({
+        credential: 'session=cookie-value',
+        credentialKind: 'session_cookie',
+      }),
+    }));
   });
 
   it('only schedules missing or expiring catalog subjects for refresh', async () => {

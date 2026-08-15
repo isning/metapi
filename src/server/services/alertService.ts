@@ -2,6 +2,8 @@ import { db, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { sendNotification } from './notifyService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
+import { updateAccountRuntimeIdentity } from './accountRuntimeIdentityMutationService.js';
+import { recordAccountTokenAuthenticationFailure } from './accountTokenHealthService.js';
 import { appendSessionTokenRebindHint } from './alertRules.js';
 import { emitInboxItem } from './inboxService.js';
 
@@ -9,6 +11,7 @@ export type CredentialFailureKind = 'session' | 'apikey';
 
 export function buildCredentialAuthenticationFailure(input: {
   credentialKind: CredentialFailureKind;
+  tokenId?: number | null;
   accountId: number;
   accountLabel: string;
   siteLabel: string;
@@ -49,6 +52,7 @@ export async function reportCredentialAuthenticationFailure(params: {
   username?: string | null;
   siteName?: string | null;
   credentialKind: CredentialFailureKind;
+  tokenId?: number | null;
   detail?: string;
 }) {
   const accountLabel = params.username || `ID:${params.accountId}`;
@@ -74,24 +78,29 @@ export async function reportCredentialAuthenticationFailure(params: {
       { id: 'open-account', label: '打开账号', kind: 'navigate', href: failure.openAccountHref, placement: 'primary' },
       { id: 'resolve', label: '标记已解决', kind: 'invoke', command: 'resolve', placement: 'secondary' },
     ],
-    dedupeKey: `account:${params.accountId}:${params.credentialKind}-authentication-failed`,
+    dedupeKey: params.credentialKind === 'apikey' && Number.isSafeInteger(params.tokenId) && (params.tokenId || 0) > 0
+      ? `account:${params.accountId}:apikey:${params.tokenId}-authentication-failed`
+      : `account:${params.accountId}:${params.credentialKind}-authentication-failed`,
     source: 'alert',
     relatedId: params.accountId,
     relatedType: 'account',
   });
 
   if (failure.accountStatus) {
-    await db.update(schema.accounts).set({
-      status: failure.accountStatus,
-      updatedAt: new Date().toISOString(),
-    }).where(eq(schema.accounts.id, params.accountId)).run();
+    await updateAccountRuntimeIdentity(params.accountId, { status: failure.accountStatus });
   }
 
-  await setAccountRuntimeHealth(params.accountId, {
-    state: 'unhealthy',
-    reason: failure.runtimeHealth.reason,
-    source: failure.runtimeHealth.source,
-  });
+  if (params.credentialKind === 'apikey') {
+    if (Number.isSafeInteger(params.tokenId) && (params.tokenId || 0) > 0) {
+      await recordAccountTokenAuthenticationFailure(params.tokenId!, params.detail);
+    }
+  } else {
+    await setAccountRuntimeHealth(params.accountId, {
+      state: 'unhealthy',
+      reason: failure.runtimeHealth.reason,
+      source: failure.runtimeHealth.source,
+    });
+  }
 
   await sendNotification(
     failure.title,
@@ -107,6 +116,7 @@ export async function reportTokenExpired(params: {
   username?: string | null;
   siteName?: string | null;
   credentialKind?: CredentialFailureKind;
+  tokenId?: number | null;
   detail?: string;
 }) {
   return reportCredentialAuthenticationFailure({

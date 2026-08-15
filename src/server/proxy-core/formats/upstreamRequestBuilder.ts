@@ -257,6 +257,7 @@ export function buildUpstreamEndpointRequest(input: {
   modelName: string;
   stream: boolean;
   tokenValue: string;
+  modelCredentialHeaders?: Record<string, string>;
   oauthProvider?: string;
   oauthProjectId?: string;
   sitePlatform?: string;
@@ -352,10 +353,8 @@ export function buildUpstreamEndpointRequest(input: {
     ...codexPassthroughHeaders,
     'Content-Type': 'application/json',
     ...(input.platformHeaders || {}),
+    ...(input.modelCredentialHeaders || {}),
   };
-  if (!isClaudeUpstream) {
-    commonHeaders.Authorization = `Bearer ${input.tokenValue}`;
-  }
 
   let headers: Record<string, string> = commonHeaders;
 

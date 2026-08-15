@@ -7,10 +7,30 @@ import {
   extractSafePassthroughHeaders,
   extractResponsesPassthroughHeaders,
 } from '../proxy-core/formats/headerPassthrough.js';
+import { buildPlatformModelRequestCredentialHeaders } from './platforms/index.js';
 import type { RouteRuntimePostBuildFilters } from './routeRuntimeEvaluatorService.js';
 import { resolveUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
 
 describe('upstreamRequestBuilder', () => {
+  it('uses Bearer authentication for an AnyRouter model API key', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat/completions',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-model-key',
+      modelCredentialHeaders: buildPlatformModelRequestCredentialHeaders('anyrouter', {
+        kind: 'model_api_key',
+        credential: 'sk-model-key',
+      }),
+      sitePlatform: 'anyrouter',
+      openaiBody: { model: 'gpt-5.6', messages: [{ role: 'user', content: 'hi' }] },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.headers.Cookie).toBeUndefined();
+    expect(request.headers.Authorization).toBe('Bearer sk-model-key');
+  });
+
   it('normalizes single-message OpenAI requests to structured responses input', () => {
     const downstreamHeaders = {};
     const request = buildUpstreamEndpointRequest({

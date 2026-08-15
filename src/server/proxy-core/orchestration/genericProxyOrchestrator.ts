@@ -13,6 +13,7 @@ import {
 import { resolveUpstreamEndpointCandidates } from '../../services/upstreamEndpointDerivation.js';
 import { loadCredentialApiVariantConfig } from '../../services/credentialEndpointBindingService.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
+import { buildPlatformModelRequestCredentialHeaders } from '../../services/platforms/index.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
@@ -550,6 +551,10 @@ export async function handleGenericSurfaceRequest(
             account: selected.account,
             downstreamHeaders: request.headers as Record<string, unknown>,
           });
+          const modelCredentialHeaders = buildPlatformModelRequestCredentialHeaders(selected.site.platform, {
+            kind: selected.token ? 'model_api_key' : 'oauth_access_token',
+            credential: selected.tokenValue,
+          });
 
           if (usesProtocolAdapterRequest && adapter.buildUpstreamRequest) {
             const currentOauth = getOauthInfoFromAccount(selected.account);
@@ -565,6 +570,7 @@ export async function handleGenericSurfaceRequest(
               downstreamHeaders: request.headers as Record<string, unknown>,
               passthroughHeaders,
               platformHeaders,
+              modelCredentialHeaders,
               transformed,
               runtimePostBuildFilters,
               compatibilityPolicy,
@@ -625,6 +631,7 @@ export async function handleGenericSurfaceRequest(
             modelName,
             stream: upstreamStream,
             tokenValue: selected.tokenValue,
+            modelCredentialHeaders,
             oauthProvider: oauth?.provider,
             oauthProjectId: oauth?.projectId,
             sitePlatform: selected.site.platform,

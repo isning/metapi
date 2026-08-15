@@ -24,6 +24,7 @@ type DbModule = typeof import('../db/index.js');
 type CompiledRuntimeExecutionModule = typeof import('./routeRuntimeExecutionService.js');
 type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 type RouteRuntimeArtifactModule = typeof import('./routeRuntimeArtifactService.js');
+type SiteCatalogMutationModule = typeof import('./siteCatalogMutationService.js');
 
 describe('routeRuntimeExecutionService', () => {
   let db: DbModule['db'];
@@ -42,6 +43,7 @@ describe('routeRuntimeExecutionService', () => {
   let saveRouteGraphDraft: RouteGraphServiceModule['saveRouteGraphDraft'];
   let publishRouteGraphDraft: RouteGraphServiceModule['publishRouteGraphDraft'];
   let invalidateRouteRuntimeArtifactReadCaches: RouteRuntimeArtifactModule['invalidateRouteRuntimeArtifactReadCaches'];
+  let recordSiteCatalogMutation: SiteCatalogMutationModule['recordSiteCatalogMutation'];
 
   beforeAll(async () => {
     process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'metapi-compiled-runtime-execution-'));
@@ -51,6 +53,7 @@ describe('routeRuntimeExecutionService', () => {
     const compiledRuntimeExecution = await import('./routeRuntimeExecutionService.js');
     const routeGraphService = await import('./routeGraphService.js');
     const routeRuntimeArtifact = await import('./routeRuntimeArtifactService.js');
+    const siteCatalogMutation = await import('./siteCatalogMutationService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     selectRouteRuntimeExecutionAttempt = compiledRuntimeExecution.selectRouteRuntimeExecutionAttempt;
@@ -67,6 +70,7 @@ describe('routeRuntimeExecutionService', () => {
     saveRouteGraphDraft = routeGraphService.saveRouteGraphDraft;
     publishRouteGraphDraft = routeGraphService.publishRouteGraphDraft;
     invalidateRouteRuntimeArtifactReadCaches = routeRuntimeArtifact.invalidateRouteRuntimeArtifactReadCaches;
+    recordSiteCatalogMutation = siteCatalogMutation.recordSiteCatalogMutation;
   }, 60_000);
 
   beforeEach(async () => {
@@ -102,6 +106,7 @@ describe('routeRuntimeExecutionService', () => {
       sourceModel?: string;
       weight?: number;
       fallbackStageOrder?: number;
+      withoutToken?: boolean;
     }>;
   }) {
     const route = await createGraphNativeRouteFixture({
@@ -124,17 +129,19 @@ describe('routeRuntimeExecutionService', () => {
 
         status: 'active',
       }).returning().get();
-      const token = await db.insert(schema.accountTokens).values({
-        accountId: account.id,
-        name: `${candidateInput.siteName}-token`,
-        token: `${candidateInput.siteName}-token-value`,
-        enabled: true,
-        isDefault: true,
-      }).returning().get();
+      const token = candidateInput.withoutToken
+        ? null
+        : await db.insert(schema.accountTokens).values({
+          accountId: account.id,
+          name: `${candidateInput.siteName}-token`,
+          token: `${candidateInput.siteName}-token-value`,
+          enabled: true,
+          isDefault: true,
+        }).returning().get();
       const candidate = await insertRouteGroupMember({
         groupId: route.id,
         accountId: account.id,
-        tokenId: token.id,
+        tokenId: token?.id ?? null,
         sourceModel: candidateInput.sourceModel ?? input.model,
         fallbackStageOrder: candidateInput.fallbackStageOrder ?? 0,
         weight: candidateInput.weight ?? 10,
@@ -184,6 +191,89 @@ describe('routeRuntimeExecutionService', () => {
     const first = await selectRouteRuntimeExecutionAttempt({ requestedModel: 'runtime-round-robin' });
     const second = await selectRouteRuntimeExecutionAttempt({ requestedModel: 'runtime-round-robin' });
     expect(new Set([first?.executionTargetId, second?.executionTargetId])).toEqual(new Set(candidates.map((item) => item.executionTargetId)));
+  });
+
+  it('does not route a New API session connection without a model API key', async () => {
+    await seedRoute({
+      model: 'runtime-new-api-session-without-model-key',
+      candidates: [{
+        siteName: 'new-api-session-only',
+        withoutToken: true,
+      }],
+    });
+
+    await expect(selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-new-api-session-without-model-key',
+    })).resolves.toBeNull();
+  });
+
+  it('uses the account token value rather than the session connection credential', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-session-with-model-key',
+      candidates: [{ siteName: 'new-api-session-with-key' }],
+    });
+
+    const selected = await selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-session-with-model-key',
+    });
+
+    expect(selected).toMatchObject({
+      executionTargetId: candidates[0]!.executionTargetId,
+      token: { id: candidates[0]!.token!.id },
+      tokenValue: 'new-api-session-with-key-token-value',
+    });
+    expect(selected?.tokenValue).not.toBe('new-api-session-with-key-access');
+  });
+
+  it('uses edited site connection settings on the next dispatch', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-site-mutation',
+      candidates: [{ siteName: 'runtime-site-mutation-site' }],
+    });
+    const candidate = candidates[0]!;
+
+    await expect(selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-site-mutation',
+    })).resolves.toMatchObject({
+      site: { url: 'https://runtime-site-mutation-site.example.com' },
+    });
+
+    await db.update(schema.sites)
+      .set({
+        url: 'https://runtime-site-mutation-updated.example.com',
+        customHeaders: JSON.stringify({ 'x-runtime-site': 'updated' }),
+      })
+      .where(eq(schema.sites.id, candidate.site.id))
+      .run();
+    await recordSiteCatalogMutation();
+
+    await expect(selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-site-mutation',
+    })).resolves.toMatchObject({
+      site: {
+        url: 'https://runtime-site-mutation-updated.example.com',
+        customHeaders: JSON.stringify({ 'x-runtime-site': 'updated' }),
+      },
+    });
+  });
+
+  it('does not route a stale token bound to an OAuth account', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-oauth-with-legacy-token',
+      candidates: [{ siteName: 'oauth-legacy-token' }],
+    });
+    await db.update(schema.accounts)
+      .set({
+        oauthProvider: 'codex',
+        extraConfig: JSON.stringify({ oauth: { provider: 'codex' } }),
+      })
+      .where(eq(schema.accounts.id, candidates[0]!.account.id))
+      .run();
+    invalidateRouteGraphReadCaches('account-mutated');
+
+    await expect(selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-oauth-with-legacy-token',
+    })).resolves.toBeNull();
   });
 
   it('resolves a published synthetic route terminal through the runtime service', async () => {

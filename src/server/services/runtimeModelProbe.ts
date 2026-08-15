@@ -2,6 +2,7 @@ import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { buildOauthProviderHeaders } from './oauth/service.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from './siteProxy.js';
 import { dispatchRuntimeRequest } from './runtimeDispatch.js';
+import { buildPlatformModelRequestCredentialHeaders } from './platforms/index.js';
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
@@ -111,12 +112,13 @@ export async function probeRuntimeModel(input: {
   }
 
   const oauth = getOauthInfoFromAccount(input.account);
-  const tokenValue = String(
-    input.tokenValue
-    || (oauth ? input.account.credential : '')
-    || '',
-  ).trim();
-  if (!tokenValue) {
+  const modelCredentialKind = input.tokenValue
+    ? 'model_api_key'
+    : oauth
+      ? 'oauth_access_token'
+      : null;
+  const tokenValue = String(input.tokenValue || (oauth ? input.account.credential : '') || '').trim();
+  if (!tokenValue || !modelCredentialKind) {
     return {
       status: 'inconclusive',
       latencyMs: null,
@@ -155,6 +157,10 @@ export async function probeRuntimeModel(input: {
       account: input.account,
       downstreamHeaders: {},
     });
+    const modelCredentialHeaders = buildPlatformModelRequestCredentialHeaders(input.site.platform, {
+      kind: modelCredentialKind,
+      credential: tokenValue,
+    });
     const openaiBody = buildProbeBody(input.modelName);
     const channelProxyUrl = resolveChannelProxyUrl(input.site, input.account.extraConfig);
     const abortController = new AbortController();
@@ -181,6 +187,7 @@ export async function probeRuntimeModel(input: {
         downstreamFormat: 'openai',
         downstreamHeaders: {},
         platformHeaders,
+        modelCredentialHeaders,
       });
       return {
         endpoint,

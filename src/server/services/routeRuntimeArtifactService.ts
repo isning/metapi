@@ -14,6 +14,7 @@ import {
   primeRouteRuntimeExecutionTargetIdentities,
 } from './routeRuntimeExecutionIdentityService.js';
 import { invalidateRouteRuntimeSelectorState } from './routeRuntimeSelectorStateService.js';
+import { requiresManagedAccountTokens } from './accountExtraConfig.js';
 import {
   getCachedActiveRouteRuntimeArtifact as getCachedRuntimeArtifact,
   getOrLoadActiveRouteRuntimeArtifact as getOrLoadRuntimeArtifact,
@@ -182,6 +183,9 @@ export async function assertRouteRuntimeArtifactTransportBindings(input: {
     endpointProfileId: schema.runtimeExecutionTargets.endpointProfileId,
     accountRowId: schema.accounts.id,
     accountSiteId: schema.accounts.siteId,
+    accountCredentialMode: schema.accounts.credentialMode,
+    accountExtraConfig: schema.accounts.extraConfig,
+    accountOauthProvider: schema.accounts.oauthProvider,
     tokenRowId: schema.accountTokens.id,
     tokenAccountId: schema.accountTokens.accountId,
     bindingRowId: schema.credentialEndpointBindings.id,
@@ -230,6 +234,12 @@ export async function assertRouteRuntimeArtifactTransportBindings(input: {
         errors.push(`${attempt.executionAttemptId}:token_binding_missing`);
       } else if (row.tokenId != null && row.tokenAccountId !== row.accountId) {
         errors.push(`${attempt.executionAttemptId}:token_account_binding_mismatch`);
+      } else if (row.tokenId != null && !requiresManagedAccountTokens({
+        credentialMode: row.accountCredentialMode,
+        extraConfig: row.accountExtraConfig,
+        oauthProvider: row.accountOauthProvider,
+      })) {
+        errors.push(`${attempt.executionAttemptId}:token_binding_not_allowed_for_oauth`);
       }
       if (row.credentialBindingId != null && row.bindingRowId == null) {
         errors.push(`${attempt.executionAttemptId}:credential_binding_missing`);

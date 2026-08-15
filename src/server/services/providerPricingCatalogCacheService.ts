@@ -216,6 +216,7 @@ async function loadCatalogRequest(input: {
     accountId: schema.accounts.id,
     accountUsername: schema.accounts.username,
     accountCredential: schema.accounts.credential,
+    accountCredentialKind: schema.accounts.credentialKind,
     accountExtraConfig: schema.accounts.extraConfig,
   })
     .from(schema.accounts)
@@ -238,6 +239,7 @@ async function loadCatalogRequest(input: {
       id: row.accountId,
       username: row.accountUsername,
       credential: row.accountCredential,
+      credentialKind: row.accountCredentialKind,
       extraConfig: row.accountExtraConfig,
     },
     upstreamCredential: preferredToken

@@ -18,6 +18,7 @@ import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstr
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { protocolAdapters } from '../formats/protocolAdapters.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
+import { buildPlatformModelRequestCredentialHeaders } from '../../services/platforms/index.js';
 import { defaultRequestUrlForUpstreamEndpoint } from '../apiVariants.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
@@ -619,6 +620,10 @@ async function handleResponsesWebsocketConnection(
               account: codexWebsocketTarget.account,
               downstreamHeaders,
             });
+            const modelCredentialHeaders = buildPlatformModelRequestCredentialHeaders(codexWebsocketTarget.site.platform, {
+              kind: codexWebsocketTarget.token ? 'model_api_key' : 'oauth_access_token',
+              credential: codexWebsocketTarget.tokenValue,
+            });
 
             const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
               sessionId: websocketSessionId,
@@ -646,6 +651,7 @@ async function handleResponsesWebsocketConnection(
                     responsesOriginalBody: normalized.request,
                     downstreamHeaders,
                     platformHeaders,
+                    modelCredentialHeaders,
                     codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
                     runtimePostBuildFilters: codexWebsocketTarget.postBuildFilters ?? null,
                     compatibilityPolicy: resolveDispatchUpstreamCompatibilityPolicy({

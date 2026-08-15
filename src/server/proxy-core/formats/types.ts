@@ -73,6 +73,7 @@ export interface BuildUpstreamRequestInput {
   downstreamHeaders: Record<string, unknown>;
   passthroughHeaders: Record<string, string>;
   platformHeaders: Record<string, string>;
+  modelCredentialHeaders: Record<string, string>;
   transformed: TransformedDownstreamRequest;
   runtimePostBuildFilters?: CompiledRuntimePostBuildFilters | null;
   compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;

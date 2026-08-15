@@ -12,6 +12,7 @@ describe("adminSnapshotStore", () => {
   let readAdminSnapshot: AdminSnapshotStoreModule["readAdminSnapshot"];
   let writeAdminSnapshot: AdminSnapshotStoreModule["writeAdminSnapshot"];
   let deleteExpiredAdminSnapshots: AdminSnapshotStoreModule["deleteExpiredAdminSnapshots"];
+  let deleteAdminSnapshot: AdminSnapshotStoreModule["deleteAdminSnapshot"];
   let dataDir = "";
   let previousDataDir: string | undefined;
 
@@ -28,6 +29,7 @@ describe("adminSnapshotStore", () => {
     readAdminSnapshot = storeModule.readAdminSnapshot;
     writeAdminSnapshot = storeModule.writeAdminSnapshot;
     deleteExpiredAdminSnapshots = storeModule.deleteExpiredAdminSnapshots;
+    deleteAdminSnapshot = storeModule.deleteAdminSnapshot;
   });
 
   beforeEach(async () => {
@@ -95,5 +97,19 @@ describe("adminSnapshotStore", () => {
     const rows = await db.select().from(schema.adminSnapshots).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.snapshotKey).toBe(JSON.stringify("fresh"));
+  });
+
+  it("removes a catalog snapshot explicitly before its TTL expires", async () => {
+    const identity = { namespace: "accounts-snapshot", key: "all" };
+    await writeAdminSnapshot(identity, {
+      payload: { sites: [{ id: 1 }] },
+      generatedAt: "2026-04-09T00:00:00.000Z",
+      expiresAt: "2026-04-09T01:00:00.000Z",
+      staleUntil: "2026-04-09T06:00:00.000Z",
+    });
+
+    await deleteAdminSnapshot(identity);
+
+    await expect(readAdminSnapshot(identity)).resolves.toBeNull();
   });
 });

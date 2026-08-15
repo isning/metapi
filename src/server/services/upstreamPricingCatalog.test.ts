@@ -18,6 +18,7 @@ vi.mock('./accountAutoReloginService.js', () => ({
 
 import {
   fetchUpstreamPricingCatalog,
+  fetchUpstreamPricingCatalogWithMetadata,
 } from './upstreamPricingCatalogService.js';
 import {
   normalizeCommonPricingPayload,
@@ -46,7 +47,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -59,6 +60,7 @@ describe('upstreamPricingCatalogService', () => {
         id: 2,
         username: 'user-7788',
         credential: 'session-token',
+        credentialKind: 'session_cookie',
         extraConfig: JSON.stringify({ platformUserId: 42 }),
       },
       upstreamCredential: { token: 'api-token', tokenKind: 'api_token' },
@@ -67,16 +69,20 @@ describe('upstreamPricingCatalogService', () => {
     expect(catalog?.models.size).toBe(1);
     expect(getAdapterMock).toHaveBeenCalledWith('new-api');
     expect(runWithProxyOverrideMock).toHaveBeenCalledTimes(2);
-    expect(getPricingCatalog).toHaveBeenNthCalledWith(1, 'https://newapi.example.com', {
-      token: 'api-token',
-      tokenKind: 'api_token',
-      platformUserId: 42,
-    });
-    expect(getPricingCatalog).toHaveBeenNthCalledWith(2, 'https://newapi.example.com', {
-      token: 'session-token',
-      tokenKind: 'access_token',
-      platformUserId: 42,
-    });
+    expect(getPricingCatalog).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      endpoint: { baseUrl: 'https://newapi.example.com' },
+      account: expect.objectContaining({ extraConfig: JSON.stringify({ platformUserId: 42 }) }),
+      token: expect.objectContaining({ token: 'api-token' }),
+    }));
+    expect(getPricingCatalog).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      endpoint: { baseUrl: 'https://newapi.example.com' },
+      account: expect.objectContaining({
+        credential: 'session-token',
+        credentialKind: 'session_cookie',
+        extraConfig: JSON.stringify({ platformUserId: 42 }),
+      }),
+      token: null,
+    }));
   });
 
   it('skips missing account credentials before falling back to site key and public pricing', async () => {
@@ -93,7 +99,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -113,16 +119,14 @@ describe('upstreamPricingCatalogService', () => {
 
     expect(catalog?.models.has('site-priced-model')).toBe(true);
     expect(getPricingCatalog).toHaveBeenCalledTimes(2);
-    expect(getPricingCatalog).toHaveBeenNthCalledWith(1, 'https://newapi.example.com', {
-      token: 'api-token',
-      tokenKind: 'api_token',
-      platformUserId: 42,
-    });
-    expect(getPricingCatalog).toHaveBeenNthCalledWith(2, 'https://newapi.example.com', {
-      token: 'site-key',
-      tokenKind: 'site_api_key',
-      platformUserId: 42,
-    });
+    expect(getPricingCatalog).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      endpoint: { baseUrl: 'https://newapi.example.com' },
+      token: expect.objectContaining({ token: 'api-token' }),
+    }));
+    expect(getPricingCatalog).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      endpoint: { baseUrl: 'https://newapi.example.com' },
+      token: expect.objectContaining({ token: 'site-key' }),
+    }));
   });
 
   it('continues to later credentials after a credential-specific pricing catalog failure', async () => {
@@ -139,7 +143,7 @@ describe('upstreamPricingCatalogService', () => {
         }]]),
         groupRatio: { default: 1 },
       });
-    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
 
     const catalog = await fetchUpstreamPricingCatalog({
       site: {
@@ -166,7 +170,7 @@ describe('upstreamPricingCatalogService', () => {
       .mockRejectedValueOnce(new Error('api key rejected'))
       .mockRejectedValueOnce(new Error('session expired'))
       .mockResolvedValueOnce(null);
-    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
 
     await expect(fetchUpstreamPricingCatalog({
       site: {
@@ -201,8 +205,11 @@ describe('upstreamPricingCatalogService', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(catalog);
-    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock });
-    refreshAccountSessionFromAutoReloginMock.mockResolvedValue('fresh-session-token');
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
+    refreshAccountSessionFromAutoReloginMock.mockResolvedValue({
+      credential: 'fresh-session-token',
+      credentialKind: 'access_token',
+    });
 
     const input = {
       site: { id: 1, url: 'https://newapi.example.com', platform: 'new-api', apiKey: null },
@@ -217,11 +224,51 @@ describe('upstreamPricingCatalogService', () => {
 
     expect(result).toBe(catalog);
     expect(refreshAccountSessionFromAutoReloginMock).toHaveBeenCalledWith(input.account, input.site);
-    expect(getPricingCatalog).toHaveBeenLastCalledWith('https://newapi.example.com', {
-      token: 'fresh-session-token',
-      tokenKind: 'access_token',
-      platformUserId: 7788,
+    expect(getPricingCatalog).toHaveBeenLastCalledWith(expect.objectContaining({
+      endpoint: { baseUrl: 'https://newapi.example.com' },
+      account: expect.objectContaining({
+        credential: 'fresh-session-token',
+        username: 'user-7788',
+      }),
+      token: null,
+    }));
+  });
+
+  it('uses the credential kind returned by auto relogin for the immediate pricing retry', async () => {
+    const catalog = {
+      models: new Map([['cookie-priced-model', {
+        modelName: 'cookie-priced-model',
+        quotaType: 0,
+        modelRatio: 1,
+        completionRatio: 1,
+        modelPrice: null,
+        enableGroups: ['default'],
+      }]]),
+      groupRatio: { default: 1 },
+    };
+    const getPricingCatalog = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(catalog);
+    getAdapterMock.mockReturnValue({ getPricingCatalog, runWithProxyOverride: runWithProxyOverrideMock, credentialCapabilities: { sessionCredentialOptions: [{ kind: 'session_cookie' }] } });
+    refreshAccountSessionFromAutoReloginMock.mockResolvedValue({
+      credential: 'session=cookie-value',
+      credentialKind: 'session_cookie',
     });
+
+    const result = await fetchUpstreamPricingCatalogWithMetadata({
+      site: { id: 1, url: 'https://newapi.example.com', platform: 'new-api', apiKey: null },
+      account: { id: 2, credential: null },
+    });
+    expect(result?.catalog).toBe(catalog);
+    expect(result?.credentialKind).toBe('session_cookie');
+
+    expect(getPricingCatalog).toHaveBeenLastCalledWith(expect.objectContaining({
+      account: expect.objectContaining({
+        credential: 'session=cookie-value',
+        credentialKind: 'session_cookie',
+      }),
+      token: null,
+    }));
   });
 
   it('preserves missing direct token prices instead of coercing them to zero', () => {
