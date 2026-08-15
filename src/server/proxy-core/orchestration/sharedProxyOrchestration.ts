@@ -69,6 +69,7 @@ type SurfaceSelectedExecutionAttempt = {
   runtimeArtifactId: string;
   executionTargetId: number;
   routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
+  failureBackoff?: unknown;
 };
 
 function credentialFailureKindForAttempt(
@@ -798,6 +799,7 @@ export function createSurfaceFailureToolkit(input: {
         executionTargetId: args.selected.executionTargetId,
         status: args.status,
         errorText: rawErrText,
+        failureBackoff: args.selected.failureBackoff as any,
       });
       const retry = args.willContinue && shouldRetryProxyRequest(args.status, args.errText);
       await log({
@@ -868,6 +870,7 @@ export function createSurfaceFailureToolkit(input: {
         executionTargetId: args.selected.executionTargetId,
         status: args.failure.status,
         errorText: args.failure.reason,
+        failureBackoff: args.selected.failureBackoff as any,
       });
       const retry = args.willContinue && shouldRetryProxyRequest(args.failure.status, args.failure.reason);
       await log({
@@ -928,6 +931,7 @@ export function createSurfaceFailureToolkit(input: {
         executionTargetId: args.selected.executionTargetId,
         status: args.runtimeFailureStatus ?? undefined,
         errorText: errorMessage,
+        failureBackoff: args.selected.failureBackoff as any,
       });
       await log({
         selected: args.selected,

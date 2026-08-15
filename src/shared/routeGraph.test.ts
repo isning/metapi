@@ -10,6 +10,8 @@ import {
   normalizeRouteGraphMacro,
   normalizeRouteGraphNode,
   normalizeRouteGraphSource,
+  normalizeRouteFailureBackoffOverride,
+  normalizeRouteFailureBackoffPolicy,
 } from './routeGraph.js';
 import {
   compactCompiledRouterBundle,
@@ -18,6 +20,17 @@ import {
 } from './compiledRuntime.js';
 
 describe('route graph native exposure semantics', () => {
+  it('normalizes hierarchical failure backoff overrides without accepting unsafe policies', () => {
+    expect(normalizeRouteFailureBackoffPolicy({ failureThreshold: 2, levelsSec: [0, 5, 20], maxSec: 20 })).toEqual({
+      failureThreshold: 2,
+      levelsSec: [0, 5, 20],
+      maxSec: 20,
+    });
+    expect(normalizeRouteFailureBackoffOverride({ mode: 'disabled' })).toEqual({ mode: 'disabled' });
+    expect(normalizeRouteFailureBackoffPolicy({ failureThreshold: 2, levelsSec: [10, 5], maxSec: 20 })).toBeNull();
+    expect(normalizeRouteFailureBackoffOverride({ mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0], maxSec: 0 } })).toBeNull();
+  });
+
   it('resolves connection editability only from the port contract', () => {
     const generatedNode = normalizeRouteGraphNode({
       id: 'endpoint:generated',

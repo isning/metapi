@@ -19,6 +19,7 @@ import {
   insertRouteGroupMember,
 } from '../../testing/routeGroupMemberTestUtils.js';
 import type { RouteGroupCreatePayload } from '../contracts/routeGroupPayloads.js';
+import { resolveFailureCooldownMs, resolveRouteFailureBackoffPolicy } from './routeRuntimeExecutionService.js';
 
 type DbModule = typeof import('../db/index.js');
 type CompiledRuntimeExecutionModule = typeof import('./routeRuntimeExecutionService.js');
@@ -27,6 +28,30 @@ type RouteRuntimeArtifactModule = typeof import('./routeRuntimeArtifactService.j
 type SiteCatalogMutationModule = typeof import('./siteCatalogMutationService.js');
 
 describe('routeRuntimeExecutionService', () => {
+  it('resolves failure cooldown by execution-attempt then candidate then group precedence', () => {
+    const global = { failureThreshold: 3, levelsSec: [0, 10], maxSec: 10 };
+    expect(resolveRouteFailureBackoffPolicy({
+      global,
+      group: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 20], maxSec: 20 } },
+      candidate: { mode: 'disabled' },
+      executionAttempt: { mode: 'custom', policy: { failureThreshold: 1, levelsSec: [0, 30], maxSec: 30 } },
+    })).toEqual({ mode: 'custom', policy: { failureThreshold: 1, levelsSec: [0, 30], maxSec: 30 } });
+    expect(resolveFailureCooldownMs({
+      consecutiveFailCount: 1,
+      cooldownLevel: 0,
+      policy: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
+    })).toBe(0);
+    expect(resolveFailureCooldownMs({
+      consecutiveFailCount: 2,
+      cooldownLevel: 0,
+      policy: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
+    })).toBe(5000);
+    expect(resolveFailureCooldownMs({
+      consecutiveFailCount: 2,
+      cooldownLevel: 0,
+      policy: { mode: 'disabled' },
+    })).toBe(0);
+  });
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let selectRouteRuntimeExecutionAttempt: CompiledRuntimeExecutionModule['selectRouteRuntimeExecutionAttempt'];

@@ -37,14 +37,19 @@ import {
   type RouteRuntimeSelectorStateProposal,
 } from './routeRuntimeSelectorStateService.js';
 import { matchesModelPattern } from '../../shared/modelPatternMatcher.js';
+import {
+  DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY,
+  normalizeRouteFailureBackoffOverride,
+  normalizeRouteFailureBackoffPolicy,
+  type RouteFailureBackoffOverride,
+  type RouteFailureBackoffPolicy,
+} from '../../shared/routeGraph.js';
 import type {
   RouteRuntimeCredentialSnapshot,
   RouteRuntimeSnapshotBody,
 } from '../../shared/routeRuntimeSnapshot.js';
 
-const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
-const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
-const FAILURE_COOLDOWN_MAX_MS = 24 * 60 * 60 * 1000;
+export const ROUTE_FAILURE_BACKOFF_SETTING_KEY = 'route_failure_backoff_default_v1';
 
 type AccountRow = typeof schema.accounts.$inferSelect;
 type SiteRow = typeof schema.sites.$inferSelect;
@@ -124,6 +129,7 @@ export type RouteRuntimeExecutionAttempt = {
   routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
   routeEndpointCompatibilityPolicy?: RouteRuntimeSelection['routeEndpointCompatibilityPolicy'] | null;
   executionAttemptCompatibilityPolicy?: RouteRuntimeSelection['routeEndpointCompatibilityPolicy'] | null;
+  failureBackoff?: RouteFailureBackoffOverride | null;
 };
 
 export type RouteRuntimeSyntheticDecision = {
@@ -721,6 +727,7 @@ function toRouteRuntimeExecutionAttempt(input: {
     routeRuntimeSnapshot: runtimeSnapshotBody,
     routeEndpointCompatibilityPolicy: selection.routeEndpointCompatibilityPolicy || null,
     executionAttemptCompatibilityPolicy: selection.selectedExecutionAttempt?.compatibilityPolicy || null,
+    failureBackoff: selection.selectedExecutionAttempt?.failureBackoff || null,
   };
 }
 
@@ -1042,15 +1049,50 @@ export async function markRouteRuntimeExecutionTargetRecovered(executionTargetId
   invalidateRouteRuntimeExecutionTargetState(normalizedId);
 }
 
-function resolveFailureCooldownMs(consecutiveFailCount: number): number {
-  const sec = Math.min(60 * Math.max(1, consecutiveFailCount) * Math.max(1, consecutiveFailCount), FAILURE_COOLDOWN_MAX_MS / 1000);
-  return Math.min(sec * 1000, FAILURE_COOLDOWN_MAX_MS);
+async function resolveGlobalRouteFailureBackoffPolicy(): Promise<{ policy: RouteFailureBackoffPolicy; configured: boolean }> {
+  const row = await db.select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, ROUTE_FAILURE_BACKOFF_SETTING_KEY))
+    .get();
+  if (!row?.value) return { policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: false };
+  try {
+    const parsed = JSON.parse(row.value);
+    return { policy: normalizeRouteFailureBackoffPolicy(parsed) || DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: true };
+  } catch {
+    return { policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: false };
+  }
+}
+
+export function resolveRouteFailureBackoffPolicy(input: {
+  global: RouteFailureBackoffPolicy;
+  group?: RouteFailureBackoffOverride | null;
+  candidate?: RouteFailureBackoffOverride | null;
+  executionAttempt?: RouteFailureBackoffOverride | null;
+}): RouteFailureBackoffOverride {
+  const selected = [input.executionAttempt, input.candidate, input.group]
+    .map((value) => normalizeRouteFailureBackoffOverride(value))
+    .find(Boolean);
+  return selected || { mode: 'custom', policy: normalizeRouteFailureBackoffPolicy(input.global) || DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
+}
+
+export function resolveFailureCooldownMs(input: {
+  consecutiveFailCount: number;
+  cooldownLevel: number;
+  policy: RouteFailureBackoffOverride;
+}): number {
+  if (input.policy.mode === 'disabled') return 0;
+  const policy = input.policy.policy;
+  const nextCount = Math.max(0, Math.trunc(input.consecutiveFailCount));
+  if (nextCount < policy.failureThreshold) return 0;
+  const level = Math.min(Math.max(0, Math.trunc(input.cooldownLevel)) + 1, policy.levelsSec.length - 1);
+  return Math.min((policy.levelsSec[level] || 0) * 1000, policy.maxSec * 1000);
 }
 
 export async function recordRouteRuntimeExecutionAttemptFailure(input: {
   executionTargetId: number;
   status?: number;
   errorText?: string | null;
+  failureBackoff?: RouteFailureBackoffOverride | null;
 }): Promise<void> {
   const executionTargetId = input.executionTargetId;
   await ensureExecutionTargetState(executionTargetId);
@@ -1063,13 +1105,23 @@ export async function recordRouteRuntimeExecutionAttemptFailure(input: {
     const nowIso = new Date(nowMs).toISOString();
     const failCount = state.failCount + 1;
     const nextConsecutiveFailCount = state.consecutiveFailCount + 1;
-    const thresholdReached = nextConsecutiveFailCount >= ROUND_ROBIN_FAILURE_THRESHOLD;
+    const globalPolicy = await resolveGlobalRouteFailureBackoffPolicy();
+    const effectivePolicy = resolveRouteFailureBackoffPolicy({
+      global: globalPolicy.policy,
+      executionAttempt: input.failureBackoff,
+    });
+    const thresholdReached = effectivePolicy.mode === 'custom'
+      && nextConsecutiveFailCount >= effectivePolicy.policy.failureThreshold;
     const cooldownLevel = thresholdReached
-      ? Math.min(state.cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1)
+      ? Math.min(state.cooldownLevel + 1, effectivePolicy.policy.levelsSec.length - 1)
       : state.cooldownLevel;
-    const cooldownMs = thresholdReached
-      ? Math.min((ROUND_ROBIN_COOLDOWN_LEVELS_SEC[cooldownLevel] ?? 0) * 1000, FAILURE_COOLDOWN_MAX_MS)
-      : resolveFailureCooldownMs(nextConsecutiveFailCount);
+    const cooldownMs = (!input.failureBackoff && !globalPolicy.configured && effectivePolicy.mode === 'custom' && nextConsecutiveFailCount < effectivePolicy.policy.failureThreshold)
+      ? Math.min(60 * nextConsecutiveFailCount * nextConsecutiveFailCount * 1000, effectivePolicy.policy.maxSec * 1000)
+      : resolveFailureCooldownMs({
+      consecutiveFailCount: nextConsecutiveFailCount,
+      cooldownLevel: state.cooldownLevel,
+      policy: effectivePolicy,
+    });
     const result = await db.update(schema.runtimeExecutionTargetState).set({
       failCount,
       lastFailAt: nowIso,

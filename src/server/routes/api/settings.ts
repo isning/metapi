@@ -3,8 +3,12 @@ import cron from 'node-cron';
 import { Readable } from 'node:stream';
 import { fetch } from 'undici';
 import { config, normalizeRouteFailureCooldownMaxSec, normalizeRouteRuntimeCacheTtlMs } from '../../config.js';
+import { DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, normalizeRouteFailureBackoffPolicy } from '../../../shared/routeGraph.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
+
+const ROUTE_FAILURE_BACKOFF_SETTING_KEY = 'route_failure_backoff_default_v1';
+let routeFailureBackoffDefault = DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY;
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { advanceRouteGroupManagementCatalogRevision } from '../../services/routeGroupManagementCatalogRevisionService.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
@@ -59,6 +63,7 @@ import {
 
 
 interface RuntimeSettingsBody {
+  routeFailureBackoffDefault?: unknown;
   proxyToken?: string;
   systemProxyUrl?: string;
   modelAvailabilityProbeEnabled?: boolean;
@@ -947,6 +952,12 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.routeFailureCooldownMaxSec = normalized;
       return;
     }
+    case 'route_failure_backoff_default_v1': {
+      const normalized = normalizeRouteFailureBackoffPolicy(value);
+      if (!normalized) return;
+      routeFailureBackoffDefault = normalized;
+      return;
+    }
     default:
       return;
   }
@@ -980,6 +991,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     routeFailureCooldownMaxSec: config.routeFailureCooldownMaxSec,
+    routeFailureBackoffDefault,
     routeRuntimeCacheTtlMs: config.routeRuntimeCacheTtlMs,
     dispatchPolicyRegistry: config.dispatchPolicyRegistry,
     webhookUrl: config.webhookUrl,
@@ -1962,6 +1974,16 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.routeFailureCooldownMaxSec = normalized;
       upsertSetting('route_failure_cooldown_max_sec', normalized);
+    }
+
+    if (body.routeFailureBackoffDefault !== undefined) {
+      const normalized = normalizeRouteFailureBackoffPolicy(body.routeFailureBackoffDefault);
+      if (!normalized) {
+        return reply.code(400).send({ success: false, message: '路由失败退避策略无效：阈值、递增秒数和上限必须为合法且单调递增的非负值' });
+      }
+      await upsertSetting(ROUTE_FAILURE_BACKOFF_SETTING_KEY, normalized);
+      routeFailureBackoffDefault = normalized;
+      changedLabels.push('路由失败退避策略');
     }
 
     if (body.routeRuntimeCacheTtlMs !== undefined) {

@@ -18,6 +18,7 @@ import {
   normalizeUpstreamCompatibilityPolicy,
   type UpstreamCompatibilityPolicy,
 } from '../contracts/upstreamCompatibilityPolicy.js';
+import { normalizeRouteFailureBackoffOverride } from '../../shared/routeGraph.js';
 import {
   evaluateRuntimeSelectorCandidates,
   hydrateRuntimeSelectorPlan,
@@ -189,6 +190,7 @@ export type RouteRuntimeSelection = {
     transportBinding?: { kind: 'execution_target'; executionTargetId: number };
     metadata?: Record<string, unknown>;
     compatibilityPolicy?: UpstreamCompatibilityPolicy;
+    failureBackoff?: ReturnType<typeof normalizeRouteFailureBackoffOverride>;
     sourceRef: RouteProgramSourceRef;
   } | null;
   terminalNodeId: string | null;
@@ -363,6 +365,9 @@ function executionAttemptTargetForSelection(
     transportBinding: transportBindingFromTarget(target.transportBinding),
     metadata: isRecord(target.metadata) ? target.metadata : undefined,
     compatibilityPolicy: normalizeUpstreamCompatibilityPolicy(target.compatibilityPolicy),
+    ...(normalizeRouteFailureBackoffOverride(target.failureBackoff)
+      ? { failureBackoff: normalizeRouteFailureBackoffOverride(target.failureBackoff) }
+      : {}),
     sourceRef,
   };
 }
@@ -495,10 +500,14 @@ function targetRefToRuntimeTarget(
   target: CompiledEndpointTarget | null | undefined,
   endpoint: CompiledExecutionAlternative['endpoint'],
   fallbackSourceRef: RouteProgramSourceRef = {},
+  candidateFailureBackoff?: unknown,
 ): RouteRuntimeSelection['selectedExecutionAttempt'] {
   if (!target) return null;
   return executionAttemptTargetForSelection({
     ...target,
+    ...(!normalizeRouteFailureBackoffOverride(target.failureBackoff) && normalizeRouteFailureBackoffOverride(candidateFailureBackoff)
+      ? { failureBackoff: normalizeRouteFailureBackoffOverride(candidateFailureBackoff) }
+      : {}),
     endpointId: endpoint?.endpointId || '',
     nodeId: endpoint?.nodeId || '',
   }, fallbackSourceRef);
@@ -970,7 +979,12 @@ function evaluateCompiledRouterAlternative(input: {
   }
 
   const selectedExecutionAttempt = alternative.kind === 'execution_attempt'
-    ? targetRefToRuntimeTarget(alternative.executionAttempt, alternative.endpoint, alternativeSourceRef(alternative))
+    ? targetRefToRuntimeTarget(
+      alternative.executionAttempt,
+      alternative.endpoint,
+      alternativeSourceRef(alternative),
+      [...(alternative.selectionTerms || [])].reverse().find((term) => term.failureBackoff)?.failureBackoff,
+    )
     : null;
   const terminalModel = asTrimmedString(alternative.endpoint?.model);
   const selectedExecutionModel = selectedExecutionAttempt?.modelSource === 'request'

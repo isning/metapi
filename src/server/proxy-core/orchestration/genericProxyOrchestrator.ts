@@ -1105,6 +1105,7 @@ export async function handleGenericSurfaceRequest(
               executionTargetId: selected.executionTargetId,
               status: endpointFailureStatus,
               errorText: err.message || 'Upstream request build failed',
+              failureBackoff: selected.failureBackoff,
             });
           } catch {
             // best effort only

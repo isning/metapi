@@ -137,6 +137,20 @@ export function validateNativeDispatcherPolicy(input: unknown):
   | { ok: true; value: DispatcherPolicy }
   | { ok: false; error: string };
 export function requireNativeDispatcherPolicy(input: unknown): DispatcherPolicy;
+
+export type RouteFailureBackoffPolicy = {
+  failureThreshold: number;
+  levelsSec: number[];
+  maxSec: number;
+};
+export const DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY: RouteFailureBackoffPolicy;
+
+export type RouteFailureBackoffOverride =
+  | { mode: 'custom'; policy: RouteFailureBackoffPolicy }
+  | { mode: 'disabled' };
+
+export function normalizeRouteFailureBackoffPolicy(input: unknown): RouteFailureBackoffPolicy | null;
+export function normalizeRouteFailureBackoffOverride(input: unknown): RouteFailureBackoffOverride | null;
 export function validateNativeTargetSelectionPolicy(input: unknown):
   | { ok: true; value: TargetSelectionPolicy }
   | { ok: false; error: string };
@@ -163,6 +177,7 @@ export type RouteExecutableTarget = {
   transportBinding?: { kind: 'execution_target'; executionTargetId: number };
   metadata?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
+  failureBackoff?: RouteFailureBackoffOverride;
 };
 
 export type RouteEndpointConfig = {
@@ -219,6 +234,7 @@ export type CandidateSelectorMacroConfig = {
     /** Receives candidateSource matches that are not assigned to another stage member. */
     acceptUnassigned?: boolean;
     policy?: DispatcherPolicy;
+    failureBackoff?: RouteFailureBackoffOverride;
     input:
       | { kind: 'route_endpoints'; endpointIds: string[] }
       | { kind: 'graph_references'; endpointIds: string[]; macroIds: string[] }
@@ -231,6 +247,7 @@ export type CandidateSelectorMacroConfig = {
       enabled?: boolean;
       weight?: number;
       metadata?: Record<string, unknown>;
+      failureBackoff?: RouteFailureBackoffOverride;
     };
     members?: Array<{
       /** Opaque identity scoped to this dispatcher group; not a global resource. */
@@ -240,6 +257,7 @@ export type CandidateSelectorMacroConfig = {
       enabled?: boolean;
       weight?: number;
       metadata?: Record<string, unknown>;
+      failureBackoff?: RouteFailureBackoffOverride;
     }>;
     materialization?: {
       sort?: 'model_name' | 'health' | 'cel';
@@ -320,6 +338,7 @@ export type CompiledEndpointTarget = {
   metadata?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
+  failureBackoff?: RouteFailureBackoffOverride;
   sourceRef?: RouteProgramSourceRef;
 };
 

@@ -57,7 +57,7 @@ function createPackedExecutionTable() {
     Number.isFinite(Number(term?.weight)) ? Number(term.weight) : 1,
     Number.isFinite(Number(term?.order)) ? Number(term.order) : 0,
     Number.isFinite(Number(term?.controlOrder)) ? Number(term.controlOrder) : 0,
-    packedTupleValue(term?.metadata), packedTupleValue(term?.runtime), packedTupleValue(term?.sourceRef),
+    packedTupleValue(term?.metadata), packedTupleValue(term?.runtime), packedTupleValue(term?.sourceRef), packedTupleValue(term?.failureBackoff),
   ]);
   const fallbackStageIndex = (stage) => intern(fallbackStages, 'fallback', [
     normalizeString(stage?.fallbackId), normalizeString(stage?.stageId),
@@ -81,7 +81,7 @@ function createPackedExecutionTable() {
     attempt.accountId == null ? null : attempt.accountId, attempt.tokenId == null ? null : attempt.tokenId,
     attempt.siteId == null ? null : attempt.siteId, Number.isFinite(Number(attempt.weight)) ? Number(attempt.weight) : null,
     packedTupleValue(attempt.transportBinding), packedTupleValue(attempt.metadata), packedTupleValue(attempt.runtime),
-    packedTupleValue(attempt.compatibilityPolicy), packedTupleValue(attempt.sourceRef),
+    packedTupleValue(attempt.compatibilityPolicy), packedTupleValue(attempt.failureBackoff), packedTupleValue(attempt.sourceRef),
   ]);
   const syntheticResponseIndex = (response) => !response ? null : intern(syntheticResponses, 'synthetic', [
     normalizeString(response.nodeId), response.statusCode === 429 ? 429 : 503, normalizeString(response.message) || 'No route is available.',
@@ -114,7 +114,7 @@ function unpackAlternative(table, alternative) {
     optionIndex: Number.isFinite(Number(tuple?.[5])) ? Number(tuple[5]) : 0, optionKind: normalizeString(tuple?.[6]) || 'route', enabled: tuple?.[7] !== 0,
     weight: Number.isFinite(Number(tuple?.[8])) ? Number(tuple[8]) : 1, order: Number.isFinite(Number(tuple?.[9])) ? Number(tuple[9]) : 0,
     controlOrder: Number.isFinite(Number(tuple?.[10])) ? Number(tuple[10]) : 0, ...(packedTupleValue(tuple?.[11]) ? { metadata: tuple[11] } : {}),
-    ...(packedTupleValue(tuple?.[12]) ? { runtime: tuple[12] } : {}), ...(packedTupleValue(tuple?.[13]) ? { sourceRef: tuple[13] } : {}),
+    ...(packedTupleValue(tuple?.[12]) ? { runtime: tuple[12] } : {}), ...(packedTupleValue(tuple?.[13]) ? { sourceRef: tuple[13] } : {}), ...(packedTupleValue(tuple?.[14]) ? { failureBackoff: tuple[14] } : {}),
   });
   const unpackFallback = (tuple) => ({ fallbackId: normalizeString(tuple?.[0]), stageId: normalizeString(tuple?.[1]), stageIndex: Number.isFinite(Number(tuple?.[2])) ? Number(tuple[2]) : 0, nodeId: normalizeString(tuple?.[3]), controlOrder: Number.isFinite(Number(tuple?.[4])) ? Number(tuple[4]) : 0, ...(packedTupleValue(tuple?.[5]) ? { sourceRef: tuple[5] } : {}) });
   const terminalTuple = table?.terminals?.[alternative?.terminal];
@@ -131,7 +131,7 @@ function unpackAlternative(table, alternative) {
     fallbackStages: (Array.isArray(alternative?.fallbacks) ? alternative.fallbacks : []).map((index) => unpackFallback(table?.fallbackStages?.[index])).filter((stage) => stage.fallbackId && stage.stageId),
     terminal,
     endpoint: Array.isArray(endpointTuple) ? { endpointId: normalizeString(endpointTuple[0]), nodeId: normalizeString(endpointTuple[1]), model: endpointTuple[2] == null ? null : normalizeString(endpointTuple[2]), ...(packedTupleValue(endpointTuple[3]) ? { compatibilityPolicy: endpointTuple[3] } : {}), ...(packedTupleValue(endpointTuple[4]) ? { metadata: endpointTuple[4] } : {}), ...(packedTupleValue(endpointTuple[5]) ? { runtime: endpointTuple[5] } : {}), ...(packedTupleValue(endpointTuple[6]) ? { sourceRef: endpointTuple[6] } : {}) } : null,
-    executionAttempt: Array.isArray(attemptTuple) ? { targetId: normalizeString(attemptTuple[0]), executionAttemptId: normalizeString(attemptTuple[1]), model: normalizeString(attemptTuple[2]), modelSource: attemptTuple[3] === 'request' ? 'request' : 'fixed', enabled: attemptTuple[4] !== 0, ...(attemptTuple[5] == null ? {} : { accountId: attemptTuple[5] }), ...(attemptTuple[6] == null ? {} : { tokenId: attemptTuple[6] }), ...(attemptTuple[7] == null ? {} : { siteId: attemptTuple[7] }), ...(attemptTuple[8] == null ? {} : { weight: Number(attemptTuple[8]) }), ...(packedTupleValue(attemptTuple[9]) ? { transportBinding: attemptTuple[9] } : {}), ...(packedTupleValue(attemptTuple[10]) ? { metadata: attemptTuple[10] } : {}), ...(packedTupleValue(attemptTuple[11]) ? { runtime: attemptTuple[11] } : {}), ...(packedTupleValue(attemptTuple[12]) ? { compatibilityPolicy: attemptTuple[12] } : {}), ...(packedTupleValue(attemptTuple[13]) ? { sourceRef: attemptTuple[13] } : {}) } : null,
+    executionAttempt: Array.isArray(attemptTuple) ? { targetId: normalizeString(attemptTuple[0]), executionAttemptId: normalizeString(attemptTuple[1]), model: normalizeString(attemptTuple[2]), modelSource: attemptTuple[3] === 'request' ? 'request' : 'fixed', enabled: attemptTuple[4] !== 0, ...(attemptTuple[5] == null ? {} : { accountId: attemptTuple[5] }), ...(attemptTuple[6] == null ? {} : { tokenId: attemptTuple[6] }), ...(attemptTuple[7] == null ? {} : { siteId: attemptTuple[7] }), ...(attemptTuple[8] == null ? {} : { weight: Number(attemptTuple[8]) }), ...(packedTupleValue(attemptTuple[9]) ? { transportBinding: attemptTuple[9] } : {}), ...(packedTupleValue(attemptTuple[10]) ? { metadata: attemptTuple[10] } : {}), ...(packedTupleValue(attemptTuple[11]) ? { runtime: attemptTuple[11] } : {}), ...(packedTupleValue(attemptTuple[12]) ? { compatibilityPolicy: attemptTuple[12] } : {}), ...(packedTupleValue(attemptTuple[13]) ? { failureBackoff: attemptTuple[13] } : {}), ...(packedTupleValue(attemptTuple[14]) ? { sourceRef: attemptTuple[14] } : {}) } : null,
     syntheticResponse: Array.isArray(syntheticTuple) ? { nodeId: normalizeString(syntheticTuple[0]), statusCode: syntheticTuple[1] === 429 ? 429 : 503, message: normalizeString(syntheticTuple[2]) || 'No route is available.', ...(packedTupleValue(syntheticTuple[3]) ? { metadata: syntheticTuple[3] } : {}), ...(packedTupleValue(syntheticTuple[4]) ? { runtime: syntheticTuple[4] } : {}), ...(packedTupleValue(syntheticTuple[5]) ? { sourceRef: syntheticTuple[5] } : {}) } : null,
     ...(packedTupleValue(alternative?.metadata) ? { metadata: alternative.metadata } : {}), ...(packedTupleValue(alternative?.runtime) ? { runtime: alternative.runtime } : {}),
   };

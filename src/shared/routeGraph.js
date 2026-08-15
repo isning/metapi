@@ -486,6 +486,36 @@ function normalizeRouteFilter(input) {
   };
 }
 
+export const DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY = Object.freeze({
+  failureThreshold: 3,
+  levelsSec: Object.freeze([0, 600, 3600, 86400]),
+  maxSec: 86400,
+});
+
+export function normalizeRouteFailureBackoffPolicy(input) {
+  const raw = isPlainObject(input) ? input : {};
+  const threshold = Number(raw.failureThreshold);
+  const maxSec = Number(raw.maxSec);
+  const levels = Array.isArray(raw.levelsSec) ? raw.levelsSec.map(Number) : [];
+  if (!Number.isSafeInteger(threshold) || threshold < 1 || threshold > 100) return null;
+  if (!Number.isFinite(maxSec) || maxSec <= 0 || maxSec > 30 * 24 * 60 * 60) return null;
+  if (levels.length === 0 || levels.length > 32) return null;
+  const normalizedLevels = levels.map((value) => Math.trunc(value));
+  if (normalizedLevels.some((value) => !Number.isFinite(value) || value < 0 || value > maxSec)) return null;
+  for (let index = 1; index < normalizedLevels.length; index += 1) {
+    if (normalizedLevels[index] < normalizedLevels[index - 1]) return null;
+  }
+  return { failureThreshold: threshold, levelsSec: normalizedLevels, maxSec: Math.trunc(maxSec) };
+}
+
+export function normalizeRouteFailureBackoffOverride(input) {
+  const raw = isPlainObject(input) ? input : {};
+  if (raw.mode === 'disabled') return { mode: 'disabled' };
+  if (raw.mode !== 'custom') return null;
+  const policy = normalizeRouteFailureBackoffPolicy(raw.policy);
+  return policy ? { mode: 'custom', policy } : null;
+}
+
 function normalizeRouteExecutableTarget(input) {
   const raw = isPlainObject(input) ? input : {};
   const targetId = normalizeString(raw.targetId);
@@ -495,6 +525,7 @@ function normalizeRouteExecutableTarget(input) {
   const accountId = normalizePositiveInteger(raw.accountId);
   const siteId = normalizePositiveInteger(raw.siteId);
   const executionTargetId = normalizePositiveInteger(raw.transportBinding?.executionTargetId);
+  const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
   return {
     targetId,
     model,
@@ -507,6 +538,7 @@ function normalizeRouteExecutableTarget(input) {
     ...(Number.isFinite(Number(raw.weight)) ? { weight: Number(raw.weight) } : {}),
     ...(isPlainObject(raw.metadata) ? { metadata: raw.metadata } : {}),
     ...(isPlainObject(raw.compatibilityPolicy) ? { compatibilityPolicy: raw.compatibilityPolicy } : {}),
+    ...(failureBackoff ? { failureBackoff } : {}),
   };
 }
 
@@ -788,6 +820,7 @@ function normalizeCandidateSelectorGroupMember(input) {
   const memberId = normalizeString(raw.memberId);
   const endpointId = normalizeString(raw.endpointId);
   const macroId = normalizeString(raw.macroId);
+  const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
   return {
     ...(memberId ? { memberId } : {}),
     ...(endpointId ? { endpointId } : {}),
@@ -795,12 +828,15 @@ function normalizeCandidateSelectorGroupMember(input) {
     ...(raw.enabled === false ? { enabled: false } : {}),
     ...(Number.isFinite(Number(raw.weight)) ? { weight: Number(raw.weight) } : {}),
     ...(isPlainObject(raw.metadata) ? { metadata: raw.metadata } : {}),
+    ...(failureBackoff ? { failureBackoff } : {}),
   };
 }
 
 function normalizeCandidateSelectorGroup(input, index) {
   const raw = isPlainObject(input) ? input : {};
   const defaults = isPlainObject(raw.defaults) ? raw.defaults : {};
+  const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
+  const defaultFailureBackoff = normalizeRouteFailureBackoffOverride(defaults.failureBackoff);
   const materialization = isPlainObject(raw.materialization) ? raw.materialization : {};
   const normalizedInput = normalizeCandidateSelectorInput(raw.input);
   const rawMembers = Array.isArray(raw.members)
@@ -848,7 +884,9 @@ function normalizeCandidateSelectorGroup(input, index) {
       ...(defaults.enabled === false ? { enabled: false } : {}),
       ...(Number.isFinite(Number(defaults.weight)) ? { weight: Number(defaults.weight) } : {}),
       ...(isPlainObject(defaults.metadata) ? { metadata: defaults.metadata } : {}),
+      ...(defaultFailureBackoff ? { failureBackoff: defaultFailureBackoff } : {}),
     },
+    ...(failureBackoff ? { failureBackoff } : {}),
     ...(members.length > 0 ? { members } : {}),
     ...(isPlainObject(raw.materialization) ? {
       materialization: {
@@ -1405,6 +1443,7 @@ function compiledEndpointTargetsForRouteEndpoint(endpointNode, endpointId, sourc
       ...(isPlainObject(target.compatibilityPolicy)
         ? { compatibilityPolicy: target.compatibilityPolicy }
         : (isPlainObject(endpointNode.config?.compatibilityPolicy) ? { compatibilityPolicy: endpointNode.config.compatibilityPolicy } : {})),
+      ...(target.failureBackoff ? { failureBackoff: target.failureBackoff } : {}),
       sourceRef: sourceRef || routeProgramSourceRefFromNode(endpointNode, {
         endpointId,
         generatedNodeIds: endpointNode.ownership === 'derived' ? [endpointNode.id] : [],
@@ -1573,6 +1612,7 @@ function canElideSingleCompiledSelection(policy) {
 function routeProgramCandidateBase(input) {
   const metadata = isPlainObject(input.metadata) ? input.metadata : {};
   const weight = Number.isFinite(Number(metadata.weight)) ? Number(metadata.weight) : input.defaultWeight;
+  const failureBackoff = normalizeRouteFailureBackoffOverride(input.failureBackoff || metadata.failureBackoff);
   return {
     id: input.id,
     kind: input.kind,
@@ -1583,6 +1623,7 @@ function routeProgramCandidateBase(input) {
     ...(input.targetRef ? { targetRef: input.targetRef } : {}),
     enabled: input.enabled !== false,
     weight: Number.isFinite(Number(weight)) ? Number(weight) : 1,
+    ...(failureBackoff ? { failureBackoff } : {}),
     metadata,
     sourceRef: input.sourceRef || {},
   };
@@ -2508,7 +2549,8 @@ function buildCompiledRouterPlanFromRouteProgram(program, diagnostics) {
             weight: Number.isFinite(Number(candidate.weight)) ? Number(candidate.weight) : 1,
             order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index,
             controlOrder,
-            ...(isPlainObject(candidate.metadata) ? { metadata: candidate.metadata } : {}),
+          ...(isPlainObject(candidate.metadata) ? { metadata: candidate.metadata } : {}),
+          ...(candidate.failureBackoff ? { failureBackoff: candidate.failureBackoff } : {}),
           },
         ];
         const terminalCandidateIndexes = visitOp(
@@ -2665,11 +2707,15 @@ function macroCandidateWeight(group, member, fallback = 1) {
 
 function mergeCandidateMemberMetadata(group, candidateMetadata, member) {
   const stageMember = isPlainObject(member) ? member : {};
+  const failureBackoff = normalizeRouteFailureBackoffOverride(
+    stageMember.failureBackoff || group?.failureBackoff || group?.defaults?.failureBackoff,
+  );
   const merged = {
     ...candidateMetadata,
     ...(Number.isFinite(Number(stageMember.weight)) ? { weight: Number(stageMember.weight) } : {}),
     ...(stageMember.enabled === true || stageMember.enabled === false ? { enabled: stageMember.enabled } : {}),
     ...(isPlainObject(stageMember.metadata) ? { metadata: stageMember.metadata } : {}),
+    ...(failureBackoff ? { failureBackoff } : {}),
   };
   return merged;
 }
