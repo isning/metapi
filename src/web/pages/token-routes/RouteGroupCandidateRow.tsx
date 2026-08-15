@@ -26,6 +26,7 @@ import {
 import { Switch } from '../../components/ui/switch/index.js';
 import { tr } from '../../i18n.js';
 import { DragHandleButton } from './DragHandleButton.js';
+import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 import {
   routeGroupCapabilities,
   routeGroupCommandErrorMessage,
@@ -321,6 +322,10 @@ export function RouteGroupCandidateRow({
               </Button>
             </div>
           </div>
+          <FailureBackoffEditor
+            value={candidate.failureBackoff}
+            onChange={(failureBackoff) => void update({ failureBackoff })}
+          />
         </div>
       ) : null}
     </div>

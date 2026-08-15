@@ -29,6 +29,7 @@ import {
 } from "./routeGraphExecutionTargetEndpointService.js";
 import { RouteGroupCommandError } from "./routeGroupCommandError.js";
 import { AVAILABILITY_ROUTE_GROUP_OWNER } from "./routeGroupAutomaticOwnership.js";
+import type { RouteFailureBackoffOverride } from "../../shared/routeGraph.js";
 
 export type RouteGroupCandidateCreateInput = {
   routeGroupKey: string;
@@ -43,6 +44,7 @@ export type RouteGroupCandidateUpdateInput = {
   stageId?: string;
   weight?: number;
   enabled?: boolean;
+  failureBackoff?: RouteFailureBackoffOverride | null;
 };
 
 function text(value: unknown): string {
@@ -423,6 +425,9 @@ export async function updateRouteGroupMember(
           ? { weight: normalizeWeight(input.weight) }
           : {}),
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        ...(input.failureBackoff !== undefined
+          ? { failureBackoff: input.failureBackoff || undefined }
+          : {}),
         metadata: { ...found.member.metadata, manualOverride: true },
       };
       const nextMacro = replaceRouteGroupFacadeMacroInSource(nextSource, {

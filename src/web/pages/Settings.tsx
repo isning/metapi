@@ -9,6 +9,7 @@ import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
+import { FailureBackoffEditor } from './token-routes/FailureBackoffEditor.js';
 import CostPolicySettingsSection from './settings/CostPolicySettingsSection.js';
 import DispatchPolicyEditor from './settings/DispatchPolicyEditor.js';
 import {
@@ -85,6 +86,7 @@ type RuntimeSettings = {
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
+  routeFailureBackoffDefault: { failureThreshold: number; levelsSec: number[]; maxSec: number };
   routeRuntimeCacheTtlMs: number;
   dispatchPolicyRegistry: DispatchPolicyRegistryPayload;
   systemProxyUrl: string;
@@ -246,6 +248,7 @@ export default function Settings() {
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
+    routeFailureBackoffDefault: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 },
     routeRuntimeCacheTtlMs: 1500,
     dispatchPolicyRegistry: defaultDispatchPolicyRegistry,
     systemProxyUrl: '',
@@ -409,6 +412,7 @@ export default function Settings() {
           : 0,
         routeFailureCooldownMaxValue: routeCooldownInput.value,
         routeFailureCooldownMaxUnit: routeCooldownInput.unit,
+        routeFailureBackoffDefault: runtimeInfo.routeFailureBackoffDefault || { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 },
         routeRuntimeCacheTtlMs: Number(runtimeInfo.routeRuntimeCacheTtlMs) >= 100
           ? Math.trunc(Number(runtimeInfo.routeRuntimeCacheTtlMs))
           : 1500,
@@ -735,6 +739,7 @@ export default function Settings() {
           runtime.routeFailureCooldownMaxValue,
           runtime.routeFailureCooldownMaxUnit,
         ),
+        routeFailureBackoffDefault: runtime.routeFailureBackoffDefault,
         routeRuntimeCacheTtlMs: runtime.routeRuntimeCacheTtlMs,
         disableCrossProtocolFallback: runtime.disableCrossProtocolFallback,
       });
@@ -1524,6 +1529,19 @@ export default function Settings() {
               </div>
             </div>
           </SettingsField>
+
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">{tr('pages.settings.failureBackoffDefault')}</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.settings.failureBackoffDefaultHint')}</div>
+            <FailureBackoffEditor
+              allowInherit={false}
+              value={{ mode: 'custom', policy: runtime.routeFailureBackoffDefault }}
+              onChange={(value) => {
+                if (value?.mode !== 'custom') return;
+                setRuntime((current) => ({ ...current, routeFailureBackoffDefault: value.policy }));
+              }}
+            />
+          </div>
 
           <SettingsToggleRow
             title={tr('pages.settings.failedOtherprotocol')}

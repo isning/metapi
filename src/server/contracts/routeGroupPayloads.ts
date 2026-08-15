@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeRouteFailureBackoffPolicy } from "../../shared/routeGraph.js";
 
 const inlineDispatchPolicySchema = z
   .object({
@@ -28,6 +29,17 @@ const dispatcherPolicySchema = z.discriminatedUnion("kind", [
       builtin: z.enum(["weighted", "round_robin", "stable_first"]),
     })
     .strict(),
+]);
+const failureBackoffPolicySchema = z.object({
+  failureThreshold: z.number().int().min(1).max(100),
+  levelsSec: z.array(z.number().int().nonnegative()).min(1).max(32),
+  maxSec: z.number().int().positive().max(30 * 24 * 60 * 60),
+}).strict().refine((policy) => normalizeRouteFailureBackoffPolicy(policy) !== null, {
+  message: "Backoff levels must be nondecreasing and no greater than maxSec.",
+});
+const failureBackoffOverrideSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("custom"), policy: failureBackoffPolicySchema }).strict(),
+  z.object({ mode: z.literal("disabled") }).strict(),
 ]);
 
 const presentationSchema = z
@@ -72,6 +84,7 @@ const routeGroupCreateSchema = z
     sourceSelection: sourceSelectionSchema.optional(),
     presentation: presentationSchema.optional(),
     dispatcherPolicy: z.union([dispatcherPolicySchema, z.null()]).optional(),
+    failureBackoff: z.union([failureBackoffOverrideSchema, z.null()]).optional(),
     modelMapping: z.union([z.string(), z.null()]).optional(),
     filters: z.unknown().optional(),
     visibility: z.enum(["public", "internal"]).optional(),
@@ -85,6 +98,7 @@ const routeGroupUpdateSchema = z
     sourceSelection: sourceSelectionSchema.optional(),
     presentation: presentationSchema.optional(),
     dispatcherPolicy: z.union([dispatcherPolicySchema, z.null()]).optional(),
+    failureBackoff: z.union([failureBackoffOverrideSchema, z.null()]).optional(),
     modelMapping: z.union([z.string(), z.null()]).optional(),
     filters: z.unknown().optional(),
     visibility: z.enum(["public", "internal"]).optional(),

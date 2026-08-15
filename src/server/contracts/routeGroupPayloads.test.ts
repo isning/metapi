@@ -35,4 +35,19 @@ describe('route group payloads', () => {
       presentation: { displayName: 'A', iconName: 'unknown' },
     })).toMatchObject({ success: false });
   });
+
+  it('accepts valid failure backoff overrides and rejects invalid levels', () => {
+    expect(parseRouteGroupCreatePayload({
+      model: { publicName: 'model-a' },
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 10, 60], maxSec: 60 } },
+    })).toMatchObject({ success: true });
+    expect(parseRouteGroupCreatePayload({
+      model: { publicName: 'model-a' },
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [60, 10], maxSec: 60 } },
+    })).toMatchObject({ success: false });
+    expect(parseRouteGroupCreatePayload({
+      model: { publicName: 'model-a' },
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 61], maxSec: 60 } },
+    })).toMatchObject({ success: false });
+  });
 });

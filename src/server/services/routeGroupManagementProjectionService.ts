@@ -298,6 +298,7 @@ export function projectRouteGroupFallbackStagesFromGraph(
           successCount: 0,
           failCount: 0,
           cooldownUntil: null,
+          failureBackoff: member.failureBackoff || null,
           referencedRouteGroup: {
             id: member.macroId,
             label: text(referenced?.name) || referencedModel || member.macroId,
@@ -355,6 +356,7 @@ export function projectRouteGroupFallbackStagesFromGraph(
         cooldownUntil: targets.every((target) => target.cooldownUntil === targets[0]?.cooldownUntil)
           ? targets[0]?.cooldownUntil || null
           : null,
+        failureBackoff: member.failureBackoff || null,
       });
     }
     return {
@@ -363,6 +365,7 @@ export function projectRouteGroupFallbackStagesFromGraph(
       order,
       enabled: group.enabled !== false,
       dispatcherPolicy: group.policy || null,
+      failureBackoff: group.failureBackoff || group.defaults?.failureBackoff || null,
       candidateManagement:
         macro.config.candidateSource
           ? "generated"
@@ -426,6 +429,7 @@ export function projectRouteGroupsFromGraph(
         },
         filters: macro.config.filters || null,
         dispatcherPolicy: macro.config.policy || null,
+        failureBackoff: macro.config.groups[0]?.failureBackoff || macro.config.groups[0]?.defaults?.failureBackoff || null,
         visibility: macroVisibility(macro),
         enabled: macro.enabled !== false,
         sourceSelection,

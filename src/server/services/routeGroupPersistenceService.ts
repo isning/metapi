@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createManagedRouteGraphElementId } from "../../shared/routingIdentity.js";
 import type {
+  RouteFailureBackoffOverride,
   RouteGraphMacro,
   RouteGraphSource,
 } from "../../shared/routeGraph.js";
@@ -280,6 +281,7 @@ function automaticMacroForModel(input: {
         enabled: boolean;
         weight: number;
         metadata: Record<string, unknown>;
+        failureBackoff?: RouteFailureBackoffOverride;
       };
       manualIndex: number | null;
     }>
@@ -324,6 +326,9 @@ function automaticMacroForModel(input: {
           ? existing.member.enabled !== false
           : executionEndpoint.targets.some((target) => target.enabled !== false),
         weight: manuallyAdjusted ? (existing.member.weight ?? 10) : 10,
+        ...(manuallyAdjusted && existing.member.failureBackoff
+          ? { failureBackoff: existing.member.failureBackoff }
+          : {}),
         metadata: {
           source: "availability_rebuild",
           ...(existing?.member.metadata || {}),

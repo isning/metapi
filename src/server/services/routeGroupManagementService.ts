@@ -4,6 +4,7 @@ import {
   normalizeRouteGraphMacro,
   requireNativeDispatcherPolicy,
   type DispatcherPolicy,
+  type RouteFailureBackoffOverride,
   type RouteFilter,
   type RouteGraphMacro,
   type RouteGraphSource,
@@ -351,6 +352,7 @@ function replaceMacroConfiguration(input: {
   enabled: boolean;
   dispatcherPolicy: DispatcherPolicy | undefined;
   filters: { operations: RouteFilter[] } | null | undefined;
+  failureBackoff?: RouteFailureBackoffOverride | null;
 }): RouteGraphMacro {
   const current = input.macro;
   const presentation =
@@ -384,6 +386,12 @@ function replaceMacroConfiguration(input: {
           ? { filters: input.filters }
           : {}),
       ...(presentation ? { presentation } : {}),
+      ...(input.failureBackoff === undefined ? {} : {
+        groups: current.config.groups.map((group) => ({
+          ...group,
+          failureBackoff: input.failureBackoff || undefined,
+        })),
+      }),
     },
     metadata: {
       ...current.metadata,
@@ -465,6 +473,7 @@ export async function createRouteGroupFromPayload(
           : {}),
         stages: [{
           ...(sourceSelection.kind === "model_pattern" ? { acceptUnassigned: true } : {}),
+          ...(input.failureBackoff ? { failureBackoff: input.failureBackoff } : {}),
           members: resolved.members,
         }],
       });
@@ -536,6 +545,9 @@ export async function updateRouteGroupFromPayload(
         enabled,
         dispatcherPolicy,
         filters,
+        failureBackoff: hasOwn(body, "failureBackoff")
+          ? (input.failureBackoff || null)
+          : undefined,
       });
       if (sourceSelection) {
         const resolved = facadeMembersForSources(

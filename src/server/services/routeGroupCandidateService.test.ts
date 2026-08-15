@@ -382,8 +382,14 @@ describe("routeGroupCandidateService", () => {
       updateRouteGroupMember(groupId, before[1]!.id, {
         weight: 17,
         enabled: false,
+        failureBackoff: { mode: "custom", policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
       }),
-    ).resolves.toMatchObject({ id: before[1]!.id, weight: 17, enabled: false });
+    ).resolves.toMatchObject({
+      id: before[1]!.id,
+      weight: 17,
+      enabled: false,
+      failureBackoff: { mode: "custom", policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
+    });
     await expect(
       reorderRouteGroupFallbackStages(groupId, [
         secondary.id,
@@ -404,7 +410,10 @@ describe("routeGroupCandidateService", () => {
       fallbackStageId: secondary.id,
       sortOrder: 0,
       manualOverride: true,
+      failureBackoff: { mode: "custom", policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
     });
+    await expect(updateRouteGroupMember(groupId, before[1]!.id, { failureBackoff: null }))
+      .resolves.toMatchObject({ id: before[1]!.id, failureBackoff: null });
     expect(
       after.find((candidate) => candidate.id === before[0]!.id)
         ?.fallbackStageId,

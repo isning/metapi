@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeRouteFailureBackoffPolicy } from '../../shared/routeGraph.js';
 import {
   validateNativeRouteGraphSourcePolicies,
 } from '../../shared/routeGraph.js';
@@ -99,6 +100,17 @@ const routeGroupCandidateUpdatePayloadSchema = z.object({
   stageId: z.string().min(1).optional(),
   weight: z.number().optional(),
   enabled: z.boolean().optional(),
+  failureBackoff: z.union([
+    z.object({ mode: z.literal('disabled') }).strict(),
+    z.object({ mode: z.literal('custom'), policy: z.object({
+      failureThreshold: z.number().int().min(1).max(100),
+      levelsSec: z.array(z.number().int().nonnegative()).min(1).max(32),
+      maxSec: z.number().int().positive().max(30 * 24 * 60 * 60),
+    }).strict().refine((policy) => normalizeRouteFailureBackoffPolicy(policy) !== null, {
+      message: 'Backoff levels must be nondecreasing and no greater than maxSec.',
+    }) }).strict(),
+    z.null(),
+  ]).optional(),
 }).strict();
 
 const routeRebuildPayloadSchema = z.object({

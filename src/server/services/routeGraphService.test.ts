@@ -231,6 +231,7 @@ describe('routeGraphService graph-native route runtime', () => {
       visibility: 'internal',
       enabled: false,
       dispatcherPolicy: { kind: 'builtin', builtin: 'round_robin' },
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 10], maxSec: 10 } },
       filters: {
         operations: [
           { type: 'set_header', name: 'x-route-override', value: '1', mode: 'override' },
@@ -247,6 +248,7 @@ describe('routeGraphService graph-native route runtime', () => {
       ],
     });
     expect(macro?.config.policy).toEqual({ kind: 'builtin', builtin: 'round_robin' });
+    expect(macro?.config.groups.every((group) => group.failureBackoff?.mode === 'custom')).toBe(true);
     expect(macro).not.toHaveProperty('visibility');
     expect(macro?.config.surface.entry).toEqual({ kind: 'none' });
 
@@ -254,6 +256,10 @@ describe('routeGraphService graph-native route runtime', () => {
     const repatched = await buildRouteGraphSourceFromRouteGroups();
     expect(repatched.macros.find((item) => item.id === group.id)?.config.surface.entry)
       .toMatchObject({ kind: 'external' });
+
+    await updateRouteGroupFromPayload(group.id, { failureBackoff: null });
+    const reset = await buildRouteGraphSourceFromRouteGroups();
+    expect(reset.macros.find((item) => item.id === group.id)?.config.groups.every((stage) => stage.failureBackoff == null)).toBe(true);
   });
 
   it('rejects removed policy and priority shapes before graph normalization', async () => {

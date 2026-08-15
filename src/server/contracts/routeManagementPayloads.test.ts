@@ -39,6 +39,19 @@ describe('route management payloads', () => {
       error: 'Invalid sourceRefs. Expected opaque source reference array.',
     });
     expect(parseRouteGroupCandidateUpdatePayload({ enabled: true, misspelledWeight: 2 })).toMatchObject({ success: false });
+    expect(parseRouteGroupCandidateUpdatePayload({
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [30, 5], maxSec: 30 } },
+    })).toMatchObject({ success: false });
+  });
+
+  it('parses candidate failure backoff overrides and inheritance resets', () => {
+    expect(parseRouteGroupCandidateUpdatePayload({
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5, 30], maxSec: 30 } },
+    })).toMatchObject({ success: true });
+    expect(parseRouteGroupCandidateUpdatePayload({ failureBackoff: { mode: 'disabled' } }))
+      .toMatchObject({ success: true });
+    expect(parseRouteGroupCandidateUpdatePayload({ failureBackoff: null }))
+      .toMatchObject({ success: true });
   });
 
   it('parses Graph authoring commands with explicit element references', () => {

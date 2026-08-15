@@ -1,4 +1,4 @@
-import type { DispatcherPolicy, RouteFilter, TargetSelectionPolicy } from "./routeGraph.js";
+import type { DispatcherPolicy, RouteFailureBackoffOverride, RouteFilter, TargetSelectionPolicy } from "./routeGraph.js";
 
 export type RouteGroupExplicitSourceReference =
   | { kind: "execution_target"; sourceRef: string }
@@ -13,6 +13,7 @@ export type RouteGroupCreateCommand = {
   sourceSelection?: RouteGroupSourceSelection;
   presentation?: { displayName?: string | null; displayIcon?: string | null };
   dispatcherPolicy?: DispatcherPolicy | null;
+  failureBackoff?: RouteFailureBackoffOverride | null;
   modelMapping?: string | null;
   filters?: unknown;
   visibility?: "public" | "internal";
@@ -56,6 +57,7 @@ export type RouteGroupManagementSummary = {
   };
   filters: { operations: RouteFilter[] } | null;
   dispatcherPolicy: DispatcherPolicy | null;
+  failureBackoff: RouteFailureBackoffOverride | null;
   visibility: "public" | "internal";
   enabled: boolean;
   sourceSelection:
@@ -84,6 +86,7 @@ type RouteGroupManagementCandidateBase = {
   successCount: number;
   failCount: number;
   cooldownUntil: string | null;
+  failureBackoff: RouteFailureBackoffOverride | null;
 };
 
 /** A dispatcher member that resolves directly to an executable endpoint. */
@@ -163,6 +166,7 @@ export type RouteGroupCandidateUpdateCommand = {
   stageId?: string;
   weight?: number;
   enabled?: boolean;
+  failureBackoff?: RouteFailureBackoffOverride | null;
 };
 
 export type RouteGroupManagementFallbackStage = {

@@ -28,17 +28,30 @@ describe('routeGroupManagementProjectionService', () => {
       ingress: 'external',
       policy: { kind: 'builtin', builtin: 'weighted' },
       match: { kind: 'model', requestedModelPattern: 'DeepSeek-V4-Flash', displayName: 'DeepSeek V4 Flash' },
-      fallbackStages: [{ id: 'stage:primary', label: 'Primary', members: [{ endpointId: endpoint.routeEndpointId, weight: 10 }] }],
+      fallbackStages: [{ id: 'stage:primary', label: 'Primary', members: [{ memberId: 'member:one', endpointId: endpoint.routeEndpointId, weight: 10 }] }],
       ownership: 'manual',
     });
+    macro.config.groups[0]!.failureBackoff = { mode: 'disabled' };
+    macro.config.groups[0]!.members[0]!.failureBackoff = {
+      mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 },
+    };
 
-    const [group] = projectRouteGroupsFromGraph({ nodes: [endpoint], edges: [], macros: [macro] }, [{
+    const targetFacts = [{
       id: 42,
       sourceRef: '67d54dd0-45c8-4d98-b7b9-7ac550192ec7',
       site: { id: 7, name: 'Example Site', platform: 'openai' },
+      account: { id: 9, username: 'example-user' },
+      token: { id: 11, name: 'primary', accountId: 9, enabled: true, isDefault: true },
+      accountId: 9,
+      tokenId: 11,
+      oauthRouteUnitId: null,
       enabled: true,
       modelName: 'deepseek-v4-flash',
-    }]);
+      successCount: 3,
+      failCount: 0,
+      cooldownUntil: null,
+    }];
+    const [group] = projectRouteGroupsFromGraph({ nodes: [endpoint], edges: [], macros: [macro] }, targetFacts);
 
     expect(group).toEqual(expect.objectContaining({
       id: 'macro:public:deepseek',
@@ -48,12 +61,19 @@ describe('routeGroupManagementProjectionService', () => {
       visibility: 'public',
       candidateCount: 1,
       enabledCandidateCount: 1,
+      failureBackoff: { mode: 'disabled' },
       siteNames: ['Example Site'],
     }));
     expect(group.sourceSelection).toEqual({ kind: 'explicit', sources: [expect.objectContaining({
       source: { kind: 'execution_target', sourceRef: '67d54dd0-45c8-4d98-b7b9-7ac550192ec7' },
       siteName: 'Example Site',
     })] });
+    const [stage] = projectRouteGroupFallbackStagesFromGraph(
+      { nodes: [endpoint], edges: [], macros: [macro] }, macro.id, targetFacts,
+    ) || [];
+    expect(stage?.candidates[0]?.failureBackoff).toEqual({
+      mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 },
+    });
   });
 
   it('keeps Graph references as management group sources without reconstructing identities', () => {

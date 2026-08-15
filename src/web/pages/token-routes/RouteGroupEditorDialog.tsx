@@ -12,7 +12,7 @@ import {
   matchesModelPattern,
   parseModelRegexPattern,
 } from '../../../shared/modelPatternMatcher.js';
-import type { DispatcherPolicy, RouteFilter } from '../../../shared/routeGraph.js';
+import type { DispatcherPolicy, RouteFailureBackoffOverride, RouteFilter } from '../../../shared/routeGraph.js';
 import { api, type DispatchPolicyRegistryPayload } from '../../api.js';
 import CenteredModal from '../../components/CenteredModal.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
@@ -23,6 +23,7 @@ import { Input } from '../../components/ui/input/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import { tr } from '../../i18n.js';
 import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
+import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 import { FilterOperationsEditor } from './NodeForm.js';
 import {
   RouteGroupSourcePicker,
@@ -48,6 +49,7 @@ type GroupForm = {
   sources: RouteGroupExplicitSourceReference[];
   filters: RouteFilter[];
   dispatcherPolicy: DispatcherPolicy;
+  failureBackoff: RouteFailureBackoffOverride | null;
 };
 
 type GroupEditorStep = "match" | "sources" | "options" | "review";
@@ -91,6 +93,7 @@ const EMPTY_FORM: GroupForm = {
   sources: [],
   filters: [],
   dispatcherPolicy: { kind: "inherit_default" },
+  failureBackoff: null,
 };
 
 export function RouteGroupEditorDialog({
@@ -150,6 +153,7 @@ export function RouteGroupEditorDialog({
             dispatcherPolicy: group.dispatcherPolicy || {
               kind: "inherit_default",
             },
+            failureBackoff: group.failureBackoff || null,
           }
         : EMPTY_FORM,
     );
@@ -247,6 +251,7 @@ export function RouteGroupEditorDialog({
       visibility: form.visibility,
       enabled: form.enabled,
       dispatcherPolicy: form.dispatcherPolicy,
+      failureBackoff: form.failureBackoff,
       ...(capabilities.canEditGeneratedFields
         ? {
             presentation,
@@ -706,6 +711,10 @@ export function RouteGroupEditorDialog({
             }
           />
         </label>
+        <FailureBackoffEditor
+          value={form.failureBackoff}
+          onChange={(failureBackoff) => setForm((old) => ({ ...old, failureBackoff }))}
+        />
         <section className="grid gap-2 border-t pt-4">
           <span className="text-sm font-medium">
             {tr("pages.tokenRoutes.routeGroupEditor.filters")}
