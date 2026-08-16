@@ -298,6 +298,75 @@ describe('Accounts edit panel', () => {
     }
   });
 
+  it('shows persistent connection labels and saves the system proxy preference', async () => {
+    apiMock.getAccounts.mockResolvedValue([{
+      id: 1,
+      siteId: 1,
+      username: 'proxy-user',
+      credential: 'access-token',
+      credentialKind: 'access_token',
+      credentialMode: 'session',
+      status: 'active',
+      extraConfig: JSON.stringify({
+        platformUserId: 42,
+        useSystemProxy: true,
+      }),
+      connectionValues: { platformUserId: 42 },
+      accountConnectionFields: [{
+        key: 'platformUserId',
+        labelI18nKey: 'pages.accounts.newApiUserId',
+        placeholderI18nKey: 'pages.accounts.id',
+        inputType: 'number',
+      }],
+      site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
+    }]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider><Accounts /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '编辑'
+      ));
+      await act(async () => { editButton.props.onClick(); });
+      await flushMicrotasks();
+
+      const renderedText = collectText(root.root);
+      expect(renderedText).toContain('账号名称');
+      expect(renderedText).toContain('账号状态');
+      expect(renderedText).toContain('正常');
+      expect(renderedText).toContain('连接凭据');
+      expect(renderedText).toContain('New-Api-User / User-ID');
+      expect(renderedText).toContain('自定义代理地址');
+      expect(renderedText).toContain('使用系统网络代理');
+
+      const systemProxyCheckbox = root.root.find((node) => (
+        typeof node.props.onCheckedChange === 'function'
+        && node.props.checked === true
+        && collectText(node.parent as ReactTestInstance).includes('使用系统网络代理')
+      ));
+      await act(async () => { systemProxyCheckbox.props.onCheckedChange(false); });
+
+      const saveButton = root.root.find((node) => node.props['data-testid'] === 'account-edit-save');
+      await act(async () => { await saveButton.props.onClick(); });
+
+      expect(apiMock.updateAccount).toHaveBeenCalledWith(1, expect.objectContaining({
+        useSystemProxy: false,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('does not submit API Key fields from the account edit panel', async () => {
     apiMock.getAccounts.mockResolvedValue([
       {

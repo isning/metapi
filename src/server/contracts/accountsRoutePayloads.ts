@@ -37,6 +37,7 @@ const accountUpdatePayloadSchema = z.object({
   isPinned: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
+  useSystemProxy: z.boolean().optional(),
   connectionValues: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
@@ -123,6 +124,9 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'proxyUrl') {
     return 'Invalid proxyUrl. Expected string or null.';
+  }
+  if (firstPath === 'useSystemProxy') {
+    return 'Invalid useSystemProxy. Expected boolean.';
   }
   if (firstPath === 'ids') {
     return 'Invalid ids. Expected number[].';

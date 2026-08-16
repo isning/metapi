@@ -35,9 +35,9 @@ describe('account route payload contracts', () => {
       },
     });
 
-    expect(parseAccountUpdatePayload({ credentialMode: 'apikey', sortOrder: 0, proxyUrl: null })).toEqual({
+    expect(parseAccountUpdatePayload({ credentialMode: 'apikey', sortOrder: 0, proxyUrl: null, useSystemProxy: true })).toEqual({
       success: true,
-      data: { credentialMode: 'apikey', sortOrder: 0, proxyUrl: null },
+      data: { credentialMode: 'apikey', sortOrder: 0, proxyUrl: null, useSystemProxy: true },
     });
     expect(parseAccountBatchPayload({ ids: [1], action: 'refresh' })).toEqual({
       success: true,
@@ -75,6 +75,7 @@ describe('account route payload contracts', () => {
       ['isPinned', () => parseAccountUpdatePayload({ isPinned: 'yes' }), 'Invalid isPinned. Expected boolean.'],
       ['sortOrder', () => parseAccountUpdatePayload({ sortOrder: -1 }), 'Invalid sortOrder. Expected non-negative integer.'],
       ['proxyUrl', () => parseAccountUpdatePayload({ proxyUrl: 1 }), 'Invalid proxyUrl. Expected string or null.'],
+      ['useSystemProxy', () => parseAccountUpdatePayload({ useSystemProxy: 'yes' }), 'Invalid useSystemProxy. Expected boolean.'],
       ['ids', () => parseAccountBatchPayload({ ids: [0] }), 'Invalid ids. Expected number[].'],
       ['action', () => parseAccountBatchPayload({ action: 1 }), 'Invalid action. Expected string.'],
       ['platformUserId', () => parseAccountCreatePayload({ siteId: 1, platformUserId: 0 }), 'Invalid platformUserId. Expected positive number.'],

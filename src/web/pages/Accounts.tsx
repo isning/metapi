@@ -434,6 +434,7 @@ export default function Accounts() {
     isPinned: false,
     connectionValues: {} as Record<string, string>,
     proxyUrl: "",
+    useSystemProxy: false,
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [rebindTarget, setRebindTarget] = useState<any | null>(null);
@@ -1285,6 +1286,7 @@ export default function Accounts() {
       isPinned: !!account?.isPinned,
       connectionValues: initialConnectionValues(account),
       proxyUrl,
+      useSystemProxy: accountExtraConfig.useSystemProxy === true,
     });
   };
 
@@ -1311,6 +1313,7 @@ export default function Accounts() {
         isPinned: editForm.isPinned,
         connectionValues: editForm.connectionValues,
         proxyUrl: editForm.proxyUrl.trim() || null,
+        useSystemProxy: editForm.useSystemProxy,
       });
       toast.success(tr('pages.accounts.accounts'));
       closeEditPanel();
@@ -1948,7 +1951,8 @@ export default function Accounts() {
                       className="h-[72px] resize-none font-mono"
                     />
                     {connectionFieldsFor(selectedTokenSite).map((field: any) => (
-                      <div className="grid gap-1" key={`connection-${field.key}`}>
+                      <label className="grid gap-1.5 text-sm" key={`connection-${field.key}`}>
+                        <span className="font-medium">{tr(field.labelI18nKey)}</span>
                         <Input
                           type="text"
                           inputMode={field.inputType === 'number' ? 'numeric' : undefined}
@@ -1961,7 +1965,7 @@ export default function Accounts() {
                           className={field.secret ? 'font-mono' : undefined}
                         />
                         {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
-                      </div>
+                      </label>
                     ))}
                     {verifyResult &&
                       verifyResult.success &&
@@ -2234,7 +2238,8 @@ export default function Accounts() {
                   {tr('pages.accounts.supportedApiKey')}
                 </div>
                 {connectionFieldsFor(selectedTokenSite).map((field: any) => (
-                  <div className="grid gap-1" key={`apikey-connection-${field.key}`}>
+                  <label className="grid gap-1.5 text-sm" key={`apikey-connection-${field.key}`}>
+                    <span className="font-medium">{tr(field.labelI18nKey)}</span>
                     <Input
                       type="text"
                       inputMode={field.inputType === 'number' ? 'numeric' : undefined}
@@ -2247,7 +2252,7 @@ export default function Accounts() {
                       className={field.secret ? 'font-mono' : undefined}
                     />
                     {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
-                  </div>
+                  </label>
                 ))}
                 <label className="flex cursor-pointer items-center gap-2 self-start text-sm">
                   <Checkbox
@@ -2400,7 +2405,8 @@ export default function Accounts() {
                     />
                   </div>
                   {connectionFieldsFor(activeRebindTarget).map((field: any) => (
-                    <div className="mb-2 grid gap-1" key={`rebind-${field.key}`}>
+                    <label className="mb-2 grid gap-1.5 text-sm" key={`rebind-${field.key}`}>
+                      <span className="font-medium">{tr(field.labelI18nKey)}</span>
                       <Input
                         type="text"
                         inputMode={field.inputType === 'number' ? 'numeric' : undefined}
@@ -2413,7 +2419,7 @@ export default function Accounts() {
                         className={field.secret ? 'font-mono' : undefined}
                       />
                       {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
-                    </div>
+                    </label>
                   ))}
                   {rebindVerifyResult &&
                     rebindVerifyResult.success &&
@@ -2515,25 +2521,31 @@ export default function Accounts() {
                 <section className="grid gap-3">
                   <h3 className="text-sm font-medium">账号设置</h3>
                   <ResponsiveFormGrid>
-                    <Input
-                      placeholder={tr('pages.accounts.accountsname')}
-                      value={editForm.username}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({ ...prev, username: e.target.value }))
-                      }
-                    />
-                    <ModernSelect
-                      value={editForm.status}
-                      onChange={(value) =>
-                        setEditForm((prev) => ({ ...prev, status: value }))
-                      }
-                      options={[
-                        { value: "active", label: "active" },
-                        { value: "disabled", label: "disabled" },
-                        { value: "expired", label: "expired" },
-                      ]}
-                      placeholder={tr('components.notificationPanel.status')}
-                    />
+                    <label className="grid gap-1.5 text-sm">
+                      <span className="font-medium">{tr('pages.accounts.accountsname')}</span>
+                      <Input
+                        placeholder={tr('pages.accounts.accountsname')}
+                        value={editForm.username}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, username: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="grid gap-1.5 text-sm">
+                      <span className="font-medium">{tr('pages.accounts.accountsstatus')}</span>
+                      <ModernSelect
+                        value={editForm.status}
+                        onChange={(value) =>
+                          setEditForm((prev) => ({ ...prev, status: value }))
+                        }
+                        options={[
+                          { value: "active", label: tr('pages.accounts.statusActive') },
+                          { value: "disabled", label: tr('pages.accounts.statusDisabled') },
+                          { value: "expired", label: tr('pages.accounts.statusExpired') },
+                        ]}
+                        placeholder={tr('pages.accounts.accountsstatus')}
+                      />
+                    </label>
                     <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
                       <Checkbox
                         checked={editForm.checkinEnabled}
@@ -2569,14 +2581,17 @@ export default function Accounts() {
                         placeholder={tr('pages.accounts.selectCredentialType')}
                       />
                     ) : null}
-                    <Input
-                      placeholder={tr(sessionCredentialPlaceholderKeyFor(editingAccount))}
-                      value={editForm.credential}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({ ...prev, credential: e.target.value }))
-                      }
-                      className="font-mono"
-                    />
+                    <label className="grid gap-1.5 text-sm">
+                      <span className="font-medium">{tr('pages.accounts.connectionCredential')}</span>
+                      <Input
+                        placeholder={tr(sessionCredentialPlaceholderKeyFor(editingAccount))}
+                        value={editForm.credential}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, credential: e.target.value }))
+                        }
+                        className="font-mono"
+                      />
+                    </label>
                   </section>
                 ) : editForm.credentialMode === "apikey" ? (
                   <section className="border-t pt-4">
@@ -2593,7 +2608,8 @@ export default function Accounts() {
                 )}
 
                 {connectionFieldsFor(editingAccount).map((field: any) => (
-                  <section className="grid gap-2 border-t pt-4" key={`edit-${field.key}`}>
+                  <label className="grid gap-1.5 border-t pt-4 text-sm" key={`edit-${field.key}`}>
+                    <span className="font-medium">{tr(field.labelI18nKey)}</span>
                     <Input
                       type="text"
                       inputMode={field.inputType === 'number' ? 'numeric' : undefined}
@@ -2606,18 +2622,31 @@ export default function Accounts() {
                       className={field.secret ? 'font-mono' : undefined}
                     />
                     {field.commentI18nKey ? <div className="text-xs text-muted-foreground">{tr(field.commentI18nKey)}</div> : null}
-                  </section>
+                  </label>
                 ))}
 
                 <section className="grid gap-2 border-t pt-4">
-                  <h3 className="text-sm font-medium">网络</h3>
-                  <Input
-                    placeholder={tr('pages.accounts.proxyUrlPlaceholder')}
-                    value={editForm.proxyUrl}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, proxyUrl: e.target.value }))
-                    }
-                  />
+                  <h3 className="text-sm font-medium">{tr('pages.accounts.network')}</h3>
+                  <label className="grid gap-1.5 text-sm">
+                    <span className="font-medium">{tr('pages.accounts.customProxyUrl')}</span>
+                    <Input
+                      placeholder={tr('pages.accounts.proxyUrlPlaceholder')}
+                      value={editForm.proxyUrl}
+                      onChange={(e) =>
+                        setEditForm((prev) => ({ ...prev, proxyUrl: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={editForm.useSystemProxy}
+                      onCheckedChange={(checked) => setEditForm((prev) => ({
+                        ...prev,
+                        useSystemProxy: checked === true,
+                      }))}
+                    />
+                    <span>{tr('pages.accounts.useSystemProxy')}</span>
+                  </label>
                   <div className="text-xs text-muted-foreground">
                     {tr('pages.accounts.proxyOverrideDescription')}
                   </div>

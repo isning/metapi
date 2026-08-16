@@ -761,6 +761,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       status: 'active',
       extraConfig: JSON.stringify({
         proxyUrl: 'http://127.0.0.1:7890',
+        useSystemProxy: false,
       }),
     }).returning().get();
 
@@ -774,6 +775,7 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         credential: 'access-token-updated',
         isPinned: false,
         proxyUrl: null,
+        useSystemProxy: true,
       },
     });
 
@@ -786,7 +788,9 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       credential: 'access-token-updated',
       isPinned: false,
     });
-    expect(JSON.parse(updated?.extraConfig || '{}')).not.toHaveProperty('proxyUrl');
+    const updatedExtraConfig = JSON.parse(updated?.extraConfig || '{}');
+    expect(updatedExtraConfig).not.toHaveProperty('proxyUrl');
+    expect(updatedExtraConfig.useSystemProxy).toBe(true);
   });
 
   it('does not refresh models for pin-only account edits', async () => {

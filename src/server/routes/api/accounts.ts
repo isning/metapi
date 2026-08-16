@@ -1497,21 +1497,33 @@ export async function accountsRoutes(app: FastifyInstance) {
         updates.sortOrder = normalizedSortOrder;
       }
 
-      if (Object.prototype.hasOwnProperty.call(body, "proxyUrl")) {
+      if (
+        Object.prototype.hasOwnProperty.call(body, "proxyUrl") ||
+        Object.prototype.hasOwnProperty.call(body, "useSystemProxy")
+      ) {
         const baseExtraConfig =
           typeof updates.extraConfig === "string"
             ? updates.extraConfig
             : account.extraConfig;
-        const {
-          present,
-          valid,
-          proxyUrl: normalizedProxy,
-        } = parseSiteProxyUrlInput(body.proxyUrl);
-        if (present && !valid) {
-          return reply.code(400).send({ message: "Invalid proxy URL format" });
+        let proxyUrlPatch: string | undefined;
+        if (Object.prototype.hasOwnProperty.call(body, "proxyUrl")) {
+          const {
+            present,
+            valid,
+            proxyUrl: normalizedProxy,
+          } = parseSiteProxyUrlInput(body.proxyUrl);
+          if (present && !valid) {
+            return reply.code(400).send({ message: "Invalid proxy URL format" });
+          }
+          proxyUrlPatch = normalizedProxy ?? undefined;
         }
         updates.extraConfig = mergeAccountExtraConfig(baseExtraConfig, {
-          proxyUrl: normalizedProxy ?? undefined,
+          ...(Object.prototype.hasOwnProperty.call(body, "proxyUrl")
+            ? { proxyUrl: proxyUrlPatch }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(body, "useSystemProxy")
+            ? { useSystemProxy: body.useSystemProxy === true }
+            : {}),
         });
       }
 
@@ -1525,6 +1537,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         credentialsChanged ||
         Object.prototype.hasOwnProperty.call(body, "extraConfig") ||
         Object.prototype.hasOwnProperty.call(body, "proxyUrl") ||
+        Object.prototype.hasOwnProperty.call(body, "useSystemProxy") ||
         Object.prototype.hasOwnProperty.call(body, "connectionValues");
       const isExpiredApiKeyAccount =
         account.status === "expired" &&

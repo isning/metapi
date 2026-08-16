@@ -77,12 +77,17 @@ export const pagesResources = {
     "pages.accounts.accountsFailed": "更新账号排序失败",
     "pages.accounts.accountSiteHasBeenDisabled": "账号或站点已禁用",
     "pages.accounts.accountsname": "账号名称",
+    "pages.accounts.connectionCredential": "连接凭据",
+    "pages.accounts.newApiUserId": "New-Api-User / User-ID",
     "pages.accounts.accountspasswordsign": "账号密码登录",
     "pages.accounts.accountsPinTop": "账号已置顶",
     "pages.accounts.accountspinTopfailed": "切换账号置顶失败",
     "pages.accounts.accountsrebindsuccessStatus":
       "账号重新绑定成功，状态已恢复",
     "pages.accounts.accountsstatus": "账号状态",
+    "pages.accounts.statusActive": "正常",
+    "pages.accounts.statusDisabled": "已禁用",
+    "pages.accounts.statusExpired": "已过期",
     "pages.accounts.accountssyncManualRoutesCalls":
       "从账号同步或手动维护，供路由实际调用",
     "pages.accounts.accountStatusHasBeenRefreshed": "账号状态已刷新",
@@ -90,6 +95,9 @@ export const pagesResources = {
       "账号状态刷新任务已提交，完成后会自动更新。",
     "pages.accounts.proxyUrlPlaceholder":
       "代理地址（可选，如 http://127.0.0.1:7890）",
+    "pages.accounts.network": "网络代理",
+    "pages.accounts.customProxyUrl": "自定义代理地址",
+    "pages.accounts.useSystemProxy": "使用系统网络代理",
     "pages.accounts.actions": "连接排序与操作",
     "pages.accounts.actions2": "操作",
     "pages.accounts.actions3": "排序与操作",
@@ -342,7 +350,7 @@ export const pagesResources = {
     "pages.accounts.sitesNewApiUserUserId":
       "若站点要求 New-Api-User / User-ID，请在这里提前填写。",
     "pages.accounts.proxyOverrideDescription":
-      "覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5 协议。",
+      "自定义地址优先；留空并启用系统网络代理时使用系统代理，否则使用站点设置。支持 http/https/socks5 协议。",
     "pages.accounts.sort": "排序方式",
     "pages.accounts.sub2apiRefreshToken": "Sub2API refresh_token（可选）",
     "pages.accounts.sub2apiRefreshTokenAutomatic":
@@ -3985,12 +3993,17 @@ export const pagesResources = {
     "pages.accounts.accountSiteHasBeenDisabled":
       "Account or site has been disabled",
     "pages.accounts.accountsname": "Account name",
+    "pages.accounts.connectionCredential": "Connection credential",
+    "pages.accounts.newApiUserId": "New-Api-User / User-ID",
     "pages.accounts.accountspasswordsign": "Username/password sign-in",
     "pages.accounts.accountsPinTop": "Account pinned",
     "pages.accounts.accountspinTopfailed": "Failed to toggle account pin",
     "pages.accounts.accountsrebindsuccessStatus":
       "Account rebound and status restored",
     "pages.accounts.accountsstatus": "Account status",
+    "pages.accounts.statusActive": "Active",
+    "pages.accounts.statusDisabled": "Disabled",
+    "pages.accounts.statusExpired": "Expired",
     "pages.accounts.accountssyncManualRoutesCalls":
       "Synced from accounts or maintained manually for runtime routing",
     "pages.accounts.accountStatusHasBeenRefreshed":
@@ -3999,6 +4012,9 @@ export const pagesResources = {
       "The account status refresh task has been submitted and will be automatically updated after completion.",
     "pages.accounts.proxyUrlPlaceholder":
       "Proxy URL (optional, e.g. http://127.0.0.1:7890)",
+    "pages.accounts.network": "Network proxy",
+    "pages.accounts.customProxyUrl": "Custom proxy URL",
+    "pages.accounts.useSystemProxy": "Use system network proxy",
     "pages.accounts.actions": "Actions",
     "pages.accounts.actions2": "Actions",
     "pages.accounts.actions3": "Actions",
@@ -4260,7 +4276,7 @@ export const pagesResources = {
     "pages.accounts.sitesNewApiUserUserId":
       "If the site requires New-Api-User / User-ID, enter it here first.",
     "pages.accounts.proxyOverrideDescription":
-      "Overrides site and system proxy settings. Leave empty to use the site settings. Supports http, https, and socks5.",
+      "A custom URL takes precedence. If it is empty, enable the system network proxy to use it; otherwise the site setting applies. Supports http, https, and socks5.",
     "pages.accounts.sort": "Sort By",
     "pages.accounts.sub2apiRefreshToken": "Sub2API refresh_token (optional)",
     "pages.accounts.sub2apiRefreshTokenAutomatic":
