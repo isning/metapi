@@ -132,7 +132,7 @@ export function applyAccountConnectionValues(
   return next;
 }
 
-export type AccountConnectionValue = { value?: unknown; hasValue: boolean };
+export type AccountConnectionValue = unknown;
 
 export function buildAccountConnectionValues(
   fields: readonly AccountConnectionField[],
@@ -142,7 +142,7 @@ export function buildAccountConnectionValues(
   for (const field of fields) {
     const value = getExtraConfigPathValue(extraConfig, field.storagePath);
     if (field.secret) {
-      result[field.key] = { hasValue: typeof value === 'string' ? value.trim().length > 0 : value != null };
+      if (value !== undefined && value !== null) result[field.key] = value;
     } else if (value !== undefined && value !== null) {
       result[field.key] = value;
     }

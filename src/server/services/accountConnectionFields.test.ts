@@ -24,13 +24,13 @@ describe('account connection field protocol', () => {
     expect(getExtraConfigPathValue(updated, 'sub2apiAuth.refreshToken')).toBe('refresh-1');
   });
 
-  it('returns secret presence without exposing secret values', () => {
+  it('returns declared secret values for account editing', () => {
     expect(buildAccountConnectionValues(fields, {
       platformUserId: 42,
       sub2apiAuth: { refreshToken: 'secret' },
     })).toEqual({
       platformUserId: 42,
-      'sub2apiAuth.refreshToken': { hasValue: true },
+      'sub2apiAuth.refreshToken': 'secret',
     });
   });
 

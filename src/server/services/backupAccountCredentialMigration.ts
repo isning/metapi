@@ -78,16 +78,6 @@ export function migrateImportedAccountCredential(row: unknown): MigratedBackupAc
   const legacyAccessToken = readTrimmedString(source.accessToken ?? source.access_token);
   const existingCredential = readTrimmedString(source.credential);
   const legacyAccountApiToken = readTrimmedString(source.apiToken ?? source.api_token);
-  const legacyRefreshToken = readTrimmedString(
-    source.refreshToken
-      ?? source.refresh_token
-      ?? extraConfig.refreshToken
-      ?? extraConfig.refresh_token,
-  );
-  const legacyTokenExpiresAt = source.tokenExpiresAt
-    ?? source.token_expires_at
-    ?? extraConfig.tokenExpiresAt
-    ?? extraConfig.token_expires_at;
 
   const credentialMode: ImportedAccountCredential['credentialMode'] = oauthProvider
     ? 'oauth'
@@ -111,20 +101,6 @@ export function migrateImportedAccountCredential(row: unknown): MigratedBackupAc
 
   delete extraConfig.credentialMode;
   delete extraConfig.authType;
-  delete extraConfig.refreshToken;
-  delete extraConfig.refresh_token;
-  delete extraConfig.tokenExpiresAt;
-  delete extraConfig.token_expires_at;
-  if (legacyRefreshToken) {
-    const existingSub2ApiAuth = isRecord(extraConfig.sub2apiAuth) ? { ...extraConfig.sub2apiAuth } : {};
-    extraConfig.sub2apiAuth = {
-      ...existingSub2ApiAuth,
-      refreshToken: legacyRefreshToken,
-      ...(legacyTokenExpiresAt !== undefined && legacyTokenExpiresAt !== null
-        ? { tokenExpiresAt: legacyTokenExpiresAt }
-        : {}),
-    };
-  }
   if (isLegacyModelDiscoveryRuntimeHealth(extraConfig.runtimeHealth)) {
     delete extraConfig.runtimeHealth;
   }
@@ -140,10 +116,6 @@ export function migrateImportedAccountCredential(row: unknown): MigratedBackupAc
   delete source.access_token;
   delete source.apiToken;
   delete source.api_token;
-  delete source.refreshToken;
-  delete source.refresh_token;
-  delete source.tokenExpiresAt;
-  delete source.token_expires_at;
   delete source.managementApiToken;
   delete source.modelApiKey;
   delete source.credential_mode;
