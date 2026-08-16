@@ -1,21 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
+import { Select } from '../../components/ui/select/index.js';
 import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 
 describe('FailureBackoffEditor', () => {
   it('supports inherit, custom, and disabled states', async () => {
     const onChange = vi.fn();
     const root = create(<FailureBackoffEditor value={null} onChange={onChange} />);
-    const select = root.root.findByType('select');
+    const select = root.root.findByType(Select);
 
-    await act(async () => select.props.onChange({ target: { value: 'custom' } }));
+    await act(async () => select.props.onValueChange('custom'));
     expect(onChange).toHaveBeenLastCalledWith({
       mode: 'custom',
       policy: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 },
     });
-    await act(async () => select.props.onChange({ target: { value: 'disabled' } }));
+    await act(async () => select.props.onValueChange('disabled'));
     expect(onChange).toHaveBeenLastCalledWith({ mode: 'disabled' });
-    await act(async () => select.props.onChange({ target: { value: 'inherit' } }));
+    await act(async () => select.props.onValueChange('inherit'));
     expect(onChange).toHaveBeenLastCalledWith(null);
     root.unmount();
   });

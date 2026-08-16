@@ -1,5 +1,6 @@
 import type { RouteFailureBackoffOverride } from '../../../shared/routeGraph.js';
 import { Input } from '../../components/ui/input/index.js';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
 import { tr } from '../../i18n.js';
 
 const DEFAULT_POLICY = { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 };
@@ -23,20 +24,18 @@ export function FailureBackoffEditor({
     <div className="grid gap-3 rounded-md border bg-muted/20 p-3" data-testid="failure-backoff-editor">
       <div className="grid gap-1.5 text-sm font-medium">
         <span>{tr('pages.tokenRoutes.failureBackoffMode')}</span>
-        <select
-          value={mode}
-          className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus:ring-1 focus:ring-inset focus:ring-ring"
-          onChange={(event) => {
-            const next = event.target.value;
+        <Select value={mode} onValueChange={(next) => {
           if (next === 'inherit') onChange(null);
           else if (next === 'disabled') onChange({ mode: 'disabled' });
           else onChange({ mode: 'custom', policy });
-          }}
-        >
-          {allowInherit ? <option value="inherit">{tr('pages.tokenRoutes.failureBackoffInherit')}</option> : null}
-          <option value="custom">{tr('pages.tokenRoutes.failureBackoffCustom')}</option>
-          {allowInherit ? <option value="disabled">{tr('pages.tokenRoutes.failureBackoffDisabled')}</option> : null}
-        </select>
+        }}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {allowInherit ? <SelectItem value="inherit">{tr('pages.tokenRoutes.failureBackoffInherit')}</SelectItem> : null}
+            <SelectItem value="custom">{tr('pages.tokenRoutes.failureBackoffCustom')}</SelectItem>
+            {allowInherit ? <SelectItem value="disabled">{tr('pages.tokenRoutes.failureBackoffDisabled')}</SelectItem> : null}
+          </SelectContent>
+        </Select>
       </div>
       {mode === 'custom' ? (
         <div className="grid gap-3 md:grid-cols-3">
