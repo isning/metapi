@@ -22,7 +22,7 @@ export function FailureBackoffEditor({
   });
   return (
     <div className="grid gap-3 rounded-md border bg-muted/20 p-3" data-testid="failure-backoff-editor">
-      <label className="grid gap-1.5 text-sm font-medium">
+      <div className="grid gap-1.5 text-sm font-medium">
         <span>{tr('pages.tokenRoutes.failureBackoffMode')}</span>
         <Select value={mode} onValueChange={(next) => {
           if (next === 'inherit') onChange(null);
@@ -36,15 +36,15 @@ export function FailureBackoffEditor({
             {allowInherit ? <SelectItem value="disabled">{tr('pages.tokenRoutes.failureBackoffDisabled')}</SelectItem> : null}
           </SelectContent>
         </Select>
-      </label>
+      </div>
       {mode === 'custom' ? (
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffThreshold')}</span><Input type="number" min={1} max={100} value={policy.failureThreshold} onChange={(event) => updatePolicy({ failureThreshold: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></label>
-          <label className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffLevels')}</span><Input value={policy.levelsSec.join(', ')} onChange={(event) => {
+          <div className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffThreshold')}</span><Input type="number" min={1} max={100} value={policy.failureThreshold} onChange={(event) => updatePolicy({ failureThreshold: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></div>
+          <div className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffLevels')}</span><Input value={policy.levelsSec.join(', ')} onChange={(event) => {
             const levelsSec = event.target.value.split(',').map((item) => Number(item.trim())).filter((item) => Number.isFinite(item) && item >= 0).map(Math.trunc);
             if (levelsSec.length) updatePolicy({ levelsSec });
-          }} /></label>
-          <label className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffMax')}</span><Input type="number" min={1} value={policy.maxSec} onChange={(event) => updatePolicy({ maxSec: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></label>
+          }} /></div>
+          <div className="grid gap-1.5 text-sm"><span>{tr('pages.tokenRoutes.failureBackoffMax')}</span><Input type="number" min={1} value={policy.maxSec} onChange={(event) => updatePolicy({ maxSec: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></div>
         </div>
       ) : null}
     </div>
