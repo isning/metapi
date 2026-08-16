@@ -160,7 +160,7 @@ function initialConnectionValues(subject: any): Record<string, string> {
   if (!values || typeof values !== 'object') return {};
   return Object.fromEntries(Object.entries(values).map(([key, value]) => [
     key,
-    value && typeof value === 'object' && 'hasValue' in (value as any) ? '' : String(value ?? ''),
+    String(value ?? ''),
   ]));
 }
 
