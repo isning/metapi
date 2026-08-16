@@ -22,14 +22,29 @@ describe('FailureBackoffEditor', () => {
   });
 
   it('only exposes an editable custom policy for the global default', () => {
+    const onChange = vi.fn();
     const root = create(<FailureBackoffEditor
       allowInherit={false}
+      allowDisabled={false}
       value={{ mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } }}
-      onChange={() => undefined}
+      onChange={onChange}
     />);
     expect(root.root.findAllByProps({ value: 'inherit' })).toHaveLength(0);
     expect(root.root.findAllByProps({ value: 'disabled' })).toHaveLength(0);
     expect(root.root.findAllByType('input').map((input) => input.props.value)).toEqual([2, '0, 5', 5]);
+    root.unmount();
+  });
+
+  it('allows global defaults to disable backoff without offering inheritance', async () => {
+    const onChange = vi.fn();
+    const root = create(<FailureBackoffEditor
+      allowInherit={false}
+      value={{ mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } }}
+      onChange={onChange}
+    />);
+    expect(root.root.findAllByProps({ value: 'inherit' })).toHaveLength(0);
+    await act(async () => root.root.findByType(Select).props.onValueChange('disabled'));
+    expect(onChange).toHaveBeenLastCalledWith({ mode: 'disabled' });
     root.unmount();
   });
 });

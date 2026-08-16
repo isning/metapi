@@ -412,8 +412,26 @@ describe("routeGroupCandidateService", () => {
       manualOverride: true,
       failureBackoff: { mode: "custom", policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
     });
+    const overriddenSource = await getActiveRouteGraphSourceVersion();
+    const overriddenMember = overriddenSource?.sourceGraph.macros
+      .find((macro) => macro.id === groupId)?.config.groups
+      .flatMap((stage) => stage.members || [])
+      .find((member) => member.memberId === before[1]!.id);
+    expect(overriddenMember?.override).toMatchObject({
+      fallbackStageId: secondary.id,
+      order: 0,
+      weight: 17,
+      enabled: false,
+      failureBackoff: { mode: "custom", policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
+    });
+    expect(overriddenMember?.metadata).not.toHaveProperty("manualOverride");
     await expect(updateRouteGroupMember(groupId, before[1]!.id, { failureBackoff: null }))
       .resolves.toMatchObject({ id: before[1]!.id, failureBackoff: null });
+    await updateRouteGroupMember(groupId, before[1]!.id, {
+      failureBackoff: { mode: "disabled" },
+      weight: 42,
+      enabled: false,
+    });
     expect(
       after.find((candidate) => candidate.id === before[0]!.id)
         ?.fallbackStageId,
@@ -459,6 +477,7 @@ describe("routeGroupCandidateService", () => {
       fallbackStageId: before[0]!.fallbackStageId,
       weight: 10,
       enabled: true,
+      failureBackoff: null,
       manualOverride: false,
     });
 

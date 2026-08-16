@@ -6,6 +6,7 @@ import {
   type RouteFilter,
   type RouteGraphMacro,
   type RouteGraphSource,
+  type RouteFailureBackoffOverride,
 } from "../../shared/routeGraph.js";
 import { createManagedRouteGraphElementId } from "../../shared/routingIdentity.js";
 import { mutateActiveRouteGraphSource, mutateActiveRouteGraphSourceTransaction } from "./routeGraphService.js";
@@ -19,6 +20,7 @@ export type RouteGroupFacadeMemberReference =
       enabled?: boolean;
       weight?: number;
       metadata?: Record<string, unknown>;
+      override?: CandidateSelectorMacroConfig["groups"][number]["members"] extends Array<infer M> ? M extends { override?: infer O } ? O : never : never;
     }
   | {
       kind: "macro";
@@ -27,6 +29,7 @@ export type RouteGroupFacadeMemberReference =
       enabled?: boolean;
       weight?: number;
       metadata?: Record<string, unknown>;
+      override?: CandidateSelectorMacroConfig["groups"][number]["members"] extends Array<infer M> ? M extends { override?: infer O } ? O : never : never;
     };
 
 export type RouteGroupFacadeStage = {
@@ -48,6 +51,7 @@ export type RouteGroupFacadeMacroInput = {
   visibility?: "public" | "internal";
   enabled?: boolean;
   policy?: DispatcherPolicy | null;
+  failureBackoff?: RouteFailureBackoffOverride | null;
   filters?: { operations: RouteFilter[] } | null;
   candidateSource?: CandidateSelectorMacroConfig["candidateSource"] | null;
   stages?: RouteGroupFacadeStage[];
@@ -85,6 +89,7 @@ function stageMembers(members: RouteGroupFacadeMemberReference[] = []) {
         ...(member.metadata && Object.keys(member.metadata).length > 0
           ? { metadata: member.metadata }
           : {}),
+        ...(member.override ? { override: member.override } : {}),
       };
     })
     .filter((member): member is NonNullable<typeof member> => !!member);
@@ -178,6 +183,7 @@ export function createRouteGroupFacadeMacro(
     config: {
       surface: macroSurface(input),
       policy: input.policy || { kind: "inherit_default" },
+      ...(input.failureBackoff ? { failureBackoff: input.failureBackoff } : {}),
       ...(input.filters ? { filters: input.filters } : {}),
       ...(input.candidateSource ? { candidateSource: input.candidateSource } : {}),
       groups: normalizeStages(input.stages, !!input.candidateSource),

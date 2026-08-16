@@ -410,6 +410,9 @@ export async function registerRouteGroupRoutes(app: FastifyInstance): Promise<vo
             ...(parsed.data.stageId !== undefined ? { stageId: parsed.data.stageId } : {}),
             ...(parsed.data.weight !== undefined ? { weight: parsed.data.weight } : {}),
             ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
+            ...(parsed.data.failureBackoff !== undefined
+              ? { failureBackoff: parsed.data.failureBackoff }
+              : {}),
           },
         });
       } catch (error) {

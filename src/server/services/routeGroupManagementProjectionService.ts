@@ -271,6 +271,11 @@ export function projectRouteGroupFallbackStagesFromGraph(
     for (const [sortOrder, member] of (group.members || []).entries()) {
       const memberId = text(member.memberId);
       if (!memberId) continue;
+      const candidateOverride = member.override;
+      const effectiveSortOrder = candidateOverride?.order ?? sortOrder;
+      const effectiveWeight = candidateOverride?.weight ?? member.weight;
+      const effectiveEnabled = candidateOverride?.enabled ?? member.enabled;
+      const effectiveFailureBackoff = candidateOverride?.failureBackoff ?? member.failureBackoff;
       if (member.macroId) {
         const referenced = (source.macros || []).find(
           (current) => current.id === member.macroId,
@@ -284,21 +289,21 @@ export function projectRouteGroupFallbackStagesFromGraph(
           fallbackStageId: group.id,
           fallbackStageLabel: group.label || null,
           fallbackStageOrder: order,
-          sortOrder,
+          sortOrder: effectiveSortOrder,
           weight:
-            Number.isFinite(Number(member.weight)) && Number(member.weight) > 0
-              ? Number(member.weight)
+            Number.isFinite(Number(effectiveWeight)) && Number(effectiveWeight) > 0
+              ? Number(effectiveWeight)
               : 10,
           enabled:
             macro.enabled !== false &&
             group.enabled !== false &&
-            member.enabled !== false &&
+            effectiveEnabled !== false &&
             referenced?.enabled !== false,
-          manualOverride: member.metadata?.manualOverride === true,
+          manualOverride: !!candidateOverride || member.metadata?.manualOverride === true,
           successCount: 0,
           failCount: 0,
           cooldownUntil: null,
-          failureBackoff: member.failureBackoff || null,
+          failureBackoff: effectiveFailureBackoff || null,
           referencedRouteGroup: {
             id: member.macroId,
             label: text(referenced?.name) || referencedModel || member.macroId,
@@ -339,24 +344,24 @@ export function projectRouteGroupFallbackStagesFromGraph(
         fallbackStageId: group.id,
         fallbackStageLabel: group.label || null,
         fallbackStageOrder: order,
-        sortOrder,
+        sortOrder: effectiveSortOrder,
         weight:
-          Number.isFinite(Number(member.weight)) && Number(member.weight) > 0
-            ? Number(member.weight)
+          Number.isFinite(Number(effectiveWeight)) && Number(effectiveWeight) > 0
+            ? Number(effectiveWeight)
             : 10,
         enabled:
           macro.enabled !== false &&
           group.enabled !== false &&
-          member.enabled !== false &&
+          effectiveEnabled !== false &&
           node?.enabled !== false &&
           targets.some((target) => target.enabled !== false),
-        manualOverride: member.metadata?.manualOverride === true,
+        manualOverride: !!candidateOverride || member.metadata?.manualOverride === true,
         successCount: targets.reduce((sum, target) => sum + target.successCount, 0),
         failCount: targets.reduce((sum, target) => sum + target.failCount, 0),
         cooldownUntil: targets.every((target) => target.cooldownUntil === targets[0]?.cooldownUntil)
           ? targets[0]?.cooldownUntil || null
           : null,
-        failureBackoff: member.failureBackoff || null,
+        failureBackoff: effectiveFailureBackoff || null,
       });
     }
     return {
@@ -429,7 +434,7 @@ export function projectRouteGroupsFromGraph(
         },
         filters: macro.config.filters || null,
         dispatcherPolicy: macro.config.policy || null,
-        failureBackoff: macro.config.groups[0]?.failureBackoff || macro.config.groups[0]?.defaults?.failureBackoff || null,
+        failureBackoff: macro.config.failureBackoff || null,
         visibility: macroVisibility(macro),
         enabled: macro.enabled !== false,
         sourceSelection,

@@ -6,6 +6,7 @@ import { Select } from '../../components/ui/select/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { NodeForm } from './NodeForm.js';
+import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 
 describe('NodeForm native endpoint fields', () => {
   it('updates backend on the endpoint node without contaminating endpoint config', () => {
@@ -41,6 +42,20 @@ describe('NodeForm native endpoint fields', () => {
       backend: { kind: 'route_endpoints', endpointIds: [] },
     });
     expect(onChange.mock.calls.at(-1)?.[0].config).toEqual(node.config);
+  });
+
+  it('writes execution-attempt backoff to the native endpoint target', () => {
+    const onChange = vi.fn();
+    const node: Extract<RouteGraphNode, { type: 'route_endpoint' }> = {
+      id: 'endpoint:manual:backoff', type: 'route_endpoint', enabled: true, ownership: 'manual',
+      routeEndpointId: 'endpoint:manual:backoff', endpointKind: 'supply', exposure: 'internal',
+      resolutionStatus: 'resolved', ownerKind: 'manual', sourceKind: 'inline', backend: { kind: 'supply' },
+      config: { targets: [{ targetId: 'target:backoff', model: 'gpt-4o-mini' }] },
+    };
+    const root = create(<NodeForm node={node} readonly={false} onChange={onChange} onDelete={vi.fn()} />);
+    const editor = root.root.findByType(FailureBackoffEditor);
+    act(() => editor.props.onChange({ mode: 'disabled' }));
+    expect(onChange.mock.calls.at(-1)?.[0].config.targets[0].failureBackoff).toEqual({ mode: 'disabled' });
   });
 
   it('selects cross-focus endpoint references from a parent-owned catalog', () => {

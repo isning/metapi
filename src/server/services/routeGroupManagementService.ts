@@ -387,10 +387,7 @@ function replaceMacroConfiguration(input: {
           : {}),
       ...(presentation ? { presentation } : {}),
       ...(input.failureBackoff === undefined ? {} : {
-        groups: current.config.groups.map((group) => ({
-          ...group,
-          failureBackoff: input.failureBackoff || undefined,
-        })),
+        failureBackoff: input.failureBackoff || undefined,
       }),
     },
     metadata: {
@@ -467,13 +464,13 @@ export async function createRouteGroupFromPayload(
         visibility,
         enabled: input.enabled !== false,
         policy,
+        failureBackoff: input.failureBackoff,
         filters: filters ? { operations: filters.operations } : null,
         ...(sourceSelection.kind === "model_pattern"
           ? { candidateSource: sourceSelection }
           : {}),
         stages: [{
           ...(sourceSelection.kind === "model_pattern" ? { acceptUnassigned: true } : {}),
-          ...(input.failureBackoff ? { failureBackoff: input.failureBackoff } : {}),
           members: resolved.members,
         }],
       });

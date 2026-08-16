@@ -3,12 +3,19 @@ import cron from 'node-cron';
 import { Readable } from 'node:stream';
 import { fetch } from 'undici';
 import { config, normalizeRouteFailureCooldownMaxSec, normalizeRouteRuntimeCacheTtlMs } from '../../config.js';
-import { DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, normalizeRouteFailureBackoffPolicy } from '../../../shared/routeGraph.js';
+import { DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, normalizeRouteFailureBackoffOverride, normalizeRouteFailureBackoffPolicy, type RouteFailureBackoffOverride } from '../../../shared/routeGraph.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 
 const ROUTE_FAILURE_BACKOFF_SETTING_KEY = 'route_failure_backoff_default_v1';
-let routeFailureBackoffDefault = DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY;
+let routeFailureBackoffDefault: RouteFailureBackoffOverride = { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
+
+function normalizeRouteFailureBackoffDefault(value: unknown): RouteFailureBackoffOverride | null {
+  const override = normalizeRouteFailureBackoffOverride(value);
+  if (override) return override;
+  const legacyPolicy = normalizeRouteFailureBackoffPolicy(value);
+  return legacyPolicy ? { mode: 'custom', policy: legacyPolicy } : null;
+}
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { advanceRouteGroupManagementCatalogRevision } from '../../services/routeGroupManagementCatalogRevisionService.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
@@ -953,7 +960,7 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       return;
     }
     case 'route_failure_backoff_default_v1': {
-      const normalized = normalizeRouteFailureBackoffPolicy(value);
+      const normalized = normalizeRouteFailureBackoffDefault(value);
       if (!normalized) return;
       routeFailureBackoffDefault = normalized;
       return;
@@ -1977,7 +1984,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
 
     if (body.routeFailureBackoffDefault !== undefined) {
-      const normalized = normalizeRouteFailureBackoffPolicy(body.routeFailureBackoffDefault);
+      const normalized = normalizeRouteFailureBackoffDefault(body.routeFailureBackoffDefault);
       if (!normalized) {
         return reply.code(400).send({ success: false, message: '路由失败退避策略无效：阈值、递增秒数和上限必须为合法且单调递增的非负值' });
       }

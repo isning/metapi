@@ -9,10 +9,14 @@ export function FailureBackoffEditor({
   value,
   onChange,
   allowInherit = true,
+  allowDisabled = true,
+  disabled = false,
 }: {
   value: RouteFailureBackoffOverride | null;
   onChange: (value: RouteFailureBackoffOverride | null) => void;
   allowInherit?: boolean;
+  allowDisabled?: boolean;
+  disabled?: boolean;
 }) {
   const mode = value?.mode || 'inherit';
   const policy = value?.mode === 'custom' ? value.policy : DEFAULT_POLICY;
@@ -21,10 +25,10 @@ export function FailureBackoffEditor({
     policy: { ...policy, ...patch },
   });
   return (
-    <div className="grid gap-3 rounded-md border bg-muted/20 p-3" data-testid="failure-backoff-editor">
+    <div className={`grid gap-3 rounded-md border bg-muted/20 p-3 ${disabled ? 'pointer-events-none opacity-60' : ''}`} data-testid="failure-backoff-editor">
       <div className="grid gap-1.5 text-sm font-medium">
         <span>{tr('pages.tokenRoutes.failureBackoffMode')}</span>
-        <Select value={mode} onValueChange={(next) => {
+        <Select value={mode} disabled={disabled} onValueChange={(next) => {
           if (next === 'inherit') onChange(null);
           else if (next === 'disabled') onChange({ mode: 'disabled' });
           else onChange({ mode: 'custom', policy });
@@ -33,7 +37,7 @@ export function FailureBackoffEditor({
           <SelectContent>
             {allowInherit ? <SelectItem value="inherit">{tr('pages.tokenRoutes.failureBackoffInherit')}</SelectItem> : null}
             <SelectItem value="custom">{tr('pages.tokenRoutes.failureBackoffCustom')}</SelectItem>
-            {allowInherit ? <SelectItem value="disabled">{tr('pages.tokenRoutes.failureBackoffDisabled')}</SelectItem> : null}
+            {allowDisabled ? <SelectItem value="disabled">{tr('pages.tokenRoutes.failureBackoffDisabled')}</SelectItem> : null}
           </SelectContent>
         </Select>
       </div>

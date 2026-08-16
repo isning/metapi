@@ -86,7 +86,7 @@ type RuntimeSettings = {
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
-  routeFailureBackoffDefault: { failureThreshold: number; levelsSec: number[]; maxSec: number };
+  routeFailureBackoffDefault: { mode: 'custom'; policy: { failureThreshold: number; levelsSec: number[]; maxSec: number } } | { mode: 'disabled' };
   routeRuntimeCacheTtlMs: number;
   dispatchPolicyRegistry: DispatchPolicyRegistryPayload;
   systemProxyUrl: string;
@@ -248,7 +248,7 @@ export default function Settings() {
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
-    routeFailureBackoffDefault: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 },
+    routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 } },
     routeRuntimeCacheTtlMs: 1500,
     dispatchPolicyRegistry: defaultDispatchPolicyRegistry,
     systemProxyUrl: '',
@@ -412,7 +412,7 @@ export default function Settings() {
           : 0,
         routeFailureCooldownMaxValue: routeCooldownInput.value,
         routeFailureCooldownMaxUnit: routeCooldownInput.unit,
-        routeFailureBackoffDefault: runtimeInfo.routeFailureBackoffDefault || { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 },
+        routeFailureBackoffDefault: runtimeInfo.routeFailureBackoffDefault || { mode: 'custom', policy: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 } },
         routeRuntimeCacheTtlMs: Number(runtimeInfo.routeRuntimeCacheTtlMs) >= 100
           ? Math.trunc(Number(runtimeInfo.routeRuntimeCacheTtlMs))
           : 1500,
@@ -1535,10 +1535,10 @@ export default function Settings() {
             <div className="text-xs text-muted-foreground">{tr('pages.settings.failureBackoffDefaultHint')}</div>
             <FailureBackoffEditor
               allowInherit={false}
-              value={{ mode: 'custom', policy: runtime.routeFailureBackoffDefault }}
+              value={runtime.routeFailureBackoffDefault}
               onChange={(value) => {
-                if (value?.mode !== 'custom') return;
-                setRuntime((current) => ({ ...current, routeFailureBackoffDefault: value.policy }));
+                if (!value) return;
+                setRuntime((current) => ({ ...current, routeFailureBackoffDefault: value }));
               }}
             />
           </div>

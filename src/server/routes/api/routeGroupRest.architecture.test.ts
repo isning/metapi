@@ -123,6 +123,13 @@ describe('route group REST API boundaries', () => {
     expect(api).not.toContain('/api/route-graph/endpoints/${encodeURIComponent(endpointId)}/failure-state');
   });
 
+  it('forwards candidate failure-backoff updates through the HTTP adapter', () => {
+    const routes = source('src/server/routes/api/routeGroupRoutes.ts');
+
+    expect(routes).toContain('parsed.data.failureBackoff !== undefined');
+    expect(routes).toContain('{ failureBackoff: parsed.data.failureBackoff }');
+  });
+
   it('keeps localized policy and background-task construction out of the Route Group adapter', () => {
     const routes = source('src/server/routes/api/routeGroupRoutes.ts');
     const candidateService = source('src/server/services/routeGroupCandidateService.ts');

@@ -42,7 +42,6 @@ import {
   normalizeRouteFailureBackoffOverride,
   normalizeRouteFailureBackoffPolicy,
   type RouteFailureBackoffOverride,
-  type RouteFailureBackoffPolicy,
 } from '../../shared/routeGraph.js';
 import type {
   RouteRuntimeCredentialSnapshot,
@@ -1049,30 +1048,34 @@ export async function markRouteRuntimeExecutionTargetRecovered(executionTargetId
   invalidateRouteRuntimeExecutionTargetState(normalizedId);
 }
 
-async function resolveGlobalRouteFailureBackoffPolicy(): Promise<{ policy: RouteFailureBackoffPolicy; configured: boolean }> {
+async function resolveGlobalRouteFailureBackoffPolicy(): Promise<RouteFailureBackoffOverride> {
   const row = await db.select({ value: schema.settings.value })
     .from(schema.settings)
     .where(eq(schema.settings.key, ROUTE_FAILURE_BACKOFF_SETTING_KEY))
     .get();
-  if (!row?.value) return { policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: false };
+  if (!row?.value) return { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
   try {
     const parsed = JSON.parse(row.value);
-    return { policy: normalizeRouteFailureBackoffPolicy(parsed) || DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: true };
+    const override = normalizeRouteFailureBackoffOverride(parsed);
+    if (override) return override;
+    const legacyPolicy = normalizeRouteFailureBackoffPolicy(parsed);
+    return legacyPolicy ? { mode: 'custom', policy: legacyPolicy } : { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
   } catch {
-    return { policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, configured: false };
+    return { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
   }
 }
 
 export function resolveRouteFailureBackoffPolicy(input: {
-  global: RouteFailureBackoffPolicy;
+  global: RouteFailureBackoffOverride;
+  macro?: RouteFailureBackoffOverride | null;
   group?: RouteFailureBackoffOverride | null;
   candidate?: RouteFailureBackoffOverride | null;
   executionAttempt?: RouteFailureBackoffOverride | null;
 }): RouteFailureBackoffOverride {
-  const selected = [input.executionAttempt, input.candidate, input.group]
+  const selected = [input.executionAttempt, input.candidate, input.group, input.macro]
     .map((value) => normalizeRouteFailureBackoffOverride(value))
     .find(Boolean);
-  return selected || { mode: 'custom', policy: normalizeRouteFailureBackoffPolicy(input.global) || DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
+  return selected || normalizeRouteFailureBackoffOverride(input.global) || { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
 }
 
 export function resolveFailureCooldownMs(input: {
@@ -1107,7 +1110,7 @@ export async function recordRouteRuntimeExecutionAttemptFailure(input: {
     const nextConsecutiveFailCount = state.consecutiveFailCount + 1;
     const globalPolicy = await resolveGlobalRouteFailureBackoffPolicy();
     const effectivePolicy = resolveRouteFailureBackoffPolicy({
-      global: globalPolicy.policy,
+      global: globalPolicy,
       executionAttempt: input.failureBackoff,
     });
     const thresholdReached = effectivePolicy.mode === 'custom'
@@ -1115,9 +1118,7 @@ export async function recordRouteRuntimeExecutionAttemptFailure(input: {
     const cooldownLevel = thresholdReached
       ? Math.min(state.cooldownLevel + 1, effectivePolicy.policy.levelsSec.length - 1)
       : state.cooldownLevel;
-    const cooldownMs = (!input.failureBackoff && !globalPolicy.configured && effectivePolicy.mode === 'custom' && nextConsecutiveFailCount < effectivePolicy.policy.failureThreshold)
-      ? Math.min(60 * nextConsecutiveFailCount * nextConsecutiveFailCount * 1000, effectivePolicy.policy.maxSec * 1000)
-      : resolveFailureCooldownMs({
+    const cooldownMs = resolveFailureCooldownMs({
       consecutiveFailCount: nextConsecutiveFailCount,
       cooldownLevel: state.cooldownLevel,
       policy: effectivePolicy,

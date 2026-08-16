@@ -5,6 +5,7 @@ import { normalizeRouteGraphMacro } from '../../../shared/routeGraph.js';
 import { Select } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import { CandidateSelectorMacroForm } from './CandidateSelectorMacroForm.js';
+import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 
 function macroWithCandidateSource(enabled = false) {
   return normalizeRouteGraphMacro({
@@ -20,7 +21,7 @@ function macroWithCandidateSource(enabled = false) {
       groups: [{
         id: 'fallback-stage:managed:editor-primary',
         enabled: true,
-        input: { kind: 'synthetic', statusCode: 503, message: 'Unavailable' },
+        input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:managed:editor-endpoint'] },
         members: [{
           memberId: 'dispatcher-member:managed:editor-endpoint',
           endpointId: 'route-endpoint:managed:editor-endpoint',
@@ -94,5 +95,28 @@ describe('CandidateSelectorMacroForm', () => {
     const next = onChange.mock.calls.at(-1)?.[0];
     expect(next.config.surface.ports.find((port: { id: string }) => port.id === 'route.out')?.manualEdgePolicy).toBe('deny');
     expect(next.config.surface.ports.find((port: { id: string }) => port.id === 'candidates.in')?.manualEdgePolicy).toBe('allow');
+  });
+
+  it('authors macro, fallback-stage, and member backoff overrides in the Graph config', () => {
+    const onChange = vi.fn();
+    const macro = macroWithCandidateSource(false);
+    const root = create(<CandidateSelectorMacroForm
+      macro={macro}
+      readonly={false}
+      endpoints={[{ id: 'route-endpoint:managed:editor-endpoint', label: 'Editor endpoint' }]}
+      macros={[]}
+      onChange={onChange}
+    />);
+    const editors = root.root.findAllByType(FailureBackoffEditor);
+    expect(editors).toHaveLength(3);
+
+    act(() => editors[0]!.props.onChange({ mode: 'disabled' }));
+    expect(onChange.mock.calls.at(-1)?.[0].config.failureBackoff).toEqual({ mode: 'disabled' });
+
+    act(() => editors[1]!.props.onChange({ mode: 'disabled' }));
+    expect(onChange.mock.calls.at(-1)?.[0].config.groups[0].failureBackoff).toEqual({ mode: 'disabled' });
+
+    act(() => editors[2]!.props.onChange({ mode: 'disabled' }));
+    expect(onChange.mock.calls.at(-1)?.[0].config.groups[0].members[0].failureBackoff).toEqual({ mode: 'disabled' });
   });
 });

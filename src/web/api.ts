@@ -609,7 +609,7 @@ export type RuntimeSettingsPayload = {
   adminIpAllowlist?: string[] | string;
   proxyFirstByteTimeoutSec?: number;
   routeFailureCooldownMaxSec?: number;
-  routeFailureBackoffDefault?: { failureThreshold: number; levelsSec: number[]; maxSec: number };
+  routeFailureBackoffDefault?: { mode: 'custom'; policy: { failureThreshold: number; levelsSec: number[]; maxSec: number } } | { mode: 'disabled' };
   routeRuntimeCacheTtlMs?: number;
   dispatchPolicyRegistry?: DispatchPolicyRegistryPayload;
   proxyErrorKeywords?: string[] | string;

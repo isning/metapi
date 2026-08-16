@@ -248,7 +248,7 @@ describe('routeGraphService graph-native route runtime', () => {
       ],
     });
     expect(macro?.config.policy).toEqual({ kind: 'builtin', builtin: 'round_robin' });
-    expect(macro?.config.groups.every((group) => group.failureBackoff?.mode === 'custom')).toBe(true);
+    expect(macro?.config.failureBackoff?.mode).toBe('custom');
     expect(macro).not.toHaveProperty('visibility');
     expect(macro?.config.surface.entry).toEqual({ kind: 'none' });
 
@@ -259,7 +259,7 @@ describe('routeGraphService graph-native route runtime', () => {
 
     await updateRouteGroupFromPayload(group.id, { failureBackoff: null });
     const reset = await buildRouteGraphSourceFromRouteGroups();
-    expect(reset.macros.find((item) => item.id === group.id)?.config.groups.every((stage) => stage.failureBackoff == null)).toBe(true);
+    expect(reset.macros.find((item) => item.id === group.id)?.config.failureBackoff).toBeUndefined();
   });
 
   it('rejects removed policy and priority shapes before graph normalization', async () => {

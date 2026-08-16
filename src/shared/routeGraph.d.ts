@@ -222,6 +222,8 @@ export type CandidateSelectorMacroConfig = {
     ports: RouteGraphPort[];
   };
   policy: DispatcherPolicy;
+  /** Macro-level failure backoff override. Omission inherits the runtime default. */
+  failureBackoff?: RouteFailureBackoffOverride;
   filters?: {
     operations: RouteFilter[];
   };
@@ -258,6 +260,13 @@ export type CandidateSelectorMacroConfig = {
       weight?: number;
       metadata?: Record<string, unknown>;
       failureBackoff?: RouteFailureBackoffOverride;
+      override?: {
+        fallbackStageId?: string;
+        order?: number;
+        enabled?: boolean;
+        weight?: number;
+        failureBackoff?: RouteFailureBackoffOverride;
+      };
     }>;
     materialization?: {
       sort?: 'model_name' | 'health' | 'cel';

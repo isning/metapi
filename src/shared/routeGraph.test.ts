@@ -29,6 +29,15 @@ describe('route graph native exposure semantics', () => {
     expect(normalizeRouteFailureBackoffOverride({ mode: 'disabled' })).toEqual({ mode: 'disabled' });
     expect(normalizeRouteFailureBackoffPolicy({ failureThreshold: 2, levelsSec: [10, 5], maxSec: 20 })).toBeNull();
     expect(normalizeRouteFailureBackoffOverride({ mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0], maxSec: 0 } })).toBeNull();
+    const macro = normalizeRouteGraphMacro({
+      id: 'backoff-macro',
+      kind: 'candidate_selector',
+      config: {
+        failureBackoff: { mode: 'disabled' },
+        groups: [],
+      },
+    });
+    expect(macro.config.failureBackoff).toEqual({ mode: 'disabled' });
   });
 
   it('resolves connection editability only from the port contract', () => {
@@ -1537,6 +1546,7 @@ describe('routeGraph port-native source', () => {
               ],
             },
             policy: { kind: 'builtin', builtin: 'weighted' },
+            failureBackoff: { mode: 'disabled' },
             groups: [],
           },
         },
@@ -2001,6 +2011,7 @@ describe('routeGraph port-native source', () => {
                 enabled: true,
                 input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] },
                 defaults: { weight: 10 },
+                failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
               },
             ],
           },
@@ -2031,7 +2042,11 @@ describe('routeGraph port-native source', () => {
         targetNodeId: 'macro:model-group:public:dispatcher',
         kind: 'route_flow',
         metadata: expect.objectContaining({
-          candidate: expect.objectContaining({ routeEndpointId: 'route-endpoint:supply:upstream-model-fixture:11', weight: 10 }),
+          candidate: expect.objectContaining({
+            routeEndpointId: 'route-endpoint:supply:upstream-model-fixture:11',
+            weight: 10,
+            failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 } },
+          }),
         }),
       }),
     ]));
@@ -3440,6 +3455,11 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'inline',
                 input: { kind: 'inline_endpoints', endpoints: [{ targetId: 'macro-inline', model: 'macro-model' }] },
+                members: [{
+                  memberId: 'inline-member',
+                  endpointId: 'macro-inline',
+                  override: { failureBackoff: { mode: 'disabled' } },
+                }],
               },
             ],
           },
@@ -3448,6 +3468,17 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'macro:model-group:embedded-flow:candidate:inline:inline',
+        config: expect.objectContaining({
+          targets: [expect.objectContaining({
+            targetId: 'macro-inline',
+            failureBackoff: { mode: 'disabled' },
+          })],
+        }),
+      }),
+    ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro-semantic:entry-to-macro:bidirect-in',

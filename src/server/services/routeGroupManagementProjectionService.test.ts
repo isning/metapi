@@ -31,7 +31,7 @@ describe('routeGroupManagementProjectionService', () => {
       fallbackStages: [{ id: 'stage:primary', label: 'Primary', members: [{ memberId: 'member:one', endpointId: endpoint.routeEndpointId, weight: 10 }] }],
       ownership: 'manual',
     });
-    macro.config.groups[0]!.failureBackoff = { mode: 'disabled' };
+    macro.config.failureBackoff = { mode: 'disabled' };
     macro.config.groups[0]!.members[0]!.failureBackoff = {
       mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 },
     };

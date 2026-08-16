@@ -9,6 +9,7 @@ import { Switch } from '../../components/ui/switch/index.js';
 import { Textarea } from '../../components/ui/textarea/index.js';
 import { tr } from '../../i18n.js';
 import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
+import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 import { FilterOperationsEditor } from './NodeForm.js';
 
 type Group = CandidateSelectorMacroConfig['groups'][number];
@@ -78,6 +79,7 @@ function InlineEndpointsEditor({ endpoints, readonly, onChange }: {
         <Input disabled={readonly} type="number" value={endpoint.weight ?? ''} placeholder={tr('pages.tokenRoutes.routeGraphWorkspace.memberWeight')} onChange={(event) => patch(index, { weight: event.target.value === '' ? null : Number(event.target.value) })} />
       </div>
       <label className="flex items-center gap-2 text-muted-foreground"><Switch disabled={readonly} checked={endpoint.enabled !== false} onCheckedChange={(enabled) => patch(index, { enabled })} />{tr('pages.tokenRoutes.routeGraphWorkspace.memberEnabled')}</label>
+      <FailureBackoffEditor disabled={readonly} value={endpoint.failureBackoff || null} onChange={(failureBackoff) => patch(index, { failureBackoff: failureBackoff || undefined })} />
     </div>)}
   </div>;
 }
@@ -101,10 +103,13 @@ function MemberOverridesEditor({ input, members, macroCandidateSource, readonly,
     {resolved.map((member, index) => {
       const identity = member.endpointId || member.macroId || '';
       const label = member.endpointId ? endpointLabels.get(member.endpointId) : member.macroId ? macroLabels.get(member.macroId) : null;
-      return <div key={identity} className="grid grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-2 rounded border p-2">
-        <span className="truncate" title={identity}>{label || identity}</span>
-        <Switch disabled={readonly} checked={member.enabled !== false} onCheckedChange={(enabled) => patch(index, { enabled })} />
-        <Input disabled={readonly} type="number" value={member.weight ?? ''} placeholder={tr('pages.tokenRoutes.routeGraphWorkspace.memberWeight')} onChange={(event) => patch(index, { weight: event.target.value === '' ? undefined : Number(event.target.value) })} />
+      return <div key={identity} className="grid gap-2 rounded border p-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-2">
+          <span className="truncate" title={identity}>{label || identity}</span>
+          <Switch disabled={readonly} checked={member.enabled !== false} onCheckedChange={(enabled) => patch(index, { enabled })} />
+          <Input disabled={readonly} type="number" value={member.weight ?? ''} placeholder={tr('pages.tokenRoutes.routeGraphWorkspace.memberWeight')} onChange={(event) => patch(index, { weight: event.target.value === '' ? undefined : Number(event.target.value) })} />
+        </div>
+        <FailureBackoffEditor disabled={readonly} value={member.failureBackoff || null} onChange={(failureBackoff) => patch(index, { failureBackoff: failureBackoff || undefined })} />
       </div>;
     })}
   </div>;
@@ -188,6 +193,7 @@ export function CandidateSelectorMacroForm({
         {tr('pages.tokenRoutes.routeGraphWorkspace.macroPolicy')}
         <DispatcherPolicySelect disabled={readonly} value={macro.config.policy} registry={registry} onChange={(policy) => patchConfig({ policy: policy || { kind: 'inherit_default' } })} />
       </label>
+      <FailureBackoffEditor disabled={readonly} value={macro.config.failureBackoff || null} onChange={(failureBackoff) => patchConfig({ failureBackoff: failureBackoff || undefined })} />
       <div className="grid gap-2 rounded-md border p-3">
         <label className="grid gap-1.5 text-muted-foreground">
           {tr('pages.tokenRoutes.routeGraphWorkspace.macroCandidateSource')}
@@ -251,6 +257,7 @@ export function CandidateSelectorMacroForm({
         <Button type="button" size="icon" variant="ghost" disabled={readonly} title={tr('common.delete')} onClick={() => patchConfig({ groups: macro.config.groups.filter((_, current) => current !== index) })}><Trash2 size={14} /></Button>
       </div>
       <DispatcherPolicySelect disabled={readonly} value={group.policy || null} registry={registry} inheritMode="group" onChange={(policy) => patchGroup(index, { policy: policy || undefined })} />
+      <FailureBackoffEditor disabled={readonly} value={group.failureBackoff || null} onChange={(failureBackoff) => patchGroup(index, { failureBackoff: failureBackoff || undefined })} />
       {macro.config.candidateSource && <label className="flex items-center justify-between gap-3 text-muted-foreground">
         <span>{tr('pages.tokenRoutes.routeGraphWorkspace.acceptUnassigned')}</span>
         <Switch data-testid={`stage-accept-unassigned-${index}`} disabled={readonly} checked={group.acceptUnassigned === true} onCheckedChange={(acceptUnassigned) => patchGroup(index, { acceptUnassigned: acceptUnassigned || undefined })} />

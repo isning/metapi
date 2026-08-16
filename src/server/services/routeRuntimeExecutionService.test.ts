@@ -28,14 +28,17 @@ type RouteRuntimeArtifactModule = typeof import('./routeRuntimeArtifactService.j
 type SiteCatalogMutationModule = typeof import('./siteCatalogMutationService.js');
 
 describe('routeRuntimeExecutionService', () => {
-  it('resolves failure cooldown by execution-attempt then candidate then group precedence', () => {
-    const global = { failureThreshold: 3, levelsSec: [0, 10], maxSec: 10 };
+  it('resolves failure cooldown by execution-attempt then candidate then group then macro precedence', () => {
+    const global = { mode: 'custom', policy: { failureThreshold: 3, levelsSec: [0, 10], maxSec: 10 } } as const;
     expect(resolveRouteFailureBackoffPolicy({
       global,
+      macro: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 15], maxSec: 15 } },
       group: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 20], maxSec: 20 } },
       candidate: { mode: 'disabled' },
       executionAttempt: { mode: 'custom', policy: { failureThreshold: 1, levelsSec: [0, 30], maxSec: 30 } },
     })).toEqual({ mode: 'custom', policy: { failureThreshold: 1, levelsSec: [0, 30], maxSec: 30 } });
+    expect(resolveRouteFailureBackoffPolicy({ global, macro: { mode: 'disabled' } }))
+      .toEqual({ mode: 'disabled' });
     expect(resolveFailureCooldownMs({
       consecutiveFailCount: 1,
       cooldownLevel: 0,
@@ -679,6 +682,7 @@ describe('routeRuntimeExecutionService', () => {
       executionTargetId: candidates[0].executionTargetId,
       status: 502,
       errorText: 'upstream failed',
+      failureBackoff: { mode: 'custom', policy: { failureThreshold: 1, levelsSec: [0, 1], maxSec: 1 } },
     });
     const failedState = await db.select().from(schema.runtimeExecutionTargetState)
       .where(eq(schema.runtimeExecutionTargetState.executionTargetId, candidates[0].executionTargetId))

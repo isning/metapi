@@ -324,6 +324,7 @@ export function RouteGroupCandidateRow({
           </div>
           <FailureBackoffEditor
             value={candidate.failureBackoff}
+            disabled={busy}
             onChange={(failureBackoff) => void update({ failureBackoff })}
           />
         </div>

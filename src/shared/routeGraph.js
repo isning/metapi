@@ -821,6 +821,15 @@ function normalizeCandidateSelectorGroupMember(input) {
   const endpointId = normalizeString(raw.endpointId);
   const macroId = normalizeString(raw.macroId);
   const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
+  const rawOverride = isPlainObject(raw.override) ? raw.override : null;
+  const overrideFailureBackoff = normalizeRouteFailureBackoffOverride(rawOverride?.failureBackoff);
+  const override = rawOverride ? {
+    ...(normalizeString(rawOverride.fallbackStageId) ? { fallbackStageId: normalizeString(rawOverride.fallbackStageId) } : {}),
+    ...(Number.isFinite(Number(rawOverride.order)) ? { order: Math.max(0, Math.trunc(Number(rawOverride.order))) } : {}),
+    ...(rawOverride.enabled === true || rawOverride.enabled === false ? { enabled: rawOverride.enabled } : {}),
+    ...(Number.isFinite(Number(rawOverride.weight)) ? { weight: Number(rawOverride.weight) } : {}),
+    ...(overrideFailureBackoff ? { failureBackoff: overrideFailureBackoff } : {}),
+  } : null;
   return {
     ...(memberId ? { memberId } : {}),
     ...(endpointId ? { endpointId } : {}),
@@ -829,6 +838,7 @@ function normalizeCandidateSelectorGroupMember(input) {
     ...(Number.isFinite(Number(raw.weight)) ? { weight: Number(raw.weight) } : {}),
     ...(isPlainObject(raw.metadata) ? { metadata: raw.metadata } : {}),
     ...(failureBackoff ? { failureBackoff } : {}),
+    ...(override && Object.keys(override).length > 0 ? { override } : {}),
   };
 }
 
@@ -915,6 +925,7 @@ function normalizeCandidateSelectorConfig(input) {
       match: normalizeRouteGraphMatchSpec(rawEntry.match),
     };
   const rawPolicy = isPlainObject(raw.policy) ? raw.policy : {};
+  const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
   const rawSurfacePorts = Array.isArray(rawSurface.ports) ? rawSurface.ports.map(normalizeMacroSurfacePort).filter((port) => port.id) : [];
   const defaultSurfacePorts = buildCandidateSelectorSurfacePorts({
     entry,
@@ -937,6 +948,7 @@ function normalizeCandidateSelectorConfig(input) {
       ports: rawSurfacePorts.length > 0 ? rawSurfacePorts : defaultSurfacePorts.map((port) => normalizeMacroSurfacePort(port)),
     },
     policy: normalizeDispatcherPolicy(rawPolicy),
+    ...(failureBackoff ? { failureBackoff } : {}),
     ...(filterOperations.length > 0 ? { filters: { operations: filterOperations } } : {}),
     ...(candidateSource?.kind === 'model_pattern'
       ? { candidateSource }
@@ -2705,15 +2717,16 @@ function macroCandidateWeight(group, member, fallback = 1) {
   return Number.isFinite(Number(group.defaults?.weight)) ? Number(group.defaults.weight) : fallback;
 }
 
-function mergeCandidateMemberMetadata(group, candidateMetadata, member) {
+function mergeCandidateMemberMetadata(group, candidateMetadata, member, macroFailureBackoff) {
   const stageMember = isPlainObject(member) ? member : {};
+  const memberOverride = isPlainObject(stageMember.override) ? stageMember.override : {};
   const failureBackoff = normalizeRouteFailureBackoffOverride(
-    stageMember.failureBackoff || group?.failureBackoff || group?.defaults?.failureBackoff,
+    memberOverride.failureBackoff || stageMember.failureBackoff || group?.failureBackoff || group?.defaults?.failureBackoff || macroFailureBackoff,
   );
   const merged = {
     ...candidateMetadata,
-    ...(Number.isFinite(Number(stageMember.weight)) ? { weight: Number(stageMember.weight) } : {}),
-    ...(stageMember.enabled === true || stageMember.enabled === false ? { enabled: stageMember.enabled } : {}),
+    ...(Number.isFinite(Number(memberOverride.weight ?? stageMember.weight)) ? { weight: Number(memberOverride.weight ?? stageMember.weight) } : {}),
+    ...((memberOverride.enabled ?? stageMember.enabled) === true || (memberOverride.enabled ?? stageMember.enabled) === false ? { enabled: memberOverride.enabled ?? stageMember.enabled } : {}),
     ...(isPlainObject(stageMember.metadata) ? { metadata: stageMember.metadata } : {}),
     ...(failureBackoff ? { failureBackoff } : {}),
   };
@@ -3064,7 +3077,7 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
             routeEndpointId: item.endpointId,
             pattern: config.candidateSource.pattern,
             matchedModel: item.model,
-          }, member), config.surface.output);
+          }, member, config.failureBackoff), config.surface.output);
       }
       continue;
     }
@@ -3091,7 +3104,7 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
             ...mergeCandidateMemberMetadata(group, {
               routeEndpointId: item.endpointId,
               endpointKind: 'supply',
-            }, member),
+            }, member, config.failureBackoff),
           }, config.surface.output);
           continue;
         }
@@ -3118,7 +3131,7 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
         candidateNodeIds.add(routeEndpoint.id);
         configuredCandidateNodeIds.add(routeEndpoint.id);
         addMacroCandidateEdge(edges, macro, macroId, stage, routeEndpoint.id, stage.dispatcherId, {
-          ...mergeCandidateMemberMetadata(group, { routeEndpointId: item.endpointId, endpointKind: 'supply' }, member),
+          ...mergeCandidateMemberMetadata(group, { routeEndpointId: item.endpointId, endpointKind: 'supply' }, member, config.failureBackoff),
         }, config.surface.output);
       }
       for (const childMacroId of group.input.macroIds) {
@@ -3130,13 +3143,11 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
         const childDispatcherId = createRouteMacroDispatcherNodeId(childMacroId);
         const member = macroCandidateMember(group, childMacroId);
         configuredCandidateNodeIds.add(childDispatcherId);
-        addMacroCandidateEdge(edges, macro, macroId, stage, childDispatcherId, stage.dispatcherId, {
-          macroId: childMacroId,
-          referenceKind: 'macro',
-          ...(Number.isFinite(Number(member.weight)) ? { weight: Number(member.weight) } : {}),
-          ...(member.enabled === false ? { enabled: false } : {}),
-          ...(isPlainObject(member.metadata) ? { metadata: member.metadata } : {}),
-        }, config.surface.output);
+        addMacroCandidateEdge(edges, macro, macroId, stage, childDispatcherId, stage.dispatcherId,
+          mergeCandidateMemberMetadata(group, {
+            macroId: childMacroId,
+            referenceKind: 'macro',
+          }, member, config.failureBackoff), config.surface.output);
       }
       continue;
     }
@@ -3160,7 +3171,7 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
             routeEndpointId: item.endpointId,
             pattern: group.input.pattern,
             matchedModel: item.model,
-          }, member), config.surface.output);
+          }, member, config.failureBackoff), config.surface.output);
       }
       continue;
     }
@@ -3199,7 +3210,14 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
           ...(isPlainObject(group.defaults?.metadata) ? group.defaults.metadata : {}),
         },
         config: {
-          targets: materializedTargets,
+          targets: materializedTargets.map((target) => {
+            const member = macroCandidateMember(group, target.targetId);
+            if (normalizeRouteFailureBackoffOverride(target.failureBackoff)) return target;
+            const failureBackoff = normalizeRouteFailureBackoffOverride(
+              member.override?.failureBackoff || member.failureBackoff || group.failureBackoff || group.defaults?.failureBackoff || config.failureBackoff,
+            );
+            return failureBackoff ? { ...target, failureBackoff } : target;
+          }),
           targetSelection: { kind: 'defer_to_router' },
         },
       }));
@@ -3384,6 +3402,7 @@ export function lowerRouteGraphSource(sourceInput) {
                   endpointKind: routeEndpoint.endpointKind,
                 },
                 {},
+                targetMacro.macro.config.failureBackoff,
               )
               : candidateMetadata,
             provenance: {

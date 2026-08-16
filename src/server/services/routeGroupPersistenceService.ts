@@ -313,7 +313,17 @@ function automaticMacroForModel(input: {
       },
     );
     source = ensured.source;
-    const manuallyAdjusted = existing?.member.metadata?.manualOverride === true;
+    const manuallyAdjusted = !!existing?.member.override || existing?.member.metadata?.manualOverride === true;
+    const memberOverride = manuallyAdjusted ? {
+      fallbackStageId: existing?.member.override?.fallbackStageId || existing?.stageId || primaryStageId,
+      order: existing?.member.override?.order ?? existing?.memberIndex ?? 0,
+      weight: existing?.member.override?.weight ?? existing?.member.weight ?? 10,
+      enabled: existing?.member.override?.enabled ?? (existing?.member.enabled !== false),
+      ...((existing?.member.override?.failureBackoff || existing?.member.failureBackoff)
+        ? { failureBackoff: existing?.member.override?.failureBackoff || existing?.member.failureBackoff }
+        : {}),
+    } : null;
+    const { manualOverride: _legacyManualOverride, ...existingMetadata } = existing?.member.metadata || {};
     const stageId = manuallyAdjusted ? existing.stageId : primaryStageId;
     const members = membersByStageId.get(stageId) || [];
     members.push({
@@ -322,17 +332,12 @@ function automaticMacroForModel(input: {
           existing?.member.memberId ||
           createManagedRouteGraphElementId("member", randomUUID()),
         endpointId: ensured.endpoint.routeEndpointId,
-        enabled: manuallyAdjusted
-          ? existing.member.enabled !== false
-          : executionEndpoint.targets.some((target) => target.enabled !== false),
-        weight: manuallyAdjusted ? (existing.member.weight ?? 10) : 10,
-        ...(manuallyAdjusted && existing.member.failureBackoff
-          ? { failureBackoff: existing.member.failureBackoff }
-          : {}),
+        enabled: executionEndpoint.targets.some((target) => target.enabled !== false),
+        weight: 10,
+        ...(memberOverride ? { override: memberOverride } : {}),
         metadata: {
           source: "availability_rebuild",
-          ...(existing?.member.metadata || {}),
-          manualOverride: manuallyAdjusted,
+          ...existingMetadata,
         },
       },
       manualIndex: manuallyAdjusted ? existing.memberIndex : null,

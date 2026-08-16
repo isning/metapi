@@ -296,6 +296,8 @@ export async function createRouteGroupCandidate(
         return { source: ensured.source, result: undefined };
       }
       memberId = createManagedRouteGraphElementId("member", randomUUID());
+      const automatic = isAutomaticRouteGroupFacadeMacro(group);
+      const baseWeight = normalizeWeight(input.weight);
       const nextMacro = replaceRouteGroupFacadeStage(
         group,
         stage.id,
@@ -306,11 +308,11 @@ export async function createRouteGroupCandidate(
             {
               memberId,
               endpointId: ensured.endpoint.routeEndpointId,
-              enabled: input.enabled !== false,
-              weight: normalizeWeight(input.weight),
-              metadata: targetMetadata({
-                manualOverride: input.manualOverride !== false,
-              }),
+              ...(automatic ? {} : { enabled: input.enabled !== false, weight: baseWeight }),
+              ...(automatic && input.manualOverride !== false ? {
+                override: { fallbackStageId: stage.id, order: (current.members || []).length, enabled: input.enabled !== false, weight: baseWeight },
+              } : {}),
+              ...(!automatic ? { metadata: targetMetadata({ manualOverride: input.manualOverride !== false }) } : {}),
             },
           ],
         }),
@@ -383,9 +385,11 @@ export async function createRouteGroupCandidates(input: {
           members: [...(current.members || []), {
             memberId,
             endpointId: ensured.endpoint.routeEndpointId,
-            enabled: candidate.enabled !== false,
-            weight: normalizeWeight(candidate.weight),
-            metadata: targetMetadata({ manualOverride: candidate.manualOverride !== false }),
+            ...(!isAutomaticRouteGroupFacadeMacro(group) ? { enabled: candidate.enabled !== false, weight: normalizeWeight(candidate.weight) } : {}),
+            ...(isAutomaticRouteGroupFacadeMacro(group) && candidate.manualOverride !== false ? {
+              override: { fallbackStageId: stage.id, order: (current.members || []).length, enabled: candidate.enabled !== false, weight: normalizeWeight(candidate.weight) },
+            } : {}),
+            ...(!isAutomaticRouteGroupFacadeMacro(group) ? { metadata: targetMetadata({ manualOverride: candidate.manualOverride !== false }) } : {}),
           }],
         }));
         nextSource = replaceRouteGroupFacadeMacroInSource(nextSource, group);
@@ -418,17 +422,31 @@ export async function updateRouteGroupMember(
       const targetStageId = text(input.stageId) || found.stage.id;
       if (!findRouteGroupFacadeStage(group, targetStageId))
         throw new RouteGroupCommandError("fallback_stage_not_found");
+      const automatic = isAutomaticRouteGroupFacadeMacro(group);
+      const currentOverride = found.member.override || {};
       const updatedMember = {
         ...found.member,
         ...(endpointId ? { endpointId } : {}),
-        ...(input.weight !== undefined
+        ...(!automatic && input.weight !== undefined
           ? { weight: normalizeWeight(input.weight) }
           : {}),
-        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-        ...(input.failureBackoff !== undefined
+        ...(!automatic && input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        ...(!automatic && input.failureBackoff !== undefined
           ? { failureBackoff: input.failureBackoff || undefined }
           : {}),
-        metadata: { ...found.member.metadata, manualOverride: true },
+        ...(automatic ? {
+          override: {
+            ...currentOverride,
+            fallbackStageId: targetStageId,
+            order: currentOverride.order ?? found.memberIndex,
+            ...(input.weight !== undefined ? { weight: normalizeWeight(input.weight) } : {}),
+            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+            ...(input.failureBackoff !== undefined
+              ? { failureBackoff: input.failureBackoff || undefined }
+              : {}),
+          },
+        } : {}),
+        metadata: { ...found.member.metadata, manualOverride: automatic ? undefined : true },
       };
       const nextMacro = replaceRouteGroupFacadeMacroInSource(nextSource, {
         ...group,
@@ -573,16 +591,17 @@ export async function moveRouteGroupCandidatesToFallbackStages(
           ...group.config,
           groups: movedStages.map((stage) => ({
             ...stage,
-            members: (stage.members || []).map((member) =>
-              member.memberId &&
-              changedIds.has(member.memberId) &&
-              manuallyAdjustedIds.has(member.memberId)
-                ? {
-                    ...member,
-                    metadata: { ...member.metadata, manualOverride: true },
-                  }
-                : member,
-            ),
+            members: (stage.members || []).map((member, order) => {
+              if (!member.memberId || !changedIds.has(member.memberId) || !manuallyAdjustedIds.has(member.memberId)) return member;
+              if (isAutomaticRouteGroupFacadeMacro(group)) {
+                return {
+                  ...member,
+                  override: { ...member.override, fallbackStageId: stage.id, order },
+                  metadata: { ...member.metadata, manualOverride: undefined },
+                };
+              }
+              return { ...member, metadata: { ...member.metadata, manualOverride: true } };
+            }),
           })),
         },
       };
@@ -641,7 +660,7 @@ export async function restoreAutomaticRouteGroupCandidateManagement(
           const memberId = text(member.memberId);
           return (
             memberId &&
-            member.metadata?.manualOverride === true &&
+            (!!member.override || member.metadata?.manualOverride === true) &&
             (!requestedIds || requestedIds.has(memberId))
           );
         }),
@@ -655,13 +674,15 @@ export async function restoreAutomaticRouteGroupCandidateManagement(
       const restoredById = new Map(
         selected.map((member) => {
           const endpoint = endpointsById.get(text(member.endpointId));
+          const { override: _override, failureBackoff: _legacyFailureBackoff, metadata: rawMetadata, ...memberWithoutOverride } = member;
+          const { manualOverride: _legacyManualOverride, ...metadata } = rawMetadata || {};
           return [
             text(member.memberId),
             {
-              ...member,
+              ...memberWithoutOverride,
               enabled: endpoint?.enabled !== false,
               weight: 10,
-              metadata: { ...member.metadata, manualOverride: false },
+              ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
             },
           ] as const;
         }),
@@ -678,7 +699,7 @@ export async function restoreAutomaticRouteGroupCandidateManagement(
         ).entries()) {
           const member =
             restoredById.get(text(currentMember.memberId)) || currentMember;
-          const manuallyAdjusted = member.metadata?.manualOverride === true;
+          const manuallyAdjusted = !!(member as RouteGroupFacadeMember).override || member.metadata?.manualOverride === true;
           const targetStageId = manuallyAdjusted ? stage.id : primaryStage.id;
           const records = recordsByStageId.get(targetStageId) || [];
           records.push({

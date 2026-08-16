@@ -59,7 +59,7 @@ describe('Settings route cooldown cap', () => {
       logCleanupRetentionDays: 14,
       proxyFirstByteTimeoutSec: 0,
       routeFailureCooldownMaxSec: 30 * 24 * 60 * 60,
-      routeFailureBackoffDefault: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 },
+      routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 } },
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
@@ -128,7 +128,7 @@ describe('Settings route cooldown cap', () => {
         }),
         proxyFirstByteTimeoutSec: 0,
         routeFailureCooldownMaxSec: 10,
-        routeFailureBackoffDefault: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 },
+        routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 } },
         routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });
@@ -224,7 +224,7 @@ describe('Settings route cooldown cap', () => {
         }),
         proxyFirstByteTimeoutSec: 7,
         routeFailureCooldownMaxSec: 30 * 24 * 60 * 60,
-        routeFailureBackoffDefault: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 },
+        routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 } },
         routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });
