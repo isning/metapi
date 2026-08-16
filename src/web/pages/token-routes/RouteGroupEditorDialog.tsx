@@ -163,7 +163,10 @@ export function RouteGroupEditorDialog({
     setSourcePickerKind("all");
     setQuery("");
     setWizardStep("match");
-  }, [group, open]);
+  // Initialize only when opening or switching groups. The workspace may
+  // refresh the projection object while this dialog is open; that must not
+  // overwrite edits that have not been saved yet.
+  }, [group?.id, open]);
 
   useEffect(() => {
     if (!open || !sourcePickerOpen) return;
