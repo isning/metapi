@@ -85,9 +85,7 @@ export function migrateImportedAccountCredential(row: unknown): MigratedBackupAc
       ? storedMode
       : legacyApiKeyMode
         ? 'apikey'
-        : (existingCredential || legacyAccessToken)
-          ? 'session'
-          : 'apikey';
+        : 'session';
   const credential = credentialMode === 'apikey' ? '' : (existingCredential || legacyAccessToken);
   const storedKind = readTrimmedString(source.credentialKind ?? source.credential_kind);
   const credentialKind = credentialMode === 'oauth'

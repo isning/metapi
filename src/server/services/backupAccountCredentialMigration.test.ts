@@ -41,6 +41,27 @@ describe('backup account credential migration', () => {
     expect(migrated.importedCredential.legacyModelToken).toBeNull();
   });
 
+  it('keeps unmarked historical accounts in the legacy default session mode', () => {
+    const migrated = migrateImportedAccountCredential({
+      id: 11,
+      siteId: 2,
+      username: 'session-account-with-separate-model-keys',
+      extraConfig: JSON.stringify({ keep: true }),
+    });
+
+    expect(migrated.account).toMatchObject({
+      credentialMode: 'session',
+      credential: '',
+      credentialKind: 'access_token',
+    });
+    expect(JSON.parse(migrated.account.extraConfig || '{}')).toEqual({ keep: true });
+    expect(migrated.importedCredential).toEqual({
+      accountId: 11,
+      credentialMode: 'session',
+      legacyModelToken: null,
+    });
+  });
+
   it('moves legacy OAuth identity into structured columns and preserves runtime state', () => {
     const migrated = migrateImportedAccountCredential({
       id: 9,
