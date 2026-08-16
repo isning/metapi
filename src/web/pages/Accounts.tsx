@@ -1950,7 +1950,7 @@ export default function Accounts() {
                     {connectionFieldsFor(selectedTokenSite).map((field: any) => (
                       <div className="grid gap-1" key={`connection-${field.key}`}>
                         <Input
-                          type={field.inputType === 'password' ? 'password' : 'text'}
+                          type="text"
                           inputMode={field.inputType === 'number' ? 'numeric' : undefined}
                           placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
                           value={tokenForm.connectionValues[field.key] || ''}
@@ -2236,7 +2236,7 @@ export default function Accounts() {
                 {connectionFieldsFor(selectedTokenSite).map((field: any) => (
                   <div className="grid gap-1" key={`apikey-connection-${field.key}`}>
                     <Input
-                      type={field.inputType === 'password' ? 'password' : 'text'}
+                      type="text"
                       inputMode={field.inputType === 'number' ? 'numeric' : undefined}
                       placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
                       value={tokenForm.connectionValues[field.key] || ''}
@@ -2402,7 +2402,7 @@ export default function Accounts() {
                   {connectionFieldsFor(activeRebindTarget).map((field: any) => (
                     <div className="mb-2 grid gap-1" key={`rebind-${field.key}`}>
                       <Input
-                        type={field.inputType === 'password' ? 'password' : 'text'}
+                        type="text"
                         inputMode={field.inputType === 'number' ? 'numeric' : undefined}
                         placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
                         value={rebindForm.connectionValues[field.key] || ''}
@@ -2595,7 +2595,7 @@ export default function Accounts() {
                 {connectionFieldsFor(editingAccount).map((field: any) => (
                   <section className="grid gap-2 border-t pt-4" key={`edit-${field.key}`}>
                     <Input
-                      type={field.inputType === 'password' ? 'password' : 'text'}
+                      type="text"
                       inputMode={field.inputType === 'number' ? 'numeric' : undefined}
                       placeholder={field.placeholderI18nKey ? tr(field.placeholderI18nKey) : undefined}
                       value={editForm.connectionValues[field.key] || ''}
