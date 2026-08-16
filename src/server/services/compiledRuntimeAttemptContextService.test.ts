@@ -133,7 +133,6 @@ describe('compiledRuntimeAttemptContextService', () => {
       credential: 'access-db-account',
       status: 'active',
       balance: 42,
-      unitCost: 0.5,
       oauthProvider: 'oauth-provider',
       extraConfig: '{"tier":"db"}',
     }).returning().get();

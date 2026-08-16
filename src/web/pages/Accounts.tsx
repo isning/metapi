@@ -430,7 +430,6 @@ export default function Accounts() {
     credentialMode: "session" as "session" | "apikey" | "oauth",
     credentialKind: "",
     checkinEnabled: true,
-    unitCost: "",
     credential: "",
     isPinned: false,
     connectionValues: {} as Record<string, string>,
@@ -1282,10 +1281,6 @@ export default function Accounts() {
       credentialMode,
       credentialKind: account?.credentialKind || "",
       checkinEnabled: account?.checkinEnabled !== false,
-      unitCost:
-        account?.unitCost === null || account?.unitCost === undefined
-          ? ""
-          : String(account.unitCost),
       credential: account?.credential || "",
       isPinned: !!account?.isPinned,
       connectionValues: initialConnectionValues(account),
@@ -1306,9 +1301,6 @@ export default function Accounts() {
         username: editForm.username.trim() || undefined,
         status: editForm.status,
         checkinEnabled: editForm.checkinEnabled,
-        unitCost: editForm.unitCost.trim()
-          ? Number(editForm.unitCost.trim())
-          : null,
         credential:
           editForm.credentialMode === "session"
             ? editForm.credential.trim()
@@ -2541,13 +2533,6 @@ export default function Accounts() {
                         { value: "expired", label: "expired" },
                       ]}
                       placeholder={tr('components.notificationPanel.status')}
-                    />
-                    <Input
-                      placeholder={tr('pages.accounts.cost')}
-                      value={editForm.unitCost}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({ ...prev, unitCost: e.target.value }))
-                      }
                     />
                     <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
                       <Checkbox

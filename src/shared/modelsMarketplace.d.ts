@@ -9,7 +9,6 @@ export type ModelsMarketplaceAccount = {
   site: string;
   username: string | null;
   latency: number | null;
-  unitCost: number | null;
   balance: number | null;
   tokens: ModelsMarketplaceToken[];
   managedTokenCount: number;

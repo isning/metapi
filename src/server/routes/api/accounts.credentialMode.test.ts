@@ -759,7 +759,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       credential: 'access-token',
       credentialKind: 'access_token',
       status: 'active',
-      unitCost: 25,
       extraConfig: JSON.stringify({
         proxyUrl: 'http://127.0.0.1:7890',
       }),
@@ -772,7 +771,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         username: 'after-edit',
         status: 'disabled',
         checkinEnabled: false,
-        unitCost: null,
         credential: 'access-token-updated',
         isPinned: false,
         proxyUrl: null,
@@ -785,7 +783,6 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       username: 'after-edit',
       status: 'disabled',
       checkinEnabled: false,
-      unitCost: null,
       credential: 'access-token-updated',
       isPinned: false,
     });

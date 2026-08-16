@@ -97,7 +97,6 @@ function createModel(name = 'deepseek-v4-flash-rerouted'): ModelRow {
         site: 'Elysiver',
         username: 'tester',
         latency: 120,
-        unitCost: null,
         balance: 1,
         tokens: [{ id: 1, name: 'default', isDefault: true }],
         managedTokenCount: 1,

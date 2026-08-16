@@ -57,6 +57,13 @@
       "when": 1786790147634,
       "tag": "0007_tan_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786868034587,
+      "tag": "0008_careless_toxin",
+      "breakpoints": true
     }
   ]
 }

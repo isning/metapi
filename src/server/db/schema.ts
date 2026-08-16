@@ -126,7 +126,6 @@ export const accounts = sqliteTable('accounts', {
   balance: real('balance').default(0),
   balanceUsed: real('balance_used').default(0),
   quota: real('quota').default(0),
-  unitCost: real('unit_cost'),
   valueScore: real('value_score').default(0),
   status: text('status').default('active'), // 'active' | 'disabled' | 'expired'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),

@@ -52,7 +52,6 @@ type AccountAggregate = {
   site: string;
   username: string | null;
   latency: number | null;
-  unitCost: number | null;
   balance: number | null;
   tokens: Map<number, { id: number; name: string; isDefault: boolean }>;
   credentialKeys: Set<string>;
@@ -138,7 +137,6 @@ function ensureAccount(model: ModelAggregate, attempt: Awaited<ReturnType<typeof
     site: attempt.site.name,
     username: attempt.account.username,
     latency: attempt.latencyMs,
-    unitCost: attempt.account.unitCost,
     balance: attempt.account.balance,
     tokens: new Map(),
     credentialKeys: new Set(),
@@ -358,7 +356,6 @@ function modelRows(input: {
       site: account.site,
       username: account.username,
       latency: account.latency,
-      unitCost: account.unitCost,
       balance: account.balance,
       tokens: Array.from(account.tokens.values()),
       managedTokenCount: account.tokens.size,

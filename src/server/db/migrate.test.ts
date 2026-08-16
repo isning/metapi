@@ -36,6 +36,7 @@ describe('runSqliteMigrations', () => {
       sqlite.exec('ALTER TABLE accounts DROP COLUMN credential_mode');
       sqlite.exec('ALTER TABLE accounts DROP COLUMN credential_kind');
       sqlite.exec('ALTER TABLE accounts RENAME COLUMN credential TO access_token');
+      sqlite.exec('ALTER TABLE accounts ADD COLUMN unit_cost real');
       sqlite.exec(`
         ALTER TABLE sites ADD COLUMN post_refresh_probe_enabled integer DEFAULT false;
         ALTER TABLE sites ADD COLUMN post_refresh_probe_model text DEFAULT '';

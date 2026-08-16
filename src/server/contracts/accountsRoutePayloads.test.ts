@@ -70,7 +70,6 @@ describe('account route payload contracts', () => {
       ['password', () => parseAccountLoginPayload({ siteId: 1, username: 'u', password: 1 }), 'Invalid password. Expected string.'],
       ['apiKey', () => parseAccountCreatePayload({ siteId: 1, apiKey: 1 }), 'Invalid apiKey. Expected string.'],
       ['checkinEnabled', () => parseAccountCreatePayload({ siteId: 1, checkinEnabled: 'yes' }), 'Invalid checkinEnabled. Expected boolean.'],
-      ['unitCost', () => parseAccountUpdatePayload({ unitCost: '1' }), 'Invalid unitCost. Expected number or null.'],
       ['credentialMode', () => parseAccountCreatePayload({ siteId: 1, credentialMode: 'password' }), 'Account creation derives its credential type from credential or apiKey.'],
       ['skipModelFetch', () => parseAccountCreatePayload({ siteId: 1, skipModelFetch: 'yes' }), 'Invalid skipModelFetch. Expected boolean.'],
       ['isPinned', () => parseAccountUpdatePayload({ isPinned: 'yes' }), 'Invalid isPinned. Expected boolean.'],

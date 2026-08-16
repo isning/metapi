@@ -33,7 +33,6 @@ const accountUpdatePayloadSchema = z.object({
   credentialKind: accountCredentialKindSchema.optional(),
   status: z.string().optional(),
   checkinEnabled: z.boolean().optional(),
-  unitCost: z.union([z.number(), z.null()]).optional(),
   extraConfig: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
   isPinned: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
@@ -109,9 +108,6 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'checkinEnabled') {
     return 'Invalid checkinEnabled. Expected boolean.';
-  }
-  if (firstPath === 'unitCost') {
-    return 'Invalid unitCost. Expected number or null.';
   }
   if (firstPath === 'credentialKind') {
     return 'Invalid credentialKind.';

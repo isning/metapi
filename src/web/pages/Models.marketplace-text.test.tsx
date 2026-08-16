@@ -1656,7 +1656,6 @@ describe('Models marketplace text', () => {
             site: '站点 A',
             username: 'user-a',
             latency: 320,
-            unitCost: null,
             balance: 12.5,
             tokens: [
               { id: 1, name: 'token-a-1', isDefault: true },

@@ -184,12 +184,6 @@
           "defaultValue": "0",
           "primaryKey": false
         },
-        "unit_cost": {
-          "logicalType": "real",
-          "notNull": false,
-          "defaultValue": null,
-          "primaryKey": false
-        },
         "value_score": {
           "logicalType": "real",
           "notNull": false,

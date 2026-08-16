@@ -61,7 +61,6 @@ function attempt(input: {
       id: 11,
       username: 'account-one',
       status: 'active',
-      unitCost: null,
       balance: null,
     },
     site: {
