@@ -35,8 +35,8 @@ function collectText(node: ReactTestInstance): string {
 
 async function renderAccounts(
   initialEntry: string,
-  sites: Array<{ id: number; name: string; url?: string; platform: string; status: string }> = [
-    { id: 10, name: 'Demo Site', platform: 'new-api', status: 'active' },
+  sites: Array<{ id: number; name: string; url?: string; platform: string; status: string; credentialCapabilities?: { session: boolean; apiKey: boolean } }> = [
+    { id: 10, name: 'Demo Site', platform: 'new-api', status: 'active', credentialCapabilities: { session: true, apiKey: true } },
   ],
 ) {
   apiMock.getAccounts.mockResolvedValue([]);
@@ -96,8 +96,8 @@ describe('Accounts create intent handling', () => {
 
   it('uses searchable site selectors for manual connection creation', async () => {
     const root = await renderAccounts('/accounts', [
-      { id: 10, name: 'Demo Site', url: 'https://demo.example.com', platform: 'new-api', status: 'active' },
-      { id: 11, name: 'Codex Workspace', url: 'https://workspace.example.com', platform: 'codex', status: 'active' },
+      { id: 10, name: 'Demo Site', url: 'https://demo.example.com', platform: 'new-api', status: 'active', credentialCapabilities: { session: true, apiKey: true } },
+      { id: 11, name: 'Codex Workspace', url: 'https://workspace.example.com', platform: 'codex', status: 'active', credentialCapabilities: { session: false, apiKey: false } },
     ]);
     try {
       const addButton = root.root.find((node) => (
@@ -112,14 +112,17 @@ describe('Accounts create intent handling', () => {
       await flushMicrotasks();
 
       const selects = root.root.findAllByType(ModernSelect);
-      expect(selects[1]?.props.searchable).toBe(true);
-      expect(selects[1]?.props.searchPlaceholder).toBe('筛选站点（名称 / 平台 / URL）');
-      expect(selects[1]?.props.options).toEqual(
+      const siteSelect = selects.find((select) => (
+        select.props.options.some((option: { value: string }) => option.value === '10')
+      ));
+      expect(siteSelect?.props.searchable).toBe(true);
+      expect(siteSelect?.props.searchPlaceholder).toBe('筛选站点（名称 / 平台 / URL）');
+      expect(siteSelect?.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            value: '11',
-            label: 'Codex Workspace (codex)',
-            description: 'https://workspace.example.com',
+            value: '10',
+            label: 'Demo Site (new-api)',
+            description: 'https://demo.example.com',
           }),
         ]),
       );

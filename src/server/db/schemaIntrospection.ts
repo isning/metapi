@@ -262,7 +262,7 @@ function normalizeDefaultValueForColumn(
   if (lowered === 'true' || lowered === 'false') return lowered;
   if (/^-?\d+(?:\.\d+)?$/.test(normalized)) return normalized;
   if (/^'.*'$/.test(normalized)) return normalized;
-  if (/^[a-z_][a-z0-9_]*$/i.test(normalized)) return `'${normalized}'`;
+  if (/^[a-z_][a-z0-9_-]*$/i.test(normalized)) return `'${normalized}'`;
   return normalized;
 }
 

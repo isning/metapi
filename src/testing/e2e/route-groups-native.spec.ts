@@ -50,7 +50,6 @@ async function seedManualRouteGroup(adminApi: AdminApi) {
         data: {
           siteId: site.id,
           username: `route-group-${name}-${suffix}`,
-          credentialMode: "apikey",
           apiKey: `sk-route-group-${name}-${suffix}`,
           skipModelFetch: true,
         },

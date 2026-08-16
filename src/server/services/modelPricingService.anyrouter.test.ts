@@ -64,6 +64,7 @@ describe('modelPricingService anyrouter pricing', () => {
       account: {
         id: 77,
         credential: 'challenge-seed',
+        credentialKind: 'session_cookie',
       },
       modelName: 'claude-haiku-4-5-20251001',
       totalTokens: 0,

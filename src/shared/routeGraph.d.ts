@@ -138,19 +138,16 @@ export function validateNativeDispatcherPolicy(input: unknown):
   | { ok: false; error: string };
 export function requireNativeDispatcherPolicy(input: unknown): DispatcherPolicy;
 
-export type RouteFailureBackoffPolicy = {
-  failureThreshold: number;
-  levelsSec: number[];
-  maxSec: number;
-};
-export const DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY: RouteFailureBackoffPolicy;
-
-export type RouteFailureBackoffOverride =
-  | { mode: 'custom'; policy: RouteFailureBackoffPolicy }
-  | { mode: 'disabled' };
-
-export function normalizeRouteFailureBackoffPolicy(input: unknown): RouteFailureBackoffPolicy | null;
-export function normalizeRouteFailureBackoffOverride(input: unknown): RouteFailureBackoffOverride | null;
+export {
+  DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY,
+  normalizeRouteFailureBackoffOverride,
+  normalizeRouteFailureBackoffPolicy,
+} from './routeFailureBackoff.js';
+export type {
+  RouteFailureBackoffOverride,
+  RouteFailureBackoffPolicy,
+} from './routeFailureBackoff.js';
+import type { RouteFailureBackoffOverride } from './routeFailureBackoff.js';
 export function validateNativeTargetSelectionPolicy(input: unknown):
   | { ok: true; value: TargetSelectionPolicy }
   | { ok: false; error: string };

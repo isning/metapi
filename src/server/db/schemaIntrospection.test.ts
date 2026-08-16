@@ -16,6 +16,7 @@ describe('schema introspection normalization', () => {
 
   it('normalizes common default values', () => {
     expect(normalizeDefaultValue("DEFAULT 'active'")).toBe("'active'");
+    expect(normalizeDefaultValue('proxy-observation')).toBe("'proxy-observation'");
     expect(normalizeDefaultValue('DEFAULT FALSE')).toBe('false');
     expect(normalizeDefaultValue("datetime('now')")).toBe("datetime('now')");
   });

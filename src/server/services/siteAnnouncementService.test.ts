@@ -88,8 +88,8 @@ describe('siteAnnouncementService', () => {
     getAdapterMock.mockImplementation((platform: string) => {
       if (platform === 'sub2api') {
         return {
-          getSiteAnnouncements: vi.fn(async (_baseUrl: string, accessToken: string) => {
-            expect(accessToken).toBe('jwt-token');
+          getSiteAnnouncements: vi.fn(async (context: { account: { credential?: string | null } }) => {
+            expect(context.account.credential).toBe('jwt-token');
             return [{
               sourceKey: 'announcement:11',
               title: 'Maintenance',

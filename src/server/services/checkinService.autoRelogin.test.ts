@@ -56,6 +56,7 @@ vi.mock('../db/index.js', () => {
   return {
     db: {
       select: () => selectChain,
+      delete: () => ({ where: () => ({ run: () => ({}) }) }),
       insert: () => insertChain,
       update: () => ({
         set: (updates: Record<string, unknown>) => {
@@ -69,6 +70,7 @@ vi.mock('../db/index.js', () => {
       sites: { id: 'id' },
       checkinLogs: {},
       events: {},
+      adminSnapshots: { namespace: 'namespace', snapshotKey: 'snapshotKey' },
     },
   };
 });

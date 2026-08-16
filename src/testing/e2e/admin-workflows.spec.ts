@@ -26,7 +26,6 @@ async function seedManualModelRoute(adminApi: AdminApi) {
     data: {
       siteId: site.id,
       username: `e2e-route-flow-${suffix}`,
-      credentialMode: 'apikey',
       apiKey: `sk-e2e-route-flow-${suffix}`,
       skipModelFetch: true,
     },

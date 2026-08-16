@@ -42,7 +42,7 @@ import {
   normalizeRouteFailureBackoffOverride,
   normalizeRouteFailureBackoffPolicy,
   type RouteFailureBackoffOverride,
-} from '../../shared/routeGraph.js';
+} from '../../shared/routeFailureBackoff.js';
 import type {
   RouteRuntimeCredentialSnapshot,
   RouteRuntimeSnapshotBody,

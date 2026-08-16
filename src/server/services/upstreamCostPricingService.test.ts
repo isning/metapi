@@ -226,6 +226,7 @@ describe('upstreamCostPricingService', () => {
         id: account.id,
         username: account.username,
         credential: account.credential,
+        credentialKind: account.credentialKind,
         extraConfig: account.extraConfig,
       },
       upstreamCredential: {

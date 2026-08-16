@@ -18,7 +18,7 @@ import {
   normalizeUpstreamCompatibilityPolicy,
   type UpstreamCompatibilityPolicy,
 } from '../contracts/upstreamCompatibilityPolicy.js';
-import { normalizeRouteFailureBackoffOverride } from '../../shared/routeGraph.js';
+import { normalizeRouteFailureBackoffOverride } from '../../shared/routeFailureBackoff.js';
 import {
   evaluateRuntimeSelectorCandidates,
   hydrateRuntimeSelectorPlan,

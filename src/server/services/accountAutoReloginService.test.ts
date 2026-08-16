@@ -6,20 +6,16 @@ const { getAdapterMock } = vi.hoisted(() => ({
 const { decryptAccountPasswordMock } = vi.hoisted(() => ({
   decryptAccountPasswordMock: vi.fn(),
 }));
-const { updateSetMock } = vi.hoisted(() => ({
-  updateSetMock: vi.fn(),
+const { updateAccountRuntimeIdentityMock } = vi.hoisted(() => ({
+  updateAccountRuntimeIdentityMock: vi.fn(),
 }));
 
 vi.mock('../db/index.js', () => ({
-  db: {
-    update: () => ({
-      set: (values: Record<string, unknown>) => {
-        updateSetMock(values);
-        return { where: () => ({ run: () => ({}) }) };
-      },
-    }),
-  },
   schema: { accounts: { id: 'id' } },
+}));
+
+vi.mock('./accountRuntimeIdentityMutationService.js', () => ({
+  updateAccountRuntimeIdentity: (...args: unknown[]) => updateAccountRuntimeIdentityMock(...args),
 }));
 
 vi.mock('./platforms/index.js', () => ({
@@ -36,7 +32,8 @@ describe('accountAutoReloginService', () => {
   beforeEach(() => {
     getAdapterMock.mockReset();
     decryptAccountPasswordMock.mockReset();
-    updateSetMock.mockReset();
+    updateAccountRuntimeIdentityMock.mockReset();
+    updateAccountRuntimeIdentityMock.mockResolvedValue(undefined);
   });
 
   it('refreshes the persisted session from the encrypted password credential', async () => {
@@ -60,7 +57,7 @@ describe('accountAutoReloginService', () => {
     })).resolves.toEqual({ credential: 'fresh-session', credentialKind: 'access_token' });
 
     expect(login).toHaveBeenCalledWith('https://newapi.example.com', 'alice', 'plain-password');
-    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(updateAccountRuntimeIdentityMock).toHaveBeenCalledWith(4, expect.objectContaining({
       credential: 'fresh-session',
       credentialMode: 'session',
       credentialKind: 'access_token',
@@ -91,7 +88,7 @@ describe('accountAutoReloginService', () => {
       url: 'https://newapi.example.com',
     });
 
-    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(updateAccountRuntimeIdentityMock).toHaveBeenCalledWith(4, expect.objectContaining({
       credential: 'session=cookie-value',
       credentialKind: 'session_cookie',
     }));
@@ -130,7 +127,7 @@ describe('accountAutoReloginService', () => {
 
     expect(getAdapterMock).not.toHaveBeenCalled();
     expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
-    expect(updateSetMock).not.toHaveBeenCalled();
+    expect(updateAccountRuntimeIdentityMock).not.toHaveBeenCalled();
   });
 
   it('does not convert a legacy OAuth account identified only in extraConfig', async () => {
@@ -148,7 +145,7 @@ describe('accountAutoReloginService', () => {
 
     expect(getAdapterMock).not.toHaveBeenCalled();
     expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
-    expect(updateSetMock).not.toHaveBeenCalled();
+    expect(updateAccountRuntimeIdentityMock).not.toHaveBeenCalled();
   });
 
   it('does not auto-relogin through an adapter without Session support', async () => {
@@ -169,6 +166,6 @@ describe('accountAutoReloginService', () => {
     })).resolves.toBeNull();
 
     expect(decryptAccountPasswordMock).not.toHaveBeenCalled();
-    expect(updateSetMock).not.toHaveBeenCalled();
+    expect(updateAccountRuntimeIdentityMock).not.toHaveBeenCalled();
   });
 });
