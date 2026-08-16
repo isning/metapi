@@ -105,4 +105,26 @@ describe('backup account credential migration', () => {
 
     expect(JSON.parse(migrated.account.extraConfig || '{}')).toEqual({ keep: true });
   });
+
+  it('normalizes legacy Sub2API refresh credentials and expiration into sub2apiAuth', () => {
+    const migrated = migrateImportedAccountCredential({
+      id: 12,
+      siteId: 2,
+      credentialMode: 'session',
+      credential: 'access-token',
+      refresh_token: 'legacy-refresh-token',
+      token_expires_at: 1760000000000,
+      extraConfig: JSON.stringify({ keep: true }),
+    });
+
+    expect(JSON.parse(migrated.account.extraConfig || '{}')).toEqual({
+      keep: true,
+      sub2apiAuth: {
+        refreshToken: 'legacy-refresh-token',
+        tokenExpiresAt: 1760000000000,
+      },
+    });
+    expect(migrated.account).not.toHaveProperty('refresh_token');
+    expect(migrated.account).not.toHaveProperty('token_expires_at');
+  });
 });

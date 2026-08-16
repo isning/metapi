@@ -59,7 +59,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     {
       key: 'sub2apiAuth.tokenExpiresAt',
       labelI18nKey: 'pages.accounts.tokenExpires',
-      commentI18nKey: 'pages.accounts.configurationRefreshTokenMetapiJwtExpired401',
+      commentI18nKey: 'pages.accounts.tokenExpiresComment',
       inputType: 'number',
       storagePath: 'sub2apiAuth.tokenExpiresAt',
     },

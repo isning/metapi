@@ -353,7 +353,8 @@ export const pagesResources = {
       "支持换行、空格、逗号批量粘贴多个 API Key。",
     "pages.accounts.textqcmnqj": "吗？",
     "pages.accounts.tip": "提示",
-    "pages.accounts.tokenExpires": "token_expires_at（可选）",
+    "pages.accounts.tokenExpires": "Access Token 过期时间（Unix 毫秒时间戳，可选）",
+    "pages.accounts.tokenExpiresComment": "填写 Access Token 的过期时间；使用 Unix 毫秒时间戳，仅用于续期判断，不是 refresh_token 的过期时间。",
     "pages.accounts.tokenExpiresSecondstime":
       "token_expires_at（可选，毫秒时间戳）",
     "pages.accounts.tokenInvalid": "Token 无效",
@@ -4270,7 +4271,8 @@ export const pagesResources = {
       "You can paste multiple API Keys separated by newlines, spaces, or commas.",
     "pages.accounts.textqcmnqj": "?",
     "pages.accounts.tip": "Tip",
-    "pages.accounts.tokenExpires": "token_expires_at (optional)",
+    "pages.accounts.tokenExpires": "Access Token expiration (Unix milliseconds, optional)",
+    "pages.accounts.tokenExpiresComment": "Enter the Access Token expiration as a Unix millisecond timestamp. It is used only for renewal checks, not as the refresh_token expiration.",
     "pages.accounts.tokenExpiresSecondstime":
       "token_expires_at (optional, millisecond timestamp)",
     "pages.accounts.tokenInvalid": "Token is invalid",
