@@ -13,6 +13,9 @@ describe('siteApiEndpointService', () => {
   let selectSiteApiEndpointTarget: SiteApiEndpointServiceModule['selectSiteApiEndpointTarget'];
   let recordSiteApiEndpointFailure: SiteApiEndpointServiceModule['recordSiteApiEndpointFailure'];
   let recordSiteApiEndpointSuccess: SiteApiEndpointServiceModule['recordSiteApiEndpointSuccess'];
+  let runWithSiteApiEndpointPool: SiteApiEndpointServiceModule['runWithSiteApiEndpointPool'];
+  let SiteApiEndpointPoolUnavailableError: SiteApiEndpointServiceModule['SiteApiEndpointPoolUnavailableError'];
+  let SiteApiEndpointRequestError: SiteApiEndpointServiceModule['SiteApiEndpointRequestError'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -28,6 +31,9 @@ describe('siteApiEndpointService', () => {
     selectSiteApiEndpointTarget = serviceModule.selectSiteApiEndpointTarget;
     recordSiteApiEndpointFailure = serviceModule.recordSiteApiEndpointFailure;
     recordSiteApiEndpointSuccess = serviceModule.recordSiteApiEndpointSuccess;
+    runWithSiteApiEndpointPool = serviceModule.runWithSiteApiEndpointPool;
+    SiteApiEndpointPoolUnavailableError = serviceModule.SiteApiEndpointPoolUnavailableError;
+    SiteApiEndpointRequestError = serviceModule.SiteApiEndpointRequestError;
   });
 
   beforeEach(async () => {
@@ -205,6 +211,40 @@ describe('siteApiEndpointService', () => {
     expect(selected).toBeNull();
   });
 
+  it('preserves endpoint-pool cooldown details when no upstream request can start', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'cooling-pool-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-cooling.example.com',
+      enabled: true,
+      cooldownUntil: '2999-03-31T12:05:00.000Z',
+      lastFailureReason: 'HTTP 502: fetch failed',
+    }).run();
+
+    await expect(runWithSiteApiEndpointPool(site, async () => 'unreachable'))
+      .rejects.toMatchObject({
+        name: 'SiteApiEndpointPoolUnavailableError',
+        details: {
+          reason: 'all_endpoints_cooling_down',
+          configuredEndpointCount: 1,
+          enabledEndpointCount: 1,
+          coolingDownEndpointCount: 1,
+          nextAvailableAt: '2999-03-31T12:05:00.000Z',
+          endpointFailures: [expect.objectContaining({
+            url: 'https://api-cooling.example.com',
+            enabled: true,
+            lastFailureReason: 'HTTP 502: fetch failed',
+          })],
+        },
+      });
+    expect(SiteApiEndpointPoolUnavailableError).toBeTypeOf('function');
+  });
+
   it('records retryable failures with a 5-minute cooldown', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'retryable-site',
@@ -226,7 +266,7 @@ describe('siteApiEndpointService', () => {
     }, '2026-03-31T12:00:00.000Z');
 
     expect(result).toMatchObject({
-      retryable: true,
+      cooldownAddress: true,
       rotateToNextEndpoint: true,
       cooldownUntil: '2026-03-31T12:05:00.000Z',
       failureReason: 'HTTP 502: Bad gateway',
@@ -262,14 +302,14 @@ describe('siteApiEndpointService', () => {
     }, '2026-03-31T12:00:00.000Z');
 
     expect(result).toMatchObject({
-      retryable: true,
+      cooldownAddress: true,
       rotateToNextEndpoint: true,
       cooldownUntil: '2026-03-31T12:05:00.000Z',
       failureReason: 'HTTP 502: upstream temporarily unavailable',
     });
   });
 
-  it('records auth and validation failures without triggering cooldown rotation', async () => {
+  it('keeps auth and validation failures out of address health state', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'non-retryable-site',
       url: 'https://panel.example.com',
@@ -291,7 +331,7 @@ describe('siteApiEndpointService', () => {
     }, '2026-03-31T12:00:00.000Z');
 
     expect(result).toMatchObject({
-      retryable: false,
+      cooldownAddress: false,
       rotateToNextEndpoint: false,
       cooldownUntil: null,
       failureReason: 'HTTP 401: Invalid token',
@@ -301,10 +341,228 @@ describe('siteApiEndpointService', () => {
       .where(eq(schema.siteApiEndpoints.id, endpoint.id))
       .get();
     expect(stored).toMatchObject({
-      cooldownUntil: null,
-      lastFailedAt: '2026-03-31T12:00:00.000Z',
-      lastFailureReason: 'HTTP 401: Invalid token',
+      cooldownUntil: '2026-03-31T11:00:00.000Z',
+      lastFailedAt: null,
+      lastFailureReason: null,
     });
+  });
+
+  it('treats HTTP 408 as an address-level transport failure', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'request-timeout-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-timeout.example.com',
+      enabled: true,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 408,
+      message: 'Request timeout',
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      failureClass: 'transport',
+      cooldownAddress: true,
+      rotateToNextEndpoint: true,
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+    });
+  });
+
+  it('does not let a concurrent non-address failure clear an active address cooldown', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'concurrent-failure-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-concurrent.example.com',
+      enabled: true,
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+    }).returning().get();
+
+    await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 401,
+      message: 'Invalid token',
+    }, '2026-03-31T12:00:00.000Z');
+
+    const stored = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id))
+      .get();
+    expect(stored).toMatchObject({
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+      lastFailedAt: null,
+      lastFailureReason: null,
+    });
+  });
+
+  it('does not let a concurrent rotation-only failure replace an active cooldown reason', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'concurrent-rotation-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-concurrent-rotation.example.com',
+      enabled: true,
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+      lastFailedAt: '2026-03-31T11:59:59.000Z',
+      lastFailureReason: 'HTTP 502: Bad gateway',
+    }).returning().get();
+
+    await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 429,
+      message: 'Too many requests',
+    }, '2026-03-31T12:00:00.000Z');
+
+    const stored = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id))
+      .get();
+    expect(stored).toMatchObject({
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+      lastFailedAt: '2026-03-31T11:59:59.000Z',
+      lastFailureReason: 'HTTP 502: Bad gateway',
+    });
+  });
+
+  it('keeps model and channel failures out of the site address cooldown even when upstream wraps them in a 5xx', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'model-failure-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-model-failure.example.com',
+      enabled: true,
+    }).returning().get();
+    const error = new SiteApiEndpointRequestError('upstream unavailable', {
+      status: 503,
+      rawErrText: '{"error":{"code":"get_channel_failed","message":"model capacity exhausted"}}',
+    });
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: error.status,
+      message: error.message,
+      error,
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      failureClass: 'model_or_channel',
+      cooldownAddress: false,
+      rotateToNextEndpoint: false,
+      cooldownUntil: null,
+    });
+  });
+
+  it('rotates a rate-limited request without cooling the address by default', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'rate-limit-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-rate-limit.example.com',
+      enabled: true,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 429,
+      message: 'Too many requests',
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      failureClass: 'rate_limit',
+      cooldownAddress: false,
+      rotateToNextEndpoint: true,
+      cooldownUntil: null,
+    });
+
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-rate-limit-fallback.example.com',
+      enabled: true,
+      sortOrder: 1,
+    }).run();
+    let calls = 0;
+    const selectedUrl = await runWithSiteApiEndpointPool(site, async (target) => {
+      calls += 1;
+      if (calls === 1) throw new SiteApiEndpointRequestError('Too many requests', { status: 429 });
+      return target.baseUrl;
+    });
+    expect(calls).toBe(2);
+    expect(selectedUrl).toBe('https://api-rate-limit-fallback.example.com');
+  });
+
+  it('uses a configured rate-limit policy to cool an address for its configured duration', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'custom-rate-limit-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-custom-rate-limit.example.com',
+      enabled: true,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 429,
+      message: 'Too many requests',
+    }, '2026-03-31T12:00:00.000Z', {
+      policyOverride: { mode: 'custom', policy: { cooldownSec: 75, cooldownOn: ['rate_limit'] } },
+    });
+
+    expect(result).toMatchObject({
+      failureClass: 'rate_limit',
+      cooldownAddress: true,
+      rotateToNextEndpoint: true,
+      cooldownUntil: '2026-03-31T12:01:15.000Z',
+    });
+  });
+
+  it('applies the stored site override when rotating a pooled request', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'stored-policy-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      apiEndpointBackoffPolicy: JSON.stringify({
+        mode: 'custom',
+        policy: { cooldownSec: 75, cooldownOn: ['rate_limit'] },
+      }),
+    }).returning().get();
+    const endpoints = await db.insert(schema.siteApiEndpoints).values([
+      { siteId: site.id, url: 'https://api-primary.example.com', enabled: true, sortOrder: 0 },
+      { siteId: site.id, url: 'https://api-fallback.example.com', enabled: true, sortOrder: 1 },
+    ]).returning().all();
+    let calls = 0;
+
+    const result = await runWithSiteApiEndpointPool(site, async (target) => {
+      calls += 1;
+      if (calls === 1) {
+        throw new SiteApiEndpointRequestError('Too many requests', { status: 429 });
+      }
+      return target.baseUrl;
+    });
+
+    expect(result).toBe('https://api-fallback.example.com');
+    const first = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoints[0]!.id))
+      .get();
+    expect(first?.cooldownUntil).toBeTruthy();
   });
 
   it('clears cooldown metadata and updates lastSelectedAt after a recorded success', async () => {

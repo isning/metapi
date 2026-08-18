@@ -486,6 +486,103 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
   });
 
+  it('reuses one in-flight account refresh for concurrent callers', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    getModelsMock.mockImplementation(async () => {
+      await gate;
+      return ['gpt-5.6', 'gpt-5.6-terra'];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-concurrent-account-refresh',
+      url: 'https://site-concurrent-account-refresh.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'concurrent-account-refresh-user',
+      credential: 'management-credential',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-concurrent-account-refresh',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).run();
+
+    const firstRefresh = refreshModelsForAccount(account.id);
+    const secondRefresh = refreshModelsForAccount(account.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseGate?.();
+
+    const [firstResult, secondResult] = await Promise.all([firstRefresh, secondRefresh]);
+    expect(firstResult).toEqual(secondResult);
+    expect(getModelsMock).toHaveBeenCalledTimes(1);
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName).sort()).toEqual(['gpt-5.6', 'gpt-5.6-terra']);
+  });
+
+  it('upserts account availability when another writer inserts the same model during discovery', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-model-availability-race',
+      url: 'https://site-model-availability-race.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'model-availability-race-user',
+      credential: 'management-credential',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-model-availability-race',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).run();
+
+    getModelsMock.mockImplementationOnce(async () => {
+      await db.insert(schema.modelAvailability).values({
+        accountId: account.id,
+        modelName: 'gpt-5.6',
+        available: false,
+        latencyMs: null,
+        checkedAt: '2026-01-01T00:00:00.000Z',
+      }).run();
+      return ['gpt-5.6'];
+    });
+
+    await expect(refreshModelsForAccount(account.id)).resolves.toMatchObject({
+      refreshed: true,
+      modelCount: 1,
+    });
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ modelName: 'gpt-5.6', available: true });
+  });
+
   it('updates existing token model availability rows during refresh and rebuild', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (context) => (

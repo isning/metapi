@@ -12,6 +12,7 @@ import { createManagedRouteGraphElementId } from '../../shared/routingIdentity.j
 
 export type RouteGraphExecutionTargetEndpointInput = {
   id: number;
+  sourceRef?: string;
   upstreamModelName: string;
   enabled: boolean;
 };
@@ -186,6 +187,7 @@ function supplyEndpointForTargets(
           kind: 'execution_target' as const,
           executionTargetId: target.id,
         },
+        ...(text(target.sourceRef) ? { executionTargetSourceRef: text(target.sourceRef) } : {}),
       })),
       targetSelection: authoring.targetSelection
         || { kind: 'builtin', builtin: 'stable_first' },
@@ -273,6 +275,9 @@ export function ensureRouteGraphExecutionTargetsEndpoint(
               kind: 'execution_target' as const,
               executionTargetId: target.id,
             },
+            ...(text(target.sourceRef || current?.executionTargetSourceRef)
+              ? { executionTargetSourceRef: text(target.sourceRef || current?.executionTargetSourceRef) }
+              : {}),
           };
         }),
         targetSelection: authoring.targetSelection

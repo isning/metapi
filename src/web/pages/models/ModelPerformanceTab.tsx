@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Activity, Gauge, Server, Timer } from 'lucide-react';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
+import RuntimeIdentifier from '../../components/RuntimeIdentifier.js';
 import SectionHeading from '../../components/details/SectionHeading.js';
 import MetricGrid from '../../components/metrics/MetricGrid.js';
 import MetricTile from '../../components/metrics/MetricTile.js';
@@ -677,7 +678,7 @@ export default function ModelPerformanceTab({
                 {performance.endpoints.map((endpoint) => (
                   <TableRow key={endpoint.endpointId}>
                     <TableCell>
-                      <div className="font-mono text-xs">{endpoint.endpointId}</div>
+                      <RuntimeIdentifier value={endpoint.endpointId} kind="route-endpoint" />
                       <div className="mt-1 text-xs text-muted-foreground">
                         {[endpoint.label, endpoint.site?.name, endpoint.account?.label].filter(Boolean).join(' · ') || endpoint.actualModel || 'N/A'}
                       </div>
@@ -714,8 +715,8 @@ export default function ModelPerformanceTab({
                 {performance.attempts.map((attempt) => (
                   <TableRow key={attempt.executionAttemptId}>
                     <TableCell>
-                      <div className="font-mono text-xs">{attempt.executionAttemptId}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{attempt.endpointId}</div>
+                      <RuntimeIdentifier value={attempt.executionAttemptId} kind="execution-attempt" />
+                      <div className="mt-1"><RuntimeIdentifier value={attempt.endpointId} kind="route-endpoint" /></div>
                     </TableCell>
                     <TableCell>{attempt.enabled === false ? tr('components.modelRouteFlow.inactive') : tr('components.modelRouteFlow.active')}</TableCell>
                     <TableCell>{formatSuccessRate(attempt.health.successRate)}</TableCell>

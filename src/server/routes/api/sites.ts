@@ -32,6 +32,7 @@ import {
 import { valueWalletBalanceInBaseUnit } from '../../services/walletBalanceValuationService.js';
 import { emitInboxItem } from '../../services/inboxService.js';
 import { retireSiteFromRouting } from '../../services/accountRetirementService.js';
+import { normalizeSiteApiEndpointBackoffOverride } from '../../../shared/siteApiEndpointBackoff.js';
 
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
@@ -70,6 +71,28 @@ function normalizeGlobalWeight(input: unknown): number | null {
   const parsed = Number(input);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.max(0.01, Math.min(100, Number(parsed.toFixed(3))));
+}
+
+function normalizeSiteApiEndpointBackoffOverrideInput(input: unknown): {
+  valid: boolean;
+  present: boolean;
+  value: string | null;
+} {
+  if (input === undefined) return { valid: true, present: false, value: null };
+  if (input === null) return { valid: true, present: true, value: null };
+  const override = normalizeSiteApiEndpointBackoffOverride(input);
+  return override
+    ? { valid: true, present: true, value: JSON.stringify(override) }
+    : { valid: false, present: true, value: null };
+}
+
+function readStoredSiteApiEndpointBackoffOverride(input: unknown) {
+  if (typeof input !== 'string' || !input.trim()) return null;
+  try {
+    return normalizeSiteApiEndpointBackoffOverride(JSON.parse(input));
+  } catch {
+    return null;
+  }
 }
 
 function normalizeOptionalExternalCheckinUrl(input: unknown): {
@@ -449,12 +472,16 @@ async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
   return bySiteId;
 }
 
-async function attachSiteApiEndpoints<T extends { id: number }>(siteRows: T[]) {
+async function attachSiteApiEndpoints<T extends { id: number; apiEndpointBackoffPolicy?: string | null }>(siteRows: T[]) {
   const bySiteId = await loadSiteApiEndpointsBySiteIds(siteRows.map((row) => row.id));
-  return siteRows.map((row) => ({
-    ...row,
-    apiEndpoints: bySiteId.get(row.id) || [],
-  }));
+  return siteRows.map((row) => {
+    const { apiEndpointBackoffPolicy, ...publicRow } = row;
+    return {
+      ...publicRow,
+      apiEndpointBackoff: readStoredSiteApiEndpointBackoffOverride(apiEndpointBackoffPolicy),
+      apiEndpoints: bySiteId.get(row.id) || [],
+    };
+  });
 }
 
 async function loadSiteWithApiEndpoints(siteId: number) {
@@ -723,6 +750,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       sortOrder,
       globalWeight,
       apiEndpoints,
+      apiEndpointBackoff,
     } = createBody;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
@@ -731,6 +759,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedUseSystemProxy = normalizeUseSystemProxyFlag(useSystemProxy);
     if (useSystemProxy !== undefined && normalizedUseSystemProxy === null) {
       return reply.code(400).send({ error: 'Invalid useSystemProxy value. Expected boolean.' });
+    }
+    const normalizedApiEndpointBackoff = normalizeSiteApiEndpointBackoffOverrideInput(apiEndpointBackoff);
+    if (!normalizedApiEndpointBackoff.valid) {
+      return reply.code(400).send({ error: 'Invalid apiEndpointBackoff.' });
     }
     const normalizedProxyUrl = parseSiteProxyUrlInput(proxyUrl);
     if (!normalizedProxyUrl.valid) {
@@ -815,6 +847,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           isPinned: normalizedPinned ?? false,
           sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
           globalWeight: normalizedGlobalWeight ?? 1,
+          apiEndpointBackoffPolicy: normalizedApiEndpointBackoff.value,
         }).run();
         const siteId = getInsertedRowId(siteInsert);
         if (siteId && normalizedApiEndpoints.present && normalizedApiEndpoints.apiEndpoints.length > 0) {
@@ -898,6 +931,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
+    const normalizedApiEndpointBackoff = normalizeSiteApiEndpointBackoffOverrideInput(body.apiEndpointBackoff);
+    if (!normalizedApiEndpointBackoff.valid) {
+      return reply.code(400).send({ error: 'Invalid apiEndpointBackoff.' });
+    }
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(body.customHeaders);
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
@@ -944,6 +981,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
+    if (normalizedApiEndpointBackoff.present) updates.apiEndpointBackoffPolicy = normalizedApiEndpointBackoff.value;
     updates.updatedAt = new Date().toISOString();
     try {
       await db.transaction(async (tx: SiteRouteDbTransaction) => {

@@ -61,6 +61,10 @@ let inFlightRefreshModelsAndRebuildRoutes: Promise<{
   refresh: ModelRefreshResult[];
   rebuild: Awaited<ReturnType<typeof rebuildManagedRouteGroupsFromAvailability>>;
 }> | null = null;
+const inFlightAccountModelRefreshes = new Map<number, {
+  allowInactive: boolean;
+  promise: Promise<ModelRefreshResult>;
+}>();
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
 type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
@@ -262,6 +266,40 @@ async function discoverModelsViaCatalogOrAdapter(input: {
 }
 
 type TokenModelAvailabilityInsert = Omit<typeof schema.tokenModelAvailability.$inferInsert, 'id'>;
+type ModelAvailabilityInsert = Omit<typeof schema.modelAvailability.$inferInsert, 'id'>;
+
+async function upsertModelAvailabilityRows(rows: ModelAvailabilityInsert[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  if (runtimeDbDialect === 'mysql') {
+    for (const row of rows) {
+      await (db.insert(schema.modelAvailability).values(row) as any)
+        .onDuplicateKeyUpdate({
+          set: {
+            available: row.available,
+            latencyMs: row.latencyMs,
+            checkedAt: row.checkedAt,
+          },
+        })
+        .run();
+    }
+    return;
+  }
+
+  await (db.insert(schema.modelAvailability).values(rows) as any)
+    .onConflictDoUpdate({
+      target: [
+        schema.modelAvailability.accountId,
+        schema.modelAvailability.modelName,
+      ],
+      set: {
+        available: sql`excluded.available`,
+        latencyMs: sql`excluded.latency_ms`,
+        checkedAt: sql`excluded.checked_at`,
+      },
+    })
+    .run();
+}
 
 async function upsertTokenModelAvailabilityRows(rows: TokenModelAvailabilityInsert[]): Promise<void> {
   if (rows.length === 0) return;
@@ -481,6 +519,27 @@ export async function refreshModelsForAccount(
   accountId: number,
   options?: { allowInactive?: boolean },
 ): Promise<ModelRefreshResult> {
+  const allowInactive = options?.allowInactive === true;
+  const existing = inFlightAccountModelRefreshes.get(accountId);
+  if (existing) {
+    if (existing.allowInactive === allowInactive) return existing.promise;
+    await existing.promise.catch(() => undefined);
+    return refreshModelsForAccount(accountId, options);
+  }
+
+  const promise = refreshModelsForAccountOnce(accountId, options).finally(() => {
+    if (inFlightAccountModelRefreshes.get(accountId)?.promise === promise) {
+      inFlightAccountModelRefreshes.delete(accountId);
+    }
+  });
+  inFlightAccountModelRefreshes.set(accountId, { allowInactive, promise });
+  return promise;
+}
+
+async function refreshModelsForAccountOnce(
+  accountId: number,
+  options?: { allowInactive?: boolean },
+): Promise<ModelRefreshResult> {
   const row = await db.select().from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(eq(schema.accounts.id, accountId))
@@ -537,9 +596,9 @@ export async function refreshModelsForAccount(
     if (!restoreAvailabilityOnFailure) return;
     await clearExistingAvailability();
     if (previousModelAvailability.length > 0) {
-      await db.insert(schema.modelAvailability).values(
+      await upsertModelAvailabilityRows(
         previousModelAvailability.map(({ id: _id, ...row }) => row),
-      ).run();
+      );
     }
     if (previousTokenModelAvailability.length > 0) {
       await upsertTokenModelAvailabilityRows(
@@ -591,7 +650,7 @@ export async function refreshModelsForAccount(
 
       const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newCodexModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
+        await upsertModelAvailabilityRows(
           newCodexModels.map((modelName) => ({
             accountId,
             modelName,
@@ -599,7 +658,7 @@ export async function refreshModelsForAccount(
             latencyMs: Date.now() - startedAt,
             checkedAt,
           })),
-        ).run();
+        );
       }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
@@ -659,7 +718,7 @@ export async function refreshModelsForAccount(
       }
       const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newClaudeModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
+        await upsertModelAvailabilityRows(
           newClaudeModels.map((modelName) => ({
             accountId,
             modelName,
@@ -667,7 +726,7 @@ export async function refreshModelsForAccount(
             latencyMs: Date.now() - startedAt,
             checkedAt,
           })),
-        ).run();
+        );
       }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
@@ -741,7 +800,7 @@ export async function refreshModelsForAccount(
       }
       const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newGeminiModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
+        await upsertModelAvailabilityRows(
           newGeminiModels.map((modelName) => ({
             accountId,
             modelName,
@@ -749,7 +808,7 @@ export async function refreshModelsForAccount(
             latencyMs: Date.now() - startedAt,
             checkedAt,
           })),
-        ).run();
+        );
       }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
@@ -809,7 +868,7 @@ export async function refreshModelsForAccount(
 
       const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newAntigravityModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
+        await upsertModelAvailabilityRows(
           newAntigravityModels.map((modelName) => ({
             accountId,
             modelName,
@@ -817,7 +876,7 @@ export async function refreshModelsForAccount(
             latencyMs: Date.now() - startedAt,
             checkedAt,
           })),
-        ).run();
+        );
       }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
@@ -997,7 +1056,7 @@ export async function refreshModelsForAccount(
   const checkedAt = new Date().toISOString();
   const newAccountModels = Array.from(accountModels.values()).filter((m) => !manualModelNames.has(m.toLowerCase()));
   if (newAccountModels.length > 0) {
-    await db.insert(schema.modelAvailability).values(
+    await upsertModelAvailabilityRows(
       newAccountModels.map((modelName) => ({
         accountId: account.id,
         modelName,
@@ -1005,7 +1064,7 @@ export async function refreshModelsForAccount(
         latencyMs: modelLatency.get(modelName.toLowerCase()) ?? null,
         checkedAt,
       })),
-    ).run();
+    );
   }
 
   const modelsPreview = Array.from(accountModels.values()).slice(0, 10);

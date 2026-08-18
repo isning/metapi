@@ -120,6 +120,7 @@ type SiteRow = {
   globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
+  apiEndpointBackoff?: import('../../shared/siteApiEndpointBackoff.js').SiteApiEndpointBackoffOverride | null;
   totalBalance?: number;
   subscriptionSummary?: SiteSubscriptionSummary | null;
   createdAt?: string;
@@ -908,6 +909,7 @@ export default function Sites() {
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
       apiEndpoints: serializedApiEndpoints.apiEndpoints,
+      apiEndpointBackoff: form.apiEndpointBackoff,
       customHeaders: serializedCustomHeaders.customHeaders,
       compatibilityPolicy: serializedCompatibilityPolicy.policy,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
@@ -1711,6 +1713,87 @@ export default function Sites() {
                 </div>
               </ConfigSectionItem>
             ))}
+          </ConfigSection>
+          <ConfigSection
+            title={tr('pages.sites.apiEndpointBackoff')}
+            description={tr('pages.sites.apiEndpointBackoffHint')}
+          >
+            <ConfigSectionItem className="grid gap-3">
+              <ModernSelect
+                value={form.apiEndpointBackoff?.mode || 'inherit'}
+                onChange={(mode) => setForm((previous) => ({
+                  ...previous,
+                  apiEndpointBackoff: mode === 'disabled'
+                    ? { mode: 'disabled' }
+                    : mode === 'custom'
+                      ? { mode: 'custom', policy: { cooldownSec: 300, cooldownOn: ['transport', 'gateway'] } }
+                      : null,
+                }))}
+                options={[
+                  { value: 'inherit', label: tr('pages.sites.apiEndpointBackoffInherit') },
+                  { value: 'custom', label: tr('pages.sites.apiEndpointBackoffCustom') },
+                  { value: 'disabled', label: tr('pages.sites.apiEndpointBackoffDisabled') },
+                ]}
+                size="sm"
+              />
+              {form.apiEndpointBackoff?.mode === 'custom' ? (
+                <>
+                  <label className="grid gap-1.5 text-sm">
+                    <span>{tr('pages.sites.apiEndpointBackoffCooldown')}</span>
+                    <Input
+                      className="max-w-40"
+                      type="number"
+                      min={1}
+                      max={86400}
+                      step={1}
+                      value={form.apiEndpointBackoff.policy.cooldownSec}
+                      onChange={(event) => {
+                        const cooldownSec = Number(event.target.value);
+                        if (!Number.isFinite(cooldownSec)) return;
+                        setForm((previous) => previous.apiEndpointBackoff?.mode === 'custom' ? {
+                          ...previous,
+                          apiEndpointBackoff: {
+                            mode: 'custom',
+                            policy: {
+                              ...previous.apiEndpointBackoff.policy,
+                              cooldownSec: Math.max(1, Math.min(86400, Math.trunc(cooldownSec))),
+                            },
+                          },
+                        } : previous);
+                      }}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-x-5 gap-y-2">
+                    {([
+                      ['transport', 'pages.settings.apiEndpointBackoffTransport'],
+                      ['gateway', 'pages.settings.apiEndpointBackoffGateway'],
+                      ['rate_limit', 'pages.settings.apiEndpointBackoffRateLimit'],
+                      ['upstream_server', 'pages.settings.apiEndpointBackoffUpstreamServer'],
+                    ] as const).map(([failureClass, label]) => (
+                      <label key={failureClass} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={form.apiEndpointBackoff?.mode === 'custom'
+                            && form.apiEndpointBackoff.policy.cooldownOn.includes(failureClass)}
+                          onCheckedChange={(checked) => setForm((previous) => previous.apiEndpointBackoff?.mode === 'custom' ? {
+                            ...previous,
+                            apiEndpointBackoff: {
+                              mode: 'custom',
+                              policy: {
+                                ...previous.apiEndpointBackoff.policy,
+                                cooldownOn: checked === true
+                                  ? [...new Set([...previous.apiEndpointBackoff.policy.cooldownOn, failureClass])]
+                                  : previous.apiEndpointBackoff.policy.cooldownOn.filter((item) => item !== failureClass),
+                              },
+                            },
+                          } : previous)}
+                        />
+                        {tr(label)}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </ConfigSectionItem>
           </ConfigSection>
           <ConfigSection
             title={tr('pages.sites.sitescustomRequest')}

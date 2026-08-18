@@ -4,10 +4,14 @@ import { Readable } from 'node:stream';
 import { fetch } from 'undici';
 import { config, normalizeRouteFailureCooldownMaxSec, normalizeRouteRuntimeCacheTtlMs } from '../../config.js';
 import { DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY, normalizeRouteFailureBackoffOverride, normalizeRouteFailureBackoffPolicy, type RouteFailureBackoffOverride } from '../../../shared/routeGraph.js';
+import { normalizeGlobalRouteAffinityPolicy } from '../../../shared/routeAffinity.js';
+import { normalizeSiteApiEndpointBackoffPolicy } from '../../../shared/siteApiEndpointBackoff.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 
 const ROUTE_FAILURE_BACKOFF_SETTING_KEY = 'route_failure_backoff_default_v1';
+const ROUTE_AFFINITY_DEFAULT_SETTING_KEY = 'route_affinity_default_v1';
+const SITE_API_ENDPOINT_BACKOFF_SETTING_KEY = 'site_api_endpoint_backoff_default_v1';
 let routeFailureBackoffDefault: RouteFailureBackoffOverride = { mode: 'custom', policy: DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY };
 
 function normalizeRouteFailureBackoffDefault(value: unknown): RouteFailureBackoffOverride | null {
@@ -70,7 +74,9 @@ import {
 
 
 interface RuntimeSettingsBody {
+  siteApiEndpointBackoffDefault?: unknown;
   routeFailureBackoffDefault?: unknown;
+  routeAffinityDefault?: unknown;
   proxyToken?: string;
   systemProxyUrl?: string;
   modelAvailabilityProbeEnabled?: boolean;
@@ -965,6 +971,15 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       routeFailureBackoffDefault = normalized;
       return;
     }
+    case ROUTE_AFFINITY_DEFAULT_SETTING_KEY: {
+      config.routeAffinityDefault = normalizeGlobalRouteAffinityPolicy(value);
+      return;
+    }
+    case SITE_API_ENDPOINT_BACKOFF_SETTING_KEY: {
+      const normalized = normalizeSiteApiEndpointBackoffPolicy(value);
+      if (normalized) config.siteApiEndpointBackoffDefault = normalized;
+      return;
+    }
     default:
       return;
   }
@@ -998,7 +1013,9 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     routeFailureCooldownMaxSec: config.routeFailureCooldownMaxSec,
+    siteApiEndpointBackoffDefault: config.siteApiEndpointBackoffDefault,
     routeFailureBackoffDefault,
+    routeAffinityDefault: config.routeAffinityDefault,
     routeRuntimeCacheTtlMs: config.routeRuntimeCacheTtlMs,
     dispatchPolicyRegistry: config.dispatchPolicyRegistry,
     webhookUrl: config.webhookUrl,
@@ -1991,6 +2008,41 @@ export async function settingsRoutes(app: FastifyInstance) {
       await upsertSetting(ROUTE_FAILURE_BACKOFF_SETTING_KEY, normalized);
       routeFailureBackoffDefault = normalized;
       changedLabels.push('路由失败退避策略');
+    }
+
+    if (body.siteApiEndpointBackoffDefault !== undefined) {
+      const normalized = normalizeSiteApiEndpointBackoffPolicy(body.siteApiEndpointBackoffDefault);
+      if (!normalized) {
+        return reply.code(400).send({ success: false, message: 'API 地址退避策略无效：冷却秒数与失败类别不合法' });
+      }
+      await upsertSetting(SITE_API_ENDPOINT_BACKOFF_SETTING_KEY, normalized);
+      config.siteApiEndpointBackoffDefault = normalized;
+      changedLabels.push('API 地址退避策略');
+    }
+
+    if (body.routeAffinityDefault !== undefined) {
+      const previous = config.routeAffinityDefault;
+      const normalized = normalizeGlobalRouteAffinityPolicy(body.routeAffinityDefault);
+      config.routeAffinityDefault = normalized;
+      try {
+        const { getActiveRouteGraphSourceVersion, publishRouteGraphSource } = await import('../../services/routeGraphService.js');
+        const active = await getActiveRouteGraphSourceVersion();
+        if (active) {
+          const published = await publishRouteGraphSource({
+            sourceGraph: active.sourceGraph,
+            createdBy: 'settings:route-affinity-default',
+          });
+          if (!published.ok) {
+            config.routeAffinityDefault = previous;
+            return reply.code(400).send({ success: false, message: 'Affinity 默认策略无法应用到当前路由图', diagnostics: published.diagnostics });
+          }
+        }
+        await upsertSetting(ROUTE_AFFINITY_DEFAULT_SETTING_KEY, normalized);
+        changedLabels.push('会话 Affinity 默认策略');
+      } catch (error) {
+        config.routeAffinityDefault = previous;
+        throw error;
+      }
     }
 
     if (body.routeRuntimeCacheTtlMs !== undefined) {

@@ -67,6 +67,7 @@ describe('settings and auth events', () => {
     config.routingFallbackUnitCost = 1;
     (config as any).proxyFirstByteTimeoutSec = 0;
     (config as any).routeFailureCooldownMaxSec = 30 * 24 * 60 * 60;
+    config.routeAffinityDefault = { kind: 'disabled' };
     (config as any).disableCrossProtocolFallback = false;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
@@ -126,6 +127,36 @@ describe('settings and auth events', () => {
     const savedInterval = await db.select().from(schema.settings).where(eq(schema.settings.key, 'checkin_interval_hours')).get();
     expect(savedMode?.value).toBe(JSON.stringify('interval'));
     expect(savedInterval?.value).toBe(JSON.stringify(8));
+  });
+
+  it('persists and returns the graph-native global affinity default', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        routeAffinityDefault: {
+          kind: 'target',
+          ttlSec: 900,
+          crossTargetFallback: 'temporary',
+        },
+      },
+    });
+    expect(updateResponse.statusCode).toBe(200);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'route_affinity_default_v1')).get();
+    expect(saved?.value).toBe(JSON.stringify({
+      kind: 'target',
+      ttlSec: 900,
+      crossTargetFallback: 'temporary',
+    }));
+
+    const readResponse = await app.inject({ method: 'GET', url: '/api/settings/runtime' });
+    expect(readResponse.statusCode).toBe(200);
+    expect(readResponse.json().routeAffinityDefault).toEqual({
+      kind: 'target',
+      ttlSec: 900,
+      crossTargetFallback: 'temporary',
+    });
   });
 
   it('persists codex upstream websocket and session lease settings from runtime settings', async () => {
@@ -468,6 +499,26 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { routeFailureCooldownMaxSec?: number };
     expect(runtime.routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+  });
+
+  it('persists and returns the API endpoint backoff default', async () => {
+    const policy = {
+      cooldownSec: 90,
+      cooldownOn: ['transport', 'gateway', 'rate_limit'],
+    };
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: { siteApiEndpointBackoffDefault: policy },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { siteApiEndpointBackoffDefault?: unknown };
+    expect(updated.siteApiEndpointBackoffDefault).toEqual(policy);
+    const saved = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'site_api_endpoint_backoff_default_v1'))
+      .get();
+    expect(saved?.value).toBe(JSON.stringify(policy));
   });
 
   it('clamps route failure cooldown cap to the supported ceiling', async () => {

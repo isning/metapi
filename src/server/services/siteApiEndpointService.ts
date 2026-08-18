@@ -1,8 +1,16 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { config } from '../config.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import {
+  DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY,
+  normalizeSiteApiEndpointBackoffOverride,
+  resolveSiteApiEndpointBackoffPolicy,
+  type SiteApiEndpointBackoffFailureClass,
+  type SiteApiEndpointBackoffOverride,
+  type SiteApiEndpointBackoffPolicy,
+} from '../../shared/siteApiEndpointBackoff.js';
 
-const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
 const NETWORK_FAILURE_PATTERNS = [
   /network error/i,
@@ -16,7 +24,7 @@ const NETWORK_FAILURE_PATTERNS = [
   ...RETRYABLE_TIMEOUT_PATTERNS,
 ];
 
-export const SITE_API_ENDPOINT_COOLDOWN_MS = 5 * 60 * 1000;
+export const SITE_API_ENDPOINT_COOLDOWN_MS = DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY.cooldownSec * 1000;
 
 type SiteRow = typeof schema.sites.$inferSelect;
 type SiteApiEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
@@ -37,13 +45,44 @@ export interface SiteApiEndpointFailureInput {
 }
 
 export interface SiteApiEndpointFailureDisposition {
-  retryable: boolean;
+  failureClass: SiteApiEndpointBackoffFailureClass | 'model_or_channel' | 'request';
+  cooldownAddress: boolean;
   rotateToNextEndpoint: boolean;
   failureReason: string;
 }
 
 export interface RecordedSiteApiEndpointFailure extends SiteApiEndpointFailureDisposition {
   cooldownUntil: string | null;
+}
+
+export type SiteApiEndpointPoolUnavailableReason =
+  | 'all_endpoints_cooling_down'
+  | 'all_endpoints_disabled'
+  | 'no_eligible_endpoint';
+
+export type SiteApiEndpointPoolUnavailableDetails = {
+  reason: SiteApiEndpointPoolUnavailableReason;
+  configuredEndpointCount: number;
+  enabledEndpointCount: number;
+  coolingDownEndpointCount: number;
+  nextAvailableAt: string | null;
+  endpointFailures: Array<{
+    endpointId: number;
+    url: string;
+    enabled: boolean;
+    cooldownUntil: string | null;
+    lastFailureReason: string | null;
+  }>;
+};
+
+export class SiteApiEndpointPoolUnavailableError extends Error {
+  readonly details: SiteApiEndpointPoolUnavailableDetails;
+
+  constructor(details: SiteApiEndpointPoolUnavailableDetails) {
+    super('当前站点的 API 请求地址均不可用');
+    this.name = 'SiteApiEndpointPoolUnavailableError';
+    this.details = details;
+  }
 }
 
 export class SiteApiEndpointRequestError extends Error {
@@ -99,11 +138,25 @@ function isEndpointCoolingDown(endpoint: SiteApiEndpointRow, nowIso: string): bo
   return !!endpoint.cooldownUntil && endpoint.cooldownUntil > nowIso;
 }
 
+function siteApiEndpointBackoffOverride(site: SiteRow): SiteApiEndpointBackoffOverride | null {
+  if (typeof site.apiEndpointBackoffPolicy !== 'string' || !site.apiEndpointBackoffPolicy.trim()) return null;
+  try {
+    return normalizeSiteApiEndpointBackoffOverride(JSON.parse(site.apiEndpointBackoffPolicy));
+  } catch {
+    return null;
+  }
+}
+
 function extractFailureMessage(input: SiteApiEndpointFailureInput): string {
   const direct = typeof input.message === 'string' ? input.message.trim() : '';
   if (direct) return direct;
   const errorMessage = input.error instanceof Error ? input.error.message.trim() : '';
   return errorMessage;
+}
+
+function extractFailureDetail(input: SiteApiEndpointFailureInput): string {
+  const raw = input.error instanceof SiteApiEndpointRequestError ? input.error.rawErrText : null;
+  return [extractFailureMessage(input), raw].filter(Boolean).join('\n').toLowerCase();
 }
 
 function formatFailureReason(status: number | null, message: string): string {
@@ -126,32 +179,69 @@ function parseStatusFromFailureMessage(message: string): number | null {
 
 export function classifySiteApiEndpointFailure(
   input: SiteApiEndpointFailureInput,
+  policy: SiteApiEndpointBackoffPolicy | null = DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY,
 ): SiteApiEndpointFailureDisposition {
   const message = extractFailureMessage(input);
+  const detail = extractFailureDetail(input);
   const status = typeof input.status === 'number'
     ? input.status
     : parseStatusFromFailureMessage(message);
   const failureReason = formatFailureReason(status, message);
 
+  // A model/channel error can be wrapped by aggregators in a 429/5xx. It must
+  // remain local to the execution target rather than poisoning every model on
+  // this site API address.
+  if (/(?:get_channel_failed|model[_\s-]?(?:not[_\s-]?found|overloaded|unavailable)|(?:model|deployment)[^\n]{0,80}(?:capacity|overload|unavailable|not found|does not exist|unsupported)|(?:capacity|overloaded)[^\n]{0,80}(?:model|deployment)|insufficient[_\s-]?quota)/i.test(detail)) {
+    return { failureClass: 'model_or_channel', cooldownAddress: false, rotateToNextEndpoint: false, failureReason };
+  }
+
+  if (status === 408 || NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return {
+      failureClass: 'transport',
+      cooldownAddress: policy?.cooldownOn.includes('transport') === true,
+      rotateToNextEndpoint: true,
+      failureReason,
+    };
+  }
+
+  if (status === 429 || /\b(rate[ _-]?limit|too many requests)\b/i.test(detail)) {
+    return {
+      failureClass: 'rate_limit',
+      cooldownAddress: policy?.cooldownOn.includes('rate_limit') === true,
+      rotateToNextEndpoint: true,
+      failureReason,
+    };
+  }
+
   if (status !== null) {
-    if (RETRYABLE_STATUS_CODES.has(status)) {
-      return { retryable: true, rotateToNextEndpoint: true, failureReason };
+    if ([502, 503, 504].includes(status)) {
+      return {
+        failureClass: 'gateway',
+        cooldownAddress: policy?.cooldownOn.includes('gateway') === true,
+        rotateToNextEndpoint: true,
+        failureReason,
+      };
+    }
+    if (status >= 500) {
+      return {
+        failureClass: 'upstream_server',
+        cooldownAddress: policy?.cooldownOn.includes('upstream_server') === true,
+        rotateToNextEndpoint: true,
+        failureReason,
+      };
     }
     if (NON_RETRYABLE_STATUS_CODES.has(status)) {
-      return { retryable: false, rotateToNextEndpoint: false, failureReason };
+      return { failureClass: 'request', cooldownAddress: false, rotateToNextEndpoint: false, failureReason };
     }
   }
 
-  if (NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
-    return { retryable: true, rotateToNextEndpoint: true, failureReason };
-  }
-
-  return { retryable: false, rotateToNextEndpoint: false, failureReason };
+  return { failureClass: 'request', cooldownAddress: false, rotateToNextEndpoint: false, failureReason };
 }
 
 export async function selectSiteApiEndpointTarget(
   site: SiteRow,
   now?: string | Date,
+  options?: { excludeEndpointIds?: ReadonlySet<number> },
 ): Promise<SiteApiEndpointTarget | null> {
   const nowIso = toIsoTimestamp(now);
   const endpoints = await db.select().from(schema.siteApiEndpoints)
@@ -171,7 +261,11 @@ export async function selectSiteApiEndpointTarget(
   }
 
   const eligible = endpoints
-    .filter((endpoint) => (endpoint.enabled ?? true) && !isEndpointCoolingDown(endpoint, nowIso))
+    .filter((endpoint) => (
+      (endpoint.enabled ?? true)
+      && !isEndpointCoolingDown(endpoint, nowIso)
+      && !options?.excludeEndpointIds?.has(endpoint.id)
+    ))
     .sort((left, right) => {
       const sortOrder = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
       if (sortOrder !== 0) return sortOrder;
@@ -190,6 +284,45 @@ export async function selectSiteApiEndpointTarget(
     baseUrl: normalizeSiteApiEndpointBaseUrl(selected.url),
     configuredEndpointCount: endpoints.length,
     endpoint: selected,
+  };
+}
+
+export async function describeUnavailableSiteApiEndpointPool(
+  site: SiteRow,
+  now?: string | Date,
+): Promise<SiteApiEndpointPoolUnavailableDetails> {
+  const nowIso = toIsoTimestamp(now);
+  const endpoints = await db.select().from(schema.siteApiEndpoints)
+    .where(eq(schema.siteApiEndpoints.siteId, site.id))
+    .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
+    .all();
+  const enabled = endpoints.filter((endpoint) => endpoint.enabled ?? true);
+  const coolingDown = enabled.filter((endpoint) => isEndpointCoolingDown(endpoint, nowIso));
+  const nextAvailableAt = coolingDown
+    .map((endpoint) => endpoint.cooldownUntil)
+    .filter((value): value is string => !!value)
+    .sort()[0] ?? null;
+  const reason: SiteApiEndpointPoolUnavailableReason = (
+    enabled.length === 0
+      ? 'all_endpoints_disabled'
+      : coolingDown.length === enabled.length
+        ? 'all_endpoints_cooling_down'
+        : 'no_eligible_endpoint'
+  );
+
+  return {
+    reason,
+    configuredEndpointCount: endpoints.length,
+    enabledEndpointCount: enabled.length,
+    coolingDownEndpointCount: coolingDown.length,
+    nextAvailableAt,
+    endpointFailures: endpoints.map((endpoint) => ({
+      endpointId: endpoint.id,
+      url: normalizeSiteApiEndpointBaseUrl(endpoint.url),
+      enabled: endpoint.enabled ?? true,
+      cooldownUntil: endpoint.cooldownUntil,
+      lastFailureReason: endpoint.lastFailureReason,
+    })),
   };
 }
 
@@ -214,17 +347,35 @@ export async function recordSiteApiEndpointFailure(
   endpointId: number,
   input: SiteApiEndpointFailureInput,
   now?: string | Date,
+  options?: { policyOverride?: SiteApiEndpointBackoffOverride | null; defaultPolicy?: SiteApiEndpointBackoffPolicy },
 ): Promise<RecordedSiteApiEndpointFailure> {
   const nowIso = toIsoTimestamp(now);
-  const disposition = classifySiteApiEndpointFailure(input);
-  const cooldownUntil = disposition.retryable
-    ? new Date(Date.parse(nowIso) + SITE_API_ENDPOINT_COOLDOWN_MS).toISOString()
+  const policy = resolveSiteApiEndpointBackoffPolicy(
+    options?.policyOverride,
+    options?.defaultPolicy || DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY,
+  );
+  const disposition = classifySiteApiEndpointFailure(input, policy);
+  const cooldownUntil = disposition.cooldownAddress
+    ? new Date(Date.parse(nowIso) + (policy?.cooldownSec || 0) * 1000).toISOString()
     : null;
 
+  if (!disposition.rotateToNextEndpoint) {
+    return {
+      ...disposition,
+      cooldownUntil,
+    };
+  }
+
   await db.update(schema.siteApiEndpoints).set({
-    cooldownUntil,
-    lastFailedAt: nowIso,
-    lastFailureReason: disposition.failureReason,
+    cooldownUntil: disposition.cooldownAddress
+      ? cooldownUntil
+      : sql`CASE WHEN ${schema.siteApiEndpoints.cooldownUntil} > ${nowIso} THEN ${schema.siteApiEndpoints.cooldownUntil} ELSE NULL END`,
+    lastFailedAt: disposition.cooldownAddress
+      ? nowIso
+      : sql`CASE WHEN ${schema.siteApiEndpoints.cooldownUntil} > ${nowIso} THEN ${schema.siteApiEndpoints.lastFailedAt} ELSE ${nowIso} END`,
+    lastFailureReason: disposition.cooldownAddress
+      ? disposition.failureReason
+      : sql`CASE WHEN ${schema.siteApiEndpoints.cooldownUntil} > ${nowIso} THEN ${schema.siteApiEndpoints.lastFailureReason} ELSE ${disposition.failureReason} END`,
     updatedAt: nowIso,
   }).where(eq(schema.siteApiEndpoints.id, endpointId)).run();
 
@@ -251,18 +402,19 @@ export async function runWithSiteApiEndpointPool<T>(
   site: SiteRow,
   operation: (target: SiteApiEndpointTarget) => Promise<T>,
 ): Promise<T> {
+  const policyOverride = siteApiEndpointBackoffOverride(site);
   const attemptedEndpointIds = new Set<number>();
   let lastError: unknown;
 
   while (true) {
-    const target = await selectSiteApiEndpointTarget(site);
+    const target = await selectSiteApiEndpointTarget(site, undefined, {
+      excludeEndpointIds: attemptedEndpointIds,
+    });
     if (!target) {
       if (lastError) throw lastError;
-      throw new Error('当前站点的 API 请求地址均不可用');
-    }
-    if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
-      if (lastError) throw lastError;
-      throw new Error('当前站点的 API 请求地址均不可用');
+      throw new SiteApiEndpointPoolUnavailableError(
+        await describeUnavailableSiteApiEndpointPool(site),
+      );
     }
 
     try {
@@ -285,7 +437,7 @@ export async function runWithSiteApiEndpointPool<T>(
         status: error instanceof SiteApiEndpointRequestError ? error.status : undefined,
         message: error instanceof Error ? error.message : String(error ?? ''),
         error,
-      });
+      }, undefined, { policyOverride, defaultPolicy: config.siteApiEndpointBackoffDefault });
       if (!recordedFailure.rotateToNextEndpoint) {
         throw error;
       }

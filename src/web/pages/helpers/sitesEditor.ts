@@ -1,4 +1,5 @@
 import { tr } from '../../i18n.js';
+import type { SiteApiEndpointBackoffOverride } from '../../../shared/siteApiEndpointBackoff.js';
 export type SiteCustomHeaderField = {
   key: string;
   value: string;
@@ -24,6 +25,7 @@ export type SiteForm = {
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
   globalWeight: string;
+  apiEndpointBackoff: SiteApiEndpointBackoffOverride | null;
   compatibilityPolicy: unknown;
 };
 
@@ -49,6 +51,7 @@ export type SiteSavePayload = {
   }>;
   customHeaders: string;
   globalWeight: number;
+  apiEndpointBackoff?: SiteApiEndpointBackoffOverride | null;
   compatibilityPolicy?: unknown;
 };
 
@@ -85,6 +88,7 @@ export function emptySiteForm(): SiteForm {
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
     globalWeight: '1',
+    apiEndpointBackoff: null,
     compatibilityPolicy: null,
   };
 }
@@ -153,6 +157,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   }> | null;
   customHeaders?: string | null;
   globalWeight?: number | string | null;
+  apiEndpointBackoff?: SiteApiEndpointBackoffOverride | null;
   compatibilityPolicy?: unknown;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
@@ -167,6 +172,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     globalWeight,
+    apiEndpointBackoff: site.apiEndpointBackoff ?? null,
     compatibilityPolicy: site.compatibilityPolicy ?? null,
   };
 }

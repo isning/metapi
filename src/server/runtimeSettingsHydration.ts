@@ -9,6 +9,8 @@ import {
 } from './services/platformPricingConfigContract.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 import { normalizeDispatchPolicyRegistry } from './services/dispatchPolicyService.js';
+import { normalizeGlobalRouteAffinityPolicy } from '../shared/routeAffinity.js';
+import { normalizeSiteApiEndpointBackoffPolicy } from '../shared/siteApiEndpointBackoff.js';
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
   const raw = settingsMap.get(key);
@@ -44,6 +46,15 @@ function toStringList(value: unknown): string[] {
 }
 
 export function applyRuntimeSettings(settingsMap: Map<string, string>) {
+  const siteApiEndpointBackoffDefault = parseSettingFromMap<unknown>(settingsMap, 'site_api_endpoint_backoff_default_v1');
+  const normalizedSiteApiEndpointBackoffDefault = normalizeSiteApiEndpointBackoffPolicy(siteApiEndpointBackoffDefault);
+  if (normalizedSiteApiEndpointBackoffDefault) {
+    config.siteApiEndpointBackoffDefault = normalizedSiteApiEndpointBackoffDefault;
+  }
+  const routeAffinityDefault = parseSettingFromMap<unknown>(settingsMap, 'route_affinity_default_v1');
+  if (routeAffinityDefault !== undefined) {
+    config.routeAffinityDefault = normalizeGlobalRouteAffinityPolicy(routeAffinityDefault);
+  }
   const authToken = parseSettingFromMap<string>(settingsMap, 'auth_token');
   if (typeof authToken === 'string' && authToken) config.authToken = authToken;
 

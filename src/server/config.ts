@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
 import { defaultDispatchPolicyRegistry } from './services/dispatchPolicyTypes.js';
+import type { ResolvedRouteAffinityPolicy } from '../shared/routeAffinity.js';
+import { DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY, type SiteApiEndpointBackoffPolicy } from '../shared/siteApiEndpointBackoff.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 100 * 1024 * 1024;
 const MAX_REQUEST_BODY_LIMIT = 512 * 1024 * 1024;
@@ -164,6 +166,8 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       parseNumber(preferredEnv(env, 'ROUTE_FAILURE_COOLDOWN_MAX_SEC', 'TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC'), ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING),
     ) ?? ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING,
     routeRuntimeCacheTtlMs: normalizeRouteRuntimeCacheTtlMs(preferredEnv(env, 'ROUTE_RUNTIME_CACHE_TTL_MS', 'TOKEN_ROUTER_CACHE_TTL_MS')),
+    routeAffinityDefault: { kind: 'disabled' } as ResolvedRouteAffinityPolicy,
+    siteApiEndpointBackoffDefault: { ...DEFAULT_SITE_API_ENDPOINT_BACKOFF_POLICY } as SiteApiEndpointBackoffPolicy,
     proxyMaxTargetAttempts: Math.max(1, Math.trunc(parseNumber(preferredEnv(env, 'PROXY_MAX_TARGET_ATTEMPTS', 'PROXY_MAX_CHANNEL_ATTEMPTS'), 3))),
     proxyStickySessionEnabled: parseBoolean(env.PROXY_STICKY_SESSION_ENABLED, true),
     proxyStickySessionTtlMs: Math.max(30_000, Math.trunc(parseNumber(env.PROXY_STICKY_SESSION_TTL_MS, 30 * 60 * 1000))),

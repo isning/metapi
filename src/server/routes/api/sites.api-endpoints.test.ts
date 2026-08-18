@@ -107,6 +107,31 @@ describe('sites api endpoints', () => {
     ]);
   });
 
+  it('persists a site-level API endpoint backoff override and returns the structured policy', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'custom-backoff-site',
+        url: 'https://panel.example.com',
+        platform: 'new-api',
+        apiEndpointBackoff: {
+          mode: 'custom',
+          policy: { cooldownSec: 75, cooldownOn: ['transport', 'rate_limit'] },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as { id: number; apiEndpointBackoff?: unknown };
+    expect(payload.apiEndpointBackoff).toEqual({
+      mode: 'custom',
+      policy: { cooldownSec: 75, cooldownOn: ['transport', 'rate_limit'] },
+    });
+    const stored = await db.select().from(schema.sites).where(eq(schema.sites.id, payload.id)).get();
+    expect(stored?.apiEndpointBackoffPolicy).toBe(JSON.stringify(payload.apiEndpointBackoff));
+  });
+
   it('replaces apiEndpoints on update', async () => {
     const created = await app.inject({
       method: 'POST',
