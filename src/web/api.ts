@@ -609,7 +609,15 @@ export type RuntimeSettingsPayload = {
   adminIpAllowlist?: string[] | string;
   proxyFirstByteTimeoutSec?: number;
   routeFailureCooldownMaxSec?: number;
+  siteApiEndpointBackoffDefault?: {
+    cooldownSec: number;
+    cooldownOn: Array<'transport' | 'gateway' | 'rate_limit' | 'upstream_server'>;
+  };
   routeFailureBackoffDefault?: { mode: 'custom'; policy: { failureThreshold: number; levelsSec: number[]; maxSec: number } } | { mode: 'disabled' };
+  routeAffinityDefault?:
+    | { kind: 'disabled' }
+    | { kind: 'pool'; ttlSec: number; crossPoolFallback: 'deny' | 'temporary' | 'promote_on_success' }
+    | { kind: 'target'; ttlSec: number; crossTargetFallback: 'deny' | 'temporary' | 'promote_on_success' };
   routeRuntimeCacheTtlMs?: number;
   dispatchPolicyRegistry?: DispatchPolicyRegistryPayload;
   proxyErrorKeywords?: string[] | string;
@@ -624,6 +632,11 @@ export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 
 export type ProxyLogBillingDetails = ProxyBillingDetails | null;
+export type ProxyLogBillingSummary = {
+  quote: ProxyBillingDetails['quote'] | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+};
 
 export type UpstreamCostPricingScope =
   "site_model" | "account_model" | "token_model";
@@ -1031,6 +1044,23 @@ export type ProxyRequestLog = {
   startedAt: string;
   completedAt: string | null;
   attempts: ProxyExecutionAttemptLog[];
+  debugTrace?: ProxyRequestDebugTraceSummary | null;
+  billingSummary?: ProxyLogBillingSummary | null;
+};
+
+export type ProxyRequestDebugTraceSummary = {
+  id: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  sessionId?: string | null;
+  requestedModel?: string | null;
+  clientKind?: string | null;
+  selectedExecutionAttemptId?: string | null;
+  routeEntrypointId?: string | null;
+  runtimeEndpointId?: string | null;
+  finalStatus?: string | null;
+  finalHttpStatus?: number | null;
+  finalUpstreamPath?: string | null;
 };
 
 export type ProxyLogRuntimeUsageScope = {
@@ -1098,6 +1128,7 @@ export type ProxyLogsResponse = {
 
 export type ProxyDebugTraceListItem = {
   id: number;
+  requestId?: string | null;
   createdAt: string;
   downstreamPath: string;
   clientKind?: string | null;
@@ -1145,7 +1176,9 @@ export type ProxyDebugTraceDetail = {
   attempts: Array<{
     id: number;
     attemptIndex: number;
+    executionAttemptId?: string | null;
     endpoint: string;
+    endpointType?: string | null;
     requestPath: string;
     targetUrl: string;
     runtimeExecutor?: string | null;
@@ -1163,10 +1196,6 @@ export type ProxyDebugTraceDetail = {
     memoryWriteJson?: string | null;
     createdAt?: string | null;
   }>;
-};
-
-export type ProxyDebugTracesResponse = {
-  items: ProxyDebugTraceListItem[];
 };
 
 export type OAuthProviderInfo = {
@@ -2005,14 +2034,13 @@ export const api = {
   },
   getProxyRequestLogDetail: (requestId: string) =>
     request(`/api/stats/proxy-logs/${encodeURIComponent(requestId)}`) as Promise<ProxyRequestLogDetail>,
-  getProxyDebugTraces: (params?: { limit?: number }) =>
-    request(
-      `/api/stats/proxy-debug/traces${buildQueryString(params)}`,
-    ) as Promise<ProxyDebugTracesResponse>,
-  getProxyDebugTraceDetail: (id: number) =>
-    request(
-      `/api/stats/proxy-debug/traces/${id}`,
-    ) as Promise<ProxyDebugTraceDetail>,
+  getProxyDebugTraceDetail: (id: number, options?: { includeBodies?: boolean; attemptId?: number }) => {
+    const query = new URLSearchParams();
+    if (options?.includeBodies) query.set('includeBodies', '1');
+    if (options?.attemptId != null) query.set('attemptId', String(options.attemptId));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request(`/api/stats/proxy-debug/traces/${id}${suffix}`) as Promise<ProxyDebugTraceDetail>;
+  },
   checkModels: (accountId: number) =>
     requestJson(`/api/models/check/${accountId}`, { method: "POST", body: {} }),
   getSiteDistribution: () => request("/api/stats/site-distribution"),

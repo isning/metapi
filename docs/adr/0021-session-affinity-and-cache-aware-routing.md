@@ -3,6 +3,12 @@
 Status: Accepted
 Date: 2026-08-12
 
+Evolution: [ADR-0022](./0022-entry-scoped-affinity-pools.md) extends this
+decision with Entry-scoped disabled, Pool, and fixed-target policies. It
+supersedes the assumption that every strict affinity binding identifies one
+concrete execution target. The evidence classes, endpoint-type isolation, and
+cache-aware cost model defined here remain in force.
+
 ## Context
 
 The proxy needs to preserve upstream continuity for clients that provide a

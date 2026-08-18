@@ -32,6 +32,10 @@ describe('routeGroupManagementProjectionService', () => {
       ownership: 'manual',
     });
     macro.config.failureBackoff = { mode: 'disabled' };
+    macro.config.affinity = {
+      policy: { kind: 'pool', ttlSec: 300, crossPoolFallback: 'temporary' },
+      pools: [{ id: 'primary', members: [{ kind: 'execution_target', sourceRef: '67d54dd0-45c8-4d98-b7b9-7ac550192ec7' }] }],
+    };
     macro.config.groups[0]!.members[0]!.failureBackoff = {
       mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 5], maxSec: 5 },
     };
@@ -62,6 +66,7 @@ describe('routeGroupManagementProjectionService', () => {
       candidateCount: 1,
       enabledCandidateCount: 1,
       failureBackoff: { mode: 'disabled' },
+      affinity: macro.config.affinity,
       siteNames: ['Example Site'],
     }));
     expect(group.sourceSelection).toEqual({ kind: 'explicit', sources: [expect.objectContaining({

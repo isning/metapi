@@ -471,6 +471,7 @@ async function handleResponsesWebsocketConnection(
               request: runtimeRequest,
               downstreamPolicy,
               stickyExecutionTargetId: getSurfaceStickyPreferredTargetId(stickySessionKey),
+              affinityKey: stickySessionKey,
             })
             : null;
           let normalized: ReturnType<typeof protocolAdapters.responses.websocket.normalizeRequest>;
@@ -546,16 +547,12 @@ async function handleResponsesWebsocketConnection(
           });
           if (selectedExecutionAttempt) {
             await bindCompiledRuntimeExecutionDecision({
-              requestId: executionSession.requestId,
+              session: executionSession,
               routeEntrypointId: selectedExecutionAttempt.routeEntrypointId,
               runtimeEndpointId: selectedExecutionAttempt.runtimeEndpointId,
               executionAttemptId: selectedExecutionAttempt.executionAttemptId,
               runtimeBundleHash: selectedExecutionAttempt.routeRuntimeSnapshot.compiledRuntime.bundleHash,
               decisionSnapshot: selectedExecutionAttempt.routeRuntimeSnapshot,
-            });
-            bindSurfaceStickyTarget({
-              stickySessionKey,
-              selected: selectedExecutionAttempt,
             });
           }
 
@@ -702,6 +699,7 @@ async function handleResponsesWebsocketConnection(
                 upstreamCacheUsagePresent = upstreamCacheUsagePresent || hasProxyCacheUsagePayload(payload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
               }
+              lastResponseOutput = protocolAdapters.responses.websocket.collectOutput(runtimeResult.events);
               await recordSurfaceSuccess({
                 selected: codexWebsocketTarget,
                 requestedModel: requestModel,
@@ -722,8 +720,8 @@ async function handleResponsesWebsocketConnection(
                 bestEffortMetrics: {
                   errorLabel: '[proxy/responses-websocket] failed to record success metrics',
                 },
+                stickySessionKey,
               });
-              lastResponseOutput = protocolAdapters.responses.websocket.collectOutput(runtimeResult.events);
               for (const payload of runtimeResult.events) {
                 socket.send(JSON.stringify(payload));
               }

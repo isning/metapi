@@ -1,4 +1,5 @@
 import type { DispatcherPolicy, RouteFailureBackoffOverride, RouteFilter, TargetSelectionPolicy } from "./routeGraph.js";
+import type { EntryAffinityConfig } from "./routeAffinity.js";
 
 export type RouteGroupExplicitSourceReference =
   | { kind: "execution_target"; sourceRef: string }
@@ -14,6 +15,7 @@ export type RouteGroupCreateCommand = {
   presentation?: { displayName?: string | null; displayIcon?: string | null };
   dispatcherPolicy?: DispatcherPolicy | null;
   failureBackoff?: RouteFailureBackoffOverride | null;
+  affinity?: EntryAffinityConfig | null;
   modelMapping?: string | null;
   filters?: unknown;
   visibility?: "public" | "internal";
@@ -58,6 +60,7 @@ export type RouteGroupManagementSummary = {
   filters: { operations: RouteFilter[] } | null;
   dispatcherPolicy: DispatcherPolicy | null;
   failureBackoff: RouteFailureBackoffOverride | null;
+  affinity: EntryAffinityConfig;
   visibility: "public" | "internal";
   enabled: boolean;
   sourceSelection:

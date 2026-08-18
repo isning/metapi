@@ -495,6 +495,18 @@ export default function RouteGraphFocusInspector({
   const elementId = graphElementIdForSelection(selected, selectedGraphElementId);
   const connections = selectionConnections(selected, selectedGraphElementId, graph);
   const diagnostics = diagnosticsForSelection(selected, selectedGraphElementId, graph, workspace.diagnostics);
+  const affinityTargets = useMemo(() => {
+    return workspace.affinityTargets.map((target) => ({
+      sourceRef: target.sourceRef,
+      label: [
+        target.endpointLabel || target.endpointId,
+        target.model,
+        target.siteId != null && target.accountId != null
+          ? `${tr('pages.tokenRoutes.affinity.siteAccountIdentity')} ${target.siteId}/${target.accountId}`
+          : null,
+      ].filter(Boolean).join(' · '),
+    }));
+  }, [workspace.affinityTargets]);
   const readonly = !editable
     || (selected.kind !== 'portal' && selected.item.ownership !== 'manual');
   const copyId = async () => {
@@ -616,6 +628,7 @@ export default function RouteGraphFocusInspector({
                   readonly={readonly}
                   policyRegistry={policyRegistry}
                   referenceEndpoints={referenceEndpoints || graph.nodes.filter((node) => node.type === 'route_endpoint').map((node) => ({ id: node.routeEndpointId, label: node.name || node.routeEndpointId }))}
+                  affinityTargets={affinityTargets}
                   referenceEndpointCatalog={referenceEndpointCatalog}
                   onChange={(node) => onGraphChange({
                     ...graph,
@@ -654,6 +667,7 @@ export default function RouteGraphFocusInspector({
                     registry={policyRegistry}
                     endpoints={referenceEndpoints || graph.nodes.filter((node) => node.type === 'route_endpoint').map((node) => ({ id: node.routeEndpointId, label: node.name || node.routeEndpointId }))}
                     macros={graph.macros.map((macro) => ({ id: macro.id, label: macro.name || macro.id }))}
+                    affinityTargets={affinityTargets}
                     onChange={(nextMacro) => onGraphChange({ ...graph, macros: graph.macros.map((macro) => macro.id === nextMacro.id ? nextMacro : macro) })}
                   />
                   {readonly && <p className="text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkspace.readOnlyElement')}</p>}

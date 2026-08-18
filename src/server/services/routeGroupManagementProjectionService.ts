@@ -435,6 +435,7 @@ export function projectRouteGroupsFromGraph(
         filters: macro.config.filters || null,
         dispatcherPolicy: macro.config.policy || null,
         failureBackoff: macro.config.failureBackoff || null,
+        affinity: macro.config.affinity || { policy: { kind: 'inherit_default' }, pools: [] },
         visibility: macroVisibility(macro),
         enabled: macro.enabled !== false,
         sourceSelection,

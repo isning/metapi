@@ -82,6 +82,7 @@ export type BaseRouteGraphNode = {
 export type EntryNode = BaseRouteGraphNode & {
   type: 'entry';
   match: RouteGraphMatchSpec;
+  affinity?: import('./routeAffinity.js').EntryAffinityConfig;
 };
 
 export type RouteEndpointNode = BaseRouteGraphNode & {
@@ -147,6 +148,14 @@ export type {
   RouteFailureBackoffOverride,
   RouteFailureBackoffPolicy,
 } from './routeFailureBackoff.js';
+export type {
+  CrossScopeFallback,
+  EntryAffinityConfig,
+  EntryAffinityPool,
+  EntryAffinityPoolMember,
+  ResolvedRouteAffinityPolicy,
+  RouteAffinityPolicy,
+} from './routeAffinity.js';
 import type { RouteFailureBackoffOverride } from './routeFailureBackoff.js';
 export function validateNativeTargetSelectionPolicy(input: unknown):
   | { ok: true; value: TargetSelectionPolicy }
@@ -172,6 +181,7 @@ export type RouteExecutableTarget = {
   siteId?: string | number | null;
   weight?: number | null;
   transportBinding?: { kind: 'execution_target'; executionTargetId: number };
+  executionTargetSourceRef?: string;
   metadata?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
   failureBackoff?: RouteFailureBackoffOverride;
@@ -221,6 +231,7 @@ export type CandidateSelectorMacroConfig = {
   policy: DispatcherPolicy;
   /** Macro-level failure backoff override. Omission inherits the runtime default. */
   failureBackoff?: RouteFailureBackoffOverride;
+  affinity?: import('./routeAffinity.js').EntryAffinityConfig;
   filters?: {
     operations: RouteFilter[];
   };
@@ -341,6 +352,7 @@ export type CompiledEndpointTarget = {
   siteId?: string | number | null;
   weight?: number | null;
   transportBinding?: { kind: 'execution_target'; executionTargetId: number };
+  executionTargetSourceRef?: string;
   metadata?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
@@ -438,6 +450,10 @@ export type CompiledRouterPlan = {
   sourceRef?: RouteProgramSourceRef;
   metadata?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
+  affinity: {
+    policy: import('./routeAffinity.js').ResolvedRouteAffinityPolicy;
+    pools: Array<{ id: string; label?: string; executionTargetIds: number[] }>;
+  };
   filterStages: CompiledRouterFilterStage[];
   executionAlternatives: CompiledExecutionAlternative[];
 };
@@ -509,6 +525,7 @@ export function buildCandidateSelectorMacro(input: {
   ingress?: 'external' | 'embedded' | 'none';
   enabled?: boolean;
   policy?: DispatcherPolicy;
+  affinity?: import('./routeAffinity.js').EntryAffinityConfig;
   match?: RouteGraphMatchSpec;
   filters?: RouteGraphFilters;
   endpointIds?: string[];
@@ -538,7 +555,22 @@ export function validateRouteGraphSource(sourceInput: unknown): { ok: boolean; d
 export function compileRouteGraphSource(sourceInput: unknown, options?: {
   includePrimitiveSource?: boolean;
   compactRuntimeBundle?: boolean;
+  affinityDefault?: import('./routeAffinity.js').ResolvedRouteAffinityPolicy;
 }): RouteGraphCompileResult;
+export type RouteGraphAffinityTargetProjection = {
+  sourceRef: string;
+  executionTargetId: number;
+  model: string;
+  endpointId?: string;
+  siteId?: string | number | null;
+  accountId?: string | number | null;
+  tokenId?: string | number | null;
+};
+export function collectCompiledRouteAffinityTargets(
+  compiledGraph: CompiledRouteGraph | null | undefined,
+  focus: { kind: 'node' | 'macro'; id: string },
+  sourceGraph?: RouteGraphSource | null,
+): RouteGraphAffinityTargetProjection[];
 export function findRouteGraphEntryForModel(compiledGraph: unknown, model: string): {
   nodeId: string;
   enabled: boolean;

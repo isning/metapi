@@ -281,6 +281,7 @@ export async function insertRouteGroupMember(input: RouteGroupMemberTestInput): 
       if (!stage) throw new Error('Fallback stage does not belong to the test route group');
       const ensured = ensureRouteGraphExecutionTargetEndpoint(source, {
         id: target.id,
+        sourceRef: target.sourceRef,
         upstreamModelName: target.upstreamModelName,
         enabled: target.enabled !== false,
       }, {
@@ -369,6 +370,7 @@ export async function updateRouteGroupMember(memberIdInput: string, patch: Route
       if (!found) throw new Error('Route group member does not exist');
       const ensured = ensureRouteGraphExecutionTargetEndpoint(source, {
         id: target.id,
+        sourceRef: target.sourceRef,
         upstreamModelName: target.upstreamModelName,
         enabled: target.enabled !== false,
       }, {

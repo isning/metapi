@@ -13,6 +13,7 @@ import {
   parseModelRegexPattern,
 } from '../../../shared/modelPatternMatcher.js';
 import type { DispatcherPolicy, RouteFailureBackoffOverride, RouteFilter } from '../../../shared/routeGraph.js';
+import type { EntryAffinityConfig } from '../../../shared/routeAffinity.js';
 import { api, type DispatchPolicyRegistryPayload } from '../../api.js';
 import CenteredModal from '../../components/CenteredModal.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
@@ -24,6 +25,11 @@ import { Switch } from '../../components/ui/switch/index.js';
 import { tr } from '../../i18n.js';
 import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
 import { FailureBackoffEditor } from './FailureBackoffEditor.js';
+import {
+  AffinityEditor,
+  affinityEditorValidationIssues,
+  type AffinityTargetOption,
+} from './AffinityEditor.js';
 import { FilterOperationsEditor } from './NodeForm.js';
 import {
   RouteGroupSourcePicker,
@@ -50,9 +56,10 @@ type GroupForm = {
   filters: RouteFilter[];
   dispatcherPolicy: DispatcherPolicy;
   failureBackoff: RouteFailureBackoffOverride | null;
+  affinity: EntryAffinityConfig;
 };
 
-type GroupEditorStep = "match" | "sources" | "options" | "review";
+type GroupEditorStep = "match" | "sources" | "options" | "affinity" | "review";
 
 const GROUP_EDITOR_STEPS: Array<{
   id: GroupEditorStep;
@@ -75,6 +82,11 @@ const GROUP_EDITOR_STEPS: Array<{
     detail: tr("pages.tokenRoutes.routeGroupEditor.visibilityAndPolicy"),
   },
   {
+    id: "affinity",
+    label: tr("pages.tokenRoutes.affinity.title"),
+    detail: tr("pages.tokenRoutes.routeGroupEditor.affinityDescription"),
+  },
+  {
     id: "review",
     label: tr("pages.tokenRoutes.routeGroupEditor.review"),
     detail: tr("pages.tokenRoutes.routeGroupEditor.reviewDescription"),
@@ -94,7 +106,26 @@ const EMPTY_FORM: GroupForm = {
   filters: [],
   dispatcherPolicy: { kind: "inherit_default" },
   failureBackoff: null,
+  affinity: { policy: { kind: 'inherit_default' }, pools: [] },
 };
+
+function affinityPolicyLabel(affinity: EntryAffinityConfig): string {
+  if (affinity.policy.kind === 'inherit_default') return tr('pages.tokenRoutes.affinity.inherit');
+  if (affinity.policy.kind === 'disabled') return tr('pages.tokenRoutes.affinity.disabled');
+  if (affinity.policy.kind === 'pool') return tr('pages.tokenRoutes.affinity.pool');
+  return tr('pages.tokenRoutes.affinity.target');
+}
+
+function affinityTargetLabel(parts: Array<string | number | null | undefined>): string {
+  const seen = new Set<string>();
+  return parts.flatMap((part) => {
+    const value = String(part ?? '').trim();
+    const key = value.toLocaleLowerCase();
+    if (!value || seen.has(key)) return [];
+    seen.add(key);
+    return [value];
+  }).join(' · ');
+}
 
 export function RouteGroupEditorDialog({
   open,
@@ -120,6 +151,9 @@ export function RouteGroupEditorDialog({
   const [sourcePickerSelection, setSourcePickerSelection] = useState<string[]>(
     [],
   );
+  const [affinityTargets, setAffinityTargets] = useState<AffinityTargetOption[]>([]);
+  const [affinityTargetsLoading, setAffinityTargetsLoading] = useState(false);
+  const [affinityTargetsError, setAffinityTargetsError] = useState(false);
   const [sourcePickerSite, setSourcePickerSite] = useState<string | null>(null);
   const [sourcePickerKind, setSourcePickerKind] = useState<
     RouteGroupExplicitSourceReference["kind"] | "all"
@@ -154,6 +188,7 @@ export function RouteGroupEditorDialog({
               kind: "inherit_default",
             },
             failureBackoff: group.failureBackoff || null,
+            affinity: group.affinity || { policy: { kind: 'inherit_default' }, pools: [] },
           }
         : EMPTY_FORM,
     );
@@ -167,6 +202,42 @@ export function RouteGroupEditorDialog({
   // refresh the projection object while this dialog is open; that must not
   // overwrite edits that have not been saved yet.
   }, [group?.id, open]);
+
+  useEffect(() => {
+    if (!open || !group) {
+      setAffinityTargets([]);
+      setAffinityTargetsLoading(false);
+      setAffinityTargetsError(false);
+      return;
+    }
+    let active = true;
+    setAffinityTargetsLoading(true);
+    setAffinityTargetsError(false);
+    api.getRouteGroupFallbackStages(group.id).then(({ stages }) => {
+      if (!active) return;
+      const targets = stages.flatMap((stage) => stage.candidates.flatMap((candidate) => (
+        candidate.kind === 'execution_endpoint'
+          ? candidate.targets.map((target) => ({
+              sourceRef: target.sourceRef,
+              label: affinityTargetLabel([
+                target.site.name || target.site.id,
+                target.account.username || target.accountId,
+                target.sourceModel || candidate.modelName || target.sourceRef,
+              ]),
+            }))
+          : []
+      )));
+      setAffinityTargets(Array.from(new Map(targets.map((target) => [target.sourceRef, target])).values()));
+    }).catch((error: unknown) => {
+      if (active) {
+        setAffinityTargetsError(true);
+        toast.error(routeGroupCommandErrorMessage(error, 'pages.tokenRoutes.candidatesLoadFailed'));
+      }
+    }).finally(() => {
+      if (active) setAffinityTargetsLoading(false);
+    });
+    return () => { active = false; };
+  }, [group?.id, open, toast]);
 
   useEffect(() => {
     if (!open || !sourcePickerOpen) return;
@@ -206,6 +277,18 @@ export function RouteGroupEditorDialog({
     }
     return Array.from(items.values());
   }, [catalog, group?.sourceSelection]);
+  const availableAffinityTargets = useMemo(() => {
+    const targets = [...affinityTargets];
+    const selectedRefs = new Set(form.sources.flatMap((source) => source.kind === 'execution_target' ? [source.sourceRef] : []));
+    for (const source of sourceItems) {
+      if (source.source.kind !== 'execution_target' || !selectedRefs.has(source.source.sourceRef)) continue;
+      targets.push({
+        sourceRef: source.source.sourceRef,
+        label: affinityTargetLabel([source.siteName, source.label, source.modelName]),
+      });
+    }
+    return Array.from(new Map(targets.map((target) => [target.sourceRef, target])).values());
+  }, [affinityTargets, form.sources, sourceItems]);
   const sourcePatternError = useMemo(() => {
     if (form.sourceMode !== "model_pattern") return null;
     if (!form.sourcePattern.trim())
@@ -226,6 +309,10 @@ export function RouteGroupEditorDialog({
         : [],
     [form.sourceMode, form.sourcePattern, sourceItems, sourcePatternError],
   );
+  const affinityValidationIssues = useMemo(
+    () => affinityEditorValidationIssues(form.affinity),
+    [form.affinity],
+  );
   const visibleSteps = GROUP_EDITOR_STEPS;
   const currentStep =
     visibleSteps.find((step) => step.id === wizardStep) || visibleSteps[0]!;
@@ -237,7 +324,8 @@ export function RouteGroupEditorDialog({
     (currentStep.id !== "match" || Boolean(form.publicName.trim())) &&
     (currentStep.id !== "sources" ||
       form.sourceMode !== "model_pattern" ||
-      !sourcePatternError);
+      !sourcePatternError) &&
+    (currentStep.id !== "affinity" || affinityValidationIssues.length === 0);
   const goPreviousStep = () =>
     setWizardStep(visibleSteps[Math.max(0, currentStepIndex - 1)]!.id);
   const goNextStep = () =>
@@ -255,6 +343,7 @@ export function RouteGroupEditorDialog({
       enabled: form.enabled,
       dispatcherPolicy: form.dispatcherPolicy,
       failureBackoff: form.failureBackoff,
+      affinity: form.affinity,
       ...(capabilities.canEditGeneratedFields
         ? {
             presentation,
@@ -279,6 +368,12 @@ export function RouteGroupEditorDialog({
     }
     if (capabilities.canEditGeneratedFields && sourcePatternError) {
       toast.error(sourcePatternError);
+      return;
+    }
+    if (affinityValidationIssues.length > 0) {
+      toast.error(tr(affinityValidationIssues[0] === 'empty_pool'
+        ? 'pages.tokenRoutes.affinity.emptyPoolError'
+        : 'pages.tokenRoutes.affinity.duplicateTargetError'));
       return;
     }
     setSaving(true);
@@ -730,6 +825,16 @@ export function RouteGroupEditorDialog({
         </section>
       </div>
     ),
+    affinity: (
+      <AffinityEditor
+        disabled={!capabilities.canEditGroup}
+        value={form.affinity}
+        targetOptions={availableAffinityTargets}
+        targetOptionsLoading={affinityTargetsLoading}
+        targetOptionsError={affinityTargetsError}
+        onChange={(affinity) => setForm((old) => ({ ...old, affinity }))}
+      />
+    ),
     review: (
       <div className="grid gap-3">
         <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
@@ -767,6 +872,17 @@ export function RouteGroupEditorDialog({
             </div>
             <div className="mt-1 text-sm font-medium">
               {policyLabel(form.dispatcherPolicy, policyRegistry)}
+            </div>
+          </div>
+          <div className="rounded-md border bg-muted/20 p-2.5">
+            <div className="text-xs text-muted-foreground">
+              {tr("pages.tokenRoutes.affinity.title")}
+            </div>
+            <div className="mt-1 text-sm font-medium">
+              {affinityPolicyLabel(form.affinity)}
+              {form.affinity.policy.kind === 'pool'
+                ? ` · ${tr('pages.tokenRoutes.affinity.poolCount').replace('{count}', String(form.affinity.pools?.length || 0))}`
+                : ''}
             </div>
           </div>
         </div>
@@ -821,6 +937,7 @@ export function RouteGroupEditorDialog({
               type="button"
               disabled={
                 saving ||
+                affinityValidationIssues.length > 0 ||
                 (capabilities.canEditGeneratedFields &&
                   (!form.publicName.trim() || Boolean(sourcePatternError)))
               }
@@ -835,12 +952,12 @@ export function RouteGroupEditorDialog({
         }
       >
         <div className="grid gap-3">
-          <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border bg-muted/20 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border bg-muted/20 px-3 py-2">
             <div>
-              <div className="text-sm font-semibold">
+              <div className="inline text-sm font-semibold">
                 {tr("pages.tokenRoutes.routeGroupEditor.groupMode")}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">
+              <div className="ml-2 inline text-xs text-muted-foreground">
                 {isAutomatic
                   ? tr("pages.tokenRoutes.routeGroupOverrideDescription")
                   : tr("pages.tokenRoutes.routeGroupSources")}
@@ -852,7 +969,7 @@ export function RouteGroupEditorDialog({
                 : tr("pages.tokenRoutes.manual")}
             </ToneBadge>
           </div>
-          <div className="grid min-h-0 gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
+          <div className="grid min-h-0 gap-3 lg:grid-cols-[156px_minmax(0,1fr)]">
             <nav
               className="flex gap-2 overflow-x-auto pb-1 lg:grid lg:content-start lg:overflow-visible lg:pb-0"
               aria-label={tr("pages.tokenRoutes.routeGroupEditor.steps")}
@@ -870,7 +987,7 @@ export function RouteGroupEditorDialog({
                   </span>
                   <span className="grid min-w-0 gap-0.5 text-sm">
                     <strong>{step.label}</strong>
-                    <small className="whitespace-normal break-words text-muted-foreground">
+                    <small className={`whitespace-normal break-words text-muted-foreground ${currentStep.id === step.id ? '' : 'lg:hidden'}`}>
                       {step.detail}
                     </small>
                   </span>

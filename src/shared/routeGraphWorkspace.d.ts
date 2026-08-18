@@ -173,6 +173,17 @@ export type RouteGraphFocusedWorkspace = {
   residentElements: RouteGraphWorkspaceResidentElement[];
   portals: RouteGraphWorkspacePortal[];
   diagnostics: RouteGraphDiagnostic[];
+  /** Complete Entry-scoped target projection, independent of the visible graph window. */
+  affinityTargets: Array<{
+    sourceRef: string;
+    executionTargetId: number;
+    model: string;
+    endpointId?: string;
+    endpointLabel?: string;
+    siteId?: string | number | null;
+    accountId?: string | number | null;
+    tokenId?: string | number | null;
+  }>;
   totals: { nodes: number; edges: number; macros: number };
   capabilities: {
     editable: boolean;

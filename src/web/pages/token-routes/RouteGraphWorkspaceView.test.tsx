@@ -183,6 +183,7 @@ function focusedWorkspace(
       : [],
     portals,
     diagnostics: [],
+    affinityTargets: [],
     totals: { nodes: 0, edges: 0, macros: 1 },
     capabilities: { editable: representation === 'semantic', primitiveAvailable },
   };

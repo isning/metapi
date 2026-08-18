@@ -31,6 +31,7 @@ function manualNodeWorkspace(): RouteGraphFocusedWorkspace {
     residentElements: [{ element: { kind: 'node', id: node.id }, graphElementId: node.id }],
     portals: [],
     diagnostics: [],
+    affinityTargets: [],
     totals: { nodes: 1, edges: 0, macros: 0 },
     capabilities: { editable: true, primitiveAvailable: true },
   };

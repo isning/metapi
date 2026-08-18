@@ -9,6 +9,7 @@ import type { RouteExecutionScope } from '../../services/routeExecutionScopeType
 import type { CompiledRouteRuntimeRequest } from '../../services/compiledRuntimeRequestTypes.js';
 import {
   bindCompiledRuntimeExecutionDecision,
+  bindCompiledRuntimeUnavailableDecision,
   completeCompiledRuntimeExecutionSession,
   startCompiledRuntimeExecutionSession,
 } from '../../services/compiledRuntimeExecutionSessionService.js';
@@ -101,6 +102,7 @@ export async function executeCompiledHttpSurface(input: {
     downstreamPolicy: input.downstreamPolicy,
     forcedExecutionAttemptId: input.forcedExecutionAttemptId,
     stickyExecutionTargetId: getSurfaceStickyPreferredTargetId(stickySessionKey),
+    affinityKey: stickySessionKey,
   });
   const failureToolkit = createSurfaceFailureToolkit({
     requestId: executionSession.requestId,
@@ -142,6 +144,14 @@ export async function executeCompiledHttpSurface(input: {
     }
     const selected = decision?.kind === 'execution_attempt' ? decision.attempt : null;
     if (!selected) {
+      if (decision?.kind === 'unavailable') {
+        await bindCompiledRuntimeUnavailableDecision({
+          session: executionSession,
+          routeEntrypointId: decision.routeEntrypointId,
+          runtimeBundleHash: decision.routeRuntimeSnapshot.compiledRuntime.bundleHash,
+          decisionSnapshot: decision.routeRuntimeSnapshot,
+        });
+      }
       const message = buildForcedExecutionAttemptUnavailableMessage(input.forcedExecutionAttemptId);
       await reportProxyAllFailed({
         model: input.requestedModel,
@@ -159,7 +169,7 @@ export async function executeCompiledHttpSurface(input: {
     excludeTargetIds.push(selected.target.id);
     routeExecutionScope = selected.routeExecutionScope ?? routeExecutionScope;
     await bindCompiledRuntimeExecutionDecision({
-      requestId: executionSession.requestId,
+      session: executionSession,
       routeEntrypointId: selected.routeEntrypointId,
       runtimeEndpointId: selected.runtimeEndpointId,
       executionAttemptId: selected.executionAttemptId,

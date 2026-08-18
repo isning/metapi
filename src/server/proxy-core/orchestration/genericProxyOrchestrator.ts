@@ -72,7 +72,11 @@ import {
   selectSurfaceRuntimeDecisionInSession,
   trySurfaceOauthRefreshRecovery,
 } from './sharedProxyOrchestration.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointPoolUnavailableError,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
 import {
   classifyEndpointObservationFailure,
@@ -88,6 +92,7 @@ import {
   safeInsertSurfaceProxyDebugAttempt,
   safeUpdateSurfaceProxyDebugAttempt,
   safeUpdateSurfaceProxyDebugRuntime,
+  safeAppendSurfaceProxyDebugPreflightOutcome,
   safeUpdateSurfaceProxyDebugSelection,
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
@@ -118,6 +123,7 @@ import { buildCompiledRouteRuntimeRequestSnapshot } from './compiledRouteRuntime
 import { runtimeCapabilityRequiresSingleNativeVariant } from '../capabilities/requestCapabilityRequirement.js';
 import {
   bindCompiledRuntimeExecutionDecision,
+  bindCompiledRuntimeUnavailableDecision,
   completeCompiledRuntimeExecutionSession,
   resumeCompiledRuntimeExecutionSession,
   startCompiledRuntimeExecutionSession,
@@ -287,6 +293,7 @@ export async function handleGenericSurfaceRequest(
       downstreamPolicy,
       forcedExecutionAttemptId,
       stickyExecutionTargetId: getSurfaceStickyPreferredTargetId(stickySessionKey),
+      affinityKey: stickySessionKey,
     });
     const failureToolkit = createSurfaceFailureToolkit({
       requestId: executionSession.requestId,
@@ -298,6 +305,7 @@ export async function handleGenericSurfaceRequest(
     });
 
     const debugTrace = await startSurfaceProxyDebugTrace({
+      requestId: executionSession.requestId,
       downstreamPath,
       requestedModel,
       clientKind: clientContext.clientKind,
@@ -366,6 +374,14 @@ export async function handleGenericSurfaceRequest(
       const selected = decision?.kind === 'execution_attempt' ? decision.attempt : null;
 
       if (!selected) {
+        if (decision?.kind === 'unavailable') {
+          await bindCompiledRuntimeUnavailableDecision({
+            session: executionSession,
+            routeEntrypointId: decision.routeEntrypointId,
+            runtimeBundleHash: decision.routeRuntimeSnapshot.compiledRuntime.bundleHash,
+            decisionSnapshot: decision.routeRuntimeSnapshot,
+          });
+        }
         const noTargetMessage = forcedExecutionAttemptId
           ? buildForcedExecutionAttemptUnavailableMessage(forcedExecutionAttemptId)
           : config.proxyExecutionAttemptsExhaustedMessage;
@@ -397,7 +413,7 @@ export async function handleGenericSurfaceRequest(
       routeExecutionScope = selected.routeExecutionScope ?? routeExecutionScope;
       const selectedExecutionAttemptId = selected.executionAttemptId;
       await bindCompiledRuntimeExecutionDecision({
-        requestId: executionSession.requestId,
+        session: executionSession,
         routeEntrypointId: selected.routeEntrypointId,
         runtimeEndpointId: selected.runtimeEndpointId,
         executionAttemptId: selected.executionAttemptId,
@@ -1013,6 +1029,7 @@ export async function handleGenericSurfaceRequest(
             }).catch(() => undefined);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
+              executionAttemptId: selectedExecutionAttemptId,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1045,6 +1062,7 @@ export async function handleGenericSurfaceRequest(
             }).catch(() => undefined);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
+              executionAttemptId: selectedExecutionAttemptId,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1085,6 +1103,13 @@ export async function handleGenericSurfaceRequest(
           stickySessionKey,
           selected,
         });
+        if (err instanceof SiteApiEndpointPoolUnavailableError) {
+          await safeAppendSurfaceProxyDebugPreflightOutcome(debugTrace, {
+            executionAttemptId: selectedExecutionAttemptId,
+            kind: 'site_api_endpoint_pool_unavailable',
+            ...err.details,
+          });
+        }
         const endpointFailureStatus = typeof err?.status === 'number' ? err.status : null;
         if (endpointFailureStatus && err?.payload) {
           await failureToolkit.log({
@@ -1276,6 +1301,7 @@ export async function handleGenericSurfaceRequest(
             errorLabel: '[proxy/generic] failed to record success metrics',
           },
           suppressLogUsageSource: adapter.format === 'gemini',
+          stickySessionKey,
         });
       };
 
@@ -1384,10 +1410,6 @@ export async function handleGenericSurfaceRequest(
                   usage: parsedUsage,
                 },
           );
-          bindSurfaceStickyTarget({
-            stickySessionKey,
-            selected,
-          });
           return;
         }
 
@@ -1488,10 +1510,6 @@ export async function handleGenericSurfaceRequest(
                 usage: parsedUsage,
               },
         );
-        bindSurfaceStickyTarget({
-          stickySessionKey,
-          selected,
-        });
         return;
       } else {
         const upstreamReader = getRuntimeResponseReader(upstream);
@@ -1572,10 +1590,6 @@ export async function handleGenericSurfaceRequest(
                 usage: parsedUsage,
               },
         );
-        bindSurfaceStickyTarget({
-          stickySessionKey,
-          selected,
-        });
         return;
       }
     } else {
@@ -1668,6 +1682,29 @@ export async function handleGenericSurfaceRequest(
         return reply.code(failureOutcome.status).send(failureOutcome.payload);
       }
 
+      const finalPayload = adapter.transformResponse
+        ? adapter.transformResponse({
+            upstreamBody: rawData,
+            rawText,
+            modelName,
+            fallbackText,
+            defaultEncryptedReasoningInclude,
+            isCompactRequest,
+            operationHint: transformed.operationHint,
+            extraContext: transformed.extraContext,
+          })
+        : rawData;
+
+      if (
+        isCodexSite &&
+        codexSessionStoreKey &&
+        finalPayload &&
+        typeof finalPayload === 'object' &&
+        typeof (finalPayload as any).id === 'string'
+      ) {
+        setCodexSessionResponseId(codexSessionStoreKey, (finalPayload as any).id);
+      }
+
       await recordSurfaceSuccess({
         selected,
         requestedModel,
@@ -1692,30 +1729,8 @@ export async function handleGenericSurfaceRequest(
           errorLabel: '[proxy/generic] failed to record success metrics',
         },
         suppressLogUsageSource: adapter.format === 'gemini',
+        stickySessionKey,
       });
-
-      const finalPayload = adapter.transformResponse
-        ? adapter.transformResponse({
-            upstreamBody: rawData,
-            rawText,
-            modelName,
-            fallbackText,
-            defaultEncryptedReasoningInclude,
-            isCompactRequest,
-            operationHint: transformed.operationHint,
-            extraContext: transformed.extraContext,
-          })
-        : rawData;
-
-      if (
-        isCodexSite &&
-        codexSessionStoreKey &&
-        finalPayload &&
-        typeof finalPayload === 'object' &&
-        typeof (finalPayload as any).id === 'string'
-      ) {
-        setCodexSessionResponseId(codexSessionStoreKey, (finalPayload as any).id);
-      }
 
       await finalizeDebugSuccess(
         upstream.status,
@@ -1723,11 +1738,6 @@ export async function handleGenericSurfaceRequest(
         buildSurfaceProxyDebugResponseHeaders(upstream) ?? {},
         finalPayload,
       );
-      bindSurfaceStickyTarget({
-        stickySessionKey,
-        selected,
-      });
-
       return reply.code(upstream.status).send(finalPayload);
       }
     } finally {

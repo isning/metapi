@@ -51,6 +51,78 @@ export type RouteRuntimeExecutionAttemptSnapshot = {
   tokenId: RouteRuntimeNullableNumber;
   siteId: RouteRuntimeNullableNumber;
   credential: RouteRuntimeCredentialSnapshot | null;
+  affinity: {
+    mode: 'disabled' | 'pool' | 'target';
+    selectedPoolId: string | null;
+    selectedExecutionTargetId: RouteRuntimeNullableNumber;
+    primaryPoolId: string | null;
+    primaryExecutionTargetId: RouteRuntimeNullableNumber;
+    primaryRevision: RouteRuntimeNullableNumber;
+    fallback: boolean;
+    promoteOnSuccess: boolean;
+    bindingOutcome: 'pending' | 'bound' | 'primary_refreshed' | 'temporary_fallback' | 'promoted' | 'stale_ignored' | 'invalid' | 'disabled';
+    resultingPrimaryPoolId: string | null;
+    resultingPrimaryExecutionTargetId: RouteRuntimeNullableNumber;
+    resultingRevision: RouteRuntimeNullableNumber;
+  } | null;
+};
+
+export type RouteRuntimeDecisionCandidateSnapshot = {
+  choiceId: string;
+  endpointId: string | null;
+  executionTargetIds: number[];
+  targets?: Array<{
+    executionTargetId: number;
+    executionAttemptId: string | null;
+    upstreamModel: string | null;
+    credential: RouteRuntimeCredentialSnapshot | null;
+  }>;
+  enabled: boolean;
+  eligible: boolean;
+  selected: boolean;
+  weight: number;
+  contribution: number;
+  order: number;
+  score: number;
+};
+
+export type RouteRuntimeDecisionSelectorSnapshot = {
+  selectorId: string;
+  nodeId: string | null;
+  mode: string;
+  policySource: 'default' | 'registry' | 'inline' | 'builtin';
+  policyId: string | null;
+  policyKind: 'cel' | 'builtin' | null;
+  selectionMode: string | null;
+  selectedChoiceId: string | null;
+  candidates: RouteRuntimeDecisionCandidateSnapshot[];
+};
+
+export type RouteRuntimeDecisionSnapshot = {
+  selectedAlternativeId: string | null;
+  selectors: RouteRuntimeDecisionSelectorSnapshot[];
+  fallbackStages: Array<{
+    fallbackId: string;
+    stageId: string;
+    stageIndex: number;
+    nodeId: string;
+  }>;
+  unavailable?: {
+    reason: 'execution_attempts_exhausted' | 'no_active_runtime' | 'no_matching_route';
+    rejectedAttempts: Array<{
+      executionAttemptId: string | null;
+      executionTargetId: RouteRuntimeNullableNumber;
+      reason:
+        | 'execution_target_disabled'
+        | 'account_inactive'
+        | 'site_disabled'
+        | 'cooldown'
+        | 'downstream_policy_excluded'
+        | 'missing_token'
+        | 'identity_missing'
+        | 'route_scope_excluded';
+    }>;
+  };
 };
 
 export type RouteRuntimeStateSnapshot = {
@@ -100,6 +172,7 @@ export type RouteRuntimeSnapshotPayload = {
   compiledRuntime: RouteRuntimeCompiledSnapshot;
   match: RouteRuntimeMatchSnapshot;
   metadata: RouteRuntimeMetadataSnapshot;
+  decision: RouteRuntimeDecisionSnapshot | null;
   endpoint: RouteRuntimeEndpointSnapshot | null;
   executionAttempt: RouteRuntimeExecutionAttemptSnapshot | null;
   requestUsage: RouteRuntimeRequestUsageSnapshot;

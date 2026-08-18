@@ -1,9 +1,51 @@
 import { config } from '../config.js';
 
-type StickyEntry = {
-  targetId: number;
-  expiresAtMs: number;
+export type ProxyAffinityBinding =
+  | {
+    scope: 'target';
+    entryNodeId: string;
+    primaryExecutionTargetId: number;
+    revision: number;
+    expiresAtMs: number;
+  }
+  | {
+    scope: 'pool';
+    entryNodeId: string;
+    primaryPoolId: string;
+    revision: number;
+    expiresAtMs: number;
+  };
+
+export type ProxyAffinitySuccess = {
+  affinityKey?: string | null;
+  entryNodeId: string;
+  mode: 'disabled' | 'pool' | 'target';
+  selectedExecutionTargetId: number;
+  selectedPoolId?: string | null;
+  primaryRevision?: number | null;
+  primaryPoolId?: string | null;
+  primaryExecutionTargetId?: number | null;
+  fallback: boolean;
+  promoteOnSuccess: boolean;
+  ttlSec: number;
 };
+
+export type ProxyAffinityUpdateReason =
+  | 'disabled'
+  | 'invalid'
+  | 'bound'
+  | 'primary_refreshed'
+  | 'temporary_fallback'
+  | 'promoted'
+  | 'stale_ignored';
+
+export type ProxyAffinityUpdateResult = {
+  changed: boolean;
+  binding: ProxyAffinityBinding | null;
+  reason: ProxyAffinityUpdateReason;
+};
+
+type StickyEntry = ProxyAffinityBinding;
 
 type ActiveLeaseState = {
   release: () => void;
@@ -138,7 +180,7 @@ class ProxyTargetCoordinator {
     downstreamPath: string;
     downstreamApiKeyId?: number | null;
   }): string | null {
-    if (!config.proxyStickySessionEnabled || input.contentAffinityKey) return null;
+    if (input.contentAffinityKey) return null;
     const sessionId = String(input.sessionId || '').trim();
     if (!sessionId) return null;
     const requestedModel = String(input.requestedModel || '').trim().toLowerCase();
@@ -152,6 +194,7 @@ class ProxyTargetCoordinator {
   }
 
   getStickyTargetId(stickySessionKey?: string | null, nowMs = Date.now()): number | null {
+    if (!config.proxyStickySessionEnabled) return null;
     cleanupExpiredStickyBindings(nowMs);
     const normalizedKey = String(stickySessionKey || '').trim();
     if (!normalizedKey) return null;
@@ -160,7 +203,28 @@ class ProxyTargetCoordinator {
       stickySessionBindings.delete(normalizedKey);
       return null;
     }
-    return entry.targetId;
+    return entry.scope === 'target' ? entry.primaryExecutionTargetId : null;
+  }
+
+  getAffinityBinding(affinityKey?: string | null, nowMs = Date.now()): ProxyAffinityBinding | null {
+    cleanupExpiredStickyBindings(nowMs);
+    const normalizedKey = String(affinityKey || '').trim();
+    if (!normalizedKey) return null;
+    const entry = stickySessionBindings.get(normalizedKey);
+    if (!entry || entry.expiresAtMs <= nowMs) {
+      stickySessionBindings.delete(normalizedKey);
+      return null;
+    }
+    return { ...entry };
+  }
+
+  clearAffinityBinding(affinityKey?: string | null, expectedRevision?: number | null): boolean {
+    const key = String(affinityKey || '').trim();
+    if (!key) return false;
+    const existing = stickySessionBindings.get(key);
+    if (!existing) return false;
+    if (expectedRevision != null && existing.revision !== expectedRevision) return false;
+    return stickySessionBindings.delete(key);
   }
 
   bindStickyTarget(stickySessionKey: string | null | undefined, targetId: number, _accountIdentity?: SessionScopedTargetInput): void {
@@ -168,10 +232,82 @@ class ProxyTargetCoordinator {
     const normalizedKey = String(stickySessionKey || '').trim();
     if (!normalizedKey || !Number.isFinite(targetId) || targetId <= 0) return;
     cleanupExpiredStickyBindings();
+    const previous = stickySessionBindings.get(normalizedKey);
     stickySessionBindings.set(normalizedKey, {
-      targetId: Math.trunc(targetId),
+      scope: 'target',
+      entryNodeId: '',
+      primaryExecutionTargetId: Math.trunc(targetId),
+      revision: (previous?.revision || 0) + 1,
       expiresAtMs: Date.now() + getStickySessionTtlMs(),
     });
+  }
+
+  recordSuccessfulAffinitySelection(input: ProxyAffinitySuccess): ProxyAffinityUpdateResult {
+    const key = String(input.affinityKey || '').trim();
+    if (!key || input.mode === 'disabled') return { changed: false, binding: null, reason: 'disabled' };
+    cleanupExpiredStickyBindings();
+    const existing = stickySessionBindings.get(key) || null;
+    const ttlMs = Math.max(30_000, Math.trunc(Number(input.ttlSec) || 0) * 1000);
+    const nextTargetId = Math.trunc(Number(input.selectedExecutionTargetId));
+    const nextPoolId = String(input.selectedPoolId || '').trim();
+    if (!Number.isSafeInteger(nextTargetId) || nextTargetId <= 0) return { changed: false, binding: existing ? { ...existing } : null, reason: 'invalid' };
+    if (input.mode === 'pool' && !nextPoolId) return { changed: false, binding: existing ? { ...existing } : null, reason: 'invalid' };
+
+    if (!existing) {
+      const binding: ProxyAffinityBinding = input.mode === 'pool'
+        ? {
+            scope: 'pool',
+            entryNodeId: input.entryNodeId,
+            primaryPoolId: nextPoolId,
+            revision: 1,
+            expiresAtMs: Date.now() + ttlMs,
+          }
+        : {
+            scope: 'target',
+            entryNodeId: input.entryNodeId,
+            primaryExecutionTargetId: nextTargetId,
+            revision: 1,
+            expiresAtMs: Date.now() + ttlMs,
+          };
+      stickySessionBindings.set(key, binding);
+      return { changed: true, binding: { ...binding }, reason: 'bound' };
+    }
+
+    if (!input.fallback) {
+      existing.expiresAtMs = Date.now() + ttlMs;
+      return { changed: false, binding: { ...existing }, reason: 'primary_refreshed' };
+    }
+    if (existing.revision !== input.primaryRevision) {
+      return { changed: false, binding: { ...existing }, reason: 'stale_ignored' };
+    }
+    if (!input.promoteOnSuccess) {
+      // A temporary fallback still represents a successful request for the
+      // same session. Keep the original primary, but extend its lease while
+      // the session remains active.
+      existing.expiresAtMs = Date.now() + ttlMs;
+      return { changed: false, binding: { ...existing }, reason: 'temporary_fallback' };
+    }
+    const expectedPrimaryMatches = existing.scope === 'pool'
+      ? existing.primaryPoolId === input.primaryPoolId
+      : existing.primaryExecutionTargetId === input.primaryExecutionTargetId;
+    if (!expectedPrimaryMatches) return { changed: false, binding: { ...existing }, reason: 'stale_ignored' };
+    const promoted: ProxyAffinityBinding = input.mode === 'pool'
+      ? {
+          scope: 'pool',
+          entryNodeId: input.entryNodeId,
+          primaryPoolId: nextPoolId,
+          revision: existing.revision + 1,
+          expiresAtMs: Date.now() + ttlMs,
+        }
+      : {
+          scope: 'target',
+          entryNodeId: input.entryNodeId,
+          primaryExecutionTargetId: nextTargetId,
+          revision: existing.revision + 1,
+          expiresAtMs: Date.now() + ttlMs,
+        };
+    stickySessionBindings.set(key, promoted);
+    return { changed: true, binding: { ...promoted }, reason: 'promoted' };
   }
 
   clearStickyTarget(stickySessionKey?: string | null, targetId?: number | null): void {
@@ -179,7 +315,9 @@ class ProxyTargetCoordinator {
     if (!normalizedKey) return;
     const existing = stickySessionBindings.get(normalizedKey);
     if (!existing) return;
-    if (typeof targetId === 'number' && Number.isFinite(targetId) && existing.targetId !== Math.trunc(targetId)) {
+    if (typeof targetId === 'number' && Number.isFinite(targetId) && (
+      existing.scope !== 'target' || existing.primaryExecutionTargetId !== Math.trunc(targetId)
+    )) {
       return;
     }
     stickySessionBindings.delete(normalizedKey);

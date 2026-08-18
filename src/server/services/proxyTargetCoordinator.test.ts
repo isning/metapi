@@ -147,6 +147,114 @@ describe('proxyTargetCoordinator', () => {
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBe(42);
   });
 
+  it('refreshes a temporary affinity primary lease without promoting the fallback', () => {
+    const key = 'affinity:temporary-refresh';
+    const initial = proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'target',
+      selectedExecutionTargetId: 11,
+      primaryExecutionTargetId: null,
+      fallback: false,
+      promoteOnSuccess: false,
+      ttlSec: 30,
+    });
+    expect(initial.changed).toBe(true);
+    const firstBinding = proxyTargetCoordinator.getAffinityBinding(key);
+    expect(firstBinding).toMatchObject({ scope: 'target', primaryExecutionTargetId: 11, revision: 1 });
+
+    vi.advanceTimersByTime(20_000);
+    const fallback = proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'target',
+      selectedExecutionTargetId: 22,
+      primaryExecutionTargetId: 11,
+      primaryRevision: 1,
+      fallback: true,
+      promoteOnSuccess: false,
+      ttlSec: 30,
+    });
+    expect(fallback).toMatchObject({ changed: false, binding: { primaryExecutionTargetId: 11, revision: 1 } });
+
+    vi.advanceTimersByTime(15_000);
+    expect(proxyTargetCoordinator.getAffinityBinding(key)).toMatchObject({ primaryExecutionTargetId: 11, revision: 1 });
+  });
+
+  it('keeps graph-native affinity independent from the legacy sticky-session switch', () => {
+    config.proxyStickySessionEnabled = false;
+    const key = 'affinity:graph-native-switch';
+    const result = proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'target',
+      selectedExecutionTargetId: 11,
+      fallback: false,
+      promoteOnSuccess: false,
+      ttlSec: 60,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(proxyTargetCoordinator.getAffinityBinding(key)).toMatchObject({
+      scope: 'target',
+      primaryExecutionTargetId: 11,
+    });
+    expect(proxyTargetCoordinator.getStickyTargetId(key)).toBeNull();
+  });
+
+  it('reports binding, temporary fallback, promotion, and stale CAS outcomes', () => {
+    const key = 'affinity:observable-outcomes';
+    expect(proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'pool',
+      selectedExecutionTargetId: 11,
+      selectedPoolId: 'pool:primary',
+      fallback: false,
+      promoteOnSuccess: false,
+      ttlSec: 60,
+    })).toMatchObject({ reason: 'bound', changed: true, binding: { primaryPoolId: 'pool:primary', revision: 1 } });
+
+    expect(proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'pool',
+      selectedExecutionTargetId: 22,
+      selectedPoolId: 'pool:fallback',
+      primaryPoolId: 'pool:primary',
+      primaryRevision: 1,
+      fallback: true,
+      promoteOnSuccess: false,
+      ttlSec: 60,
+    })).toMatchObject({ reason: 'temporary_fallback', changed: false, binding: { primaryPoolId: 'pool:primary', revision: 1 } });
+
+    expect(proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'pool',
+      selectedExecutionTargetId: 22,
+      selectedPoolId: 'pool:fallback',
+      primaryPoolId: 'pool:primary',
+      primaryRevision: 1,
+      fallback: true,
+      promoteOnSuccess: true,
+      ttlSec: 60,
+    })).toMatchObject({ reason: 'promoted', changed: true, binding: { primaryPoolId: 'pool:fallback', revision: 2 } });
+
+    expect(proxyTargetCoordinator.recordSuccessfulAffinitySelection({
+      affinityKey: key,
+      entryNodeId: 'entry:test',
+      mode: 'pool',
+      selectedExecutionTargetId: 33,
+      selectedPoolId: 'pool:stale',
+      primaryPoolId: 'pool:primary',
+      primaryRevision: 1,
+      fallback: true,
+      promoteOnSuccess: true,
+      ttlSec: 60,
+    })).toMatchObject({ reason: 'stale_ignored', changed: false, binding: { primaryPoolId: 'pool:fallback', revision: 2 } });
+  });
+
   it('queues requests behind the active lease and grants the next waiter after release', async () => {
     const first = await proxyTargetCoordinator.acquireTargetLease({
       targetId: 11,

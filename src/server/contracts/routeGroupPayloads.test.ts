@@ -50,4 +50,14 @@ describe('route group payloads', () => {
       failureBackoff: { mode: 'custom', policy: { failureThreshold: 2, levelsSec: [0, 61], maxSec: 60 } },
     })).toMatchObject({ success: false });
   });
+
+  it('accepts Entry-scoped affinity policies and pools', () => {
+    expect(parseRouteGroupCreatePayload({
+      model: { publicName: 'model-a' },
+      affinity: {
+        policy: { kind: 'pool', ttlSec: 300, crossPoolFallback: 'promote_on_success' },
+        pools: [{ id: 'primary', members: [{ kind: 'execution_target', sourceRef: 'target-a' }] }],
+      },
+    })).toMatchObject({ success: true });
+  });
 });

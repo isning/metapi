@@ -42,6 +42,33 @@ const failureBackoffOverrideSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("disabled") }).strict(),
 ]);
 
+const crossScopeFallbackSchema = z.enum(["deny", "temporary", "promote_on_success"]);
+const affinityPolicySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("inherit_default") }).strict(),
+  z.object({ kind: z.literal("disabled") }).strict(),
+  z.object({
+    kind: z.literal("pool"),
+    ttlSec: z.number().int().min(30).optional(),
+    crossPoolFallback: crossScopeFallbackSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("target"),
+    ttlSec: z.number().int().min(30).optional(),
+    crossTargetFallback: crossScopeFallbackSchema,
+  }).strict(),
+]);
+const affinityConfigSchema = z.object({
+  policy: affinityPolicySchema,
+  pools: z.array(z.object({
+    id: z.string().trim().min(1),
+    label: z.string().trim().min(1).optional(),
+    members: z.array(z.object({
+      kind: z.literal("execution_target"),
+      sourceRef: z.string().trim().min(1),
+    }).strict()),
+  }).strict()).optional(),
+}).strict();
+
 const presentationSchema = z
   .object({
     displayName: z.union([z.string(), z.null()]).optional(),
@@ -85,6 +112,7 @@ const routeGroupCreateSchema = z
     presentation: presentationSchema.optional(),
     dispatcherPolicy: z.union([dispatcherPolicySchema, z.null()]).optional(),
     failureBackoff: z.union([failureBackoffOverrideSchema, z.null()]).optional(),
+    affinity: z.union([affinityConfigSchema, z.null()]).optional(),
     modelMapping: z.union([z.string(), z.null()]).optional(),
     filters: z.unknown().optional(),
     visibility: z.enum(["public", "internal"]).optional(),
@@ -99,6 +127,7 @@ const routeGroupUpdateSchema = z
     presentation: presentationSchema.optional(),
     dispatcherPolicy: z.union([dispatcherPolicySchema, z.null()]).optional(),
     failureBackoff: z.union([failureBackoffOverrideSchema, z.null()]).optional(),
+    affinity: z.union([affinityConfigSchema, z.null()]).optional(),
     modelMapping: z.union([z.string(), z.null()]).optional(),
     filters: z.unknown().optional(),
     visibility: z.enum(["public", "internal"]).optional(),

@@ -83,6 +83,7 @@ function emptyPrimitiveWorkspace(input: {
     residentElements: [],
     portals: [],
     diagnostics: input.artifact.diagnostics,
+    affinityTargets: [],
     totals: { nodes: 0, edges: 0, macros: 0 },
     capabilities: { editable: false, primitiveAvailable: false },
   };

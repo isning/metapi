@@ -528,6 +528,7 @@ export function projectRouteGraphFocusedGraphWindow(input: {
     })),
     portals: [...portals.values()],
     diagnostics: filterRouteGraphDiagnosticsForClosure(input.diagnostics, closure),
+    affinityTargets: [],
     totals: input.totals || {
       nodes: [...closure.elementIds].filter((elementId) => index.elementsById.get(elementId)?.node).length,
       edges: closure.edgeIds.size,

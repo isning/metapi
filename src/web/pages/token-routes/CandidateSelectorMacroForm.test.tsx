@@ -6,6 +6,7 @@ import { Select } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import { CandidateSelectorMacroForm } from './CandidateSelectorMacroForm.js';
 import { FailureBackoffEditor } from './FailureBackoffEditor.js';
+import { AffinityEditor } from './AffinityEditor.js';
 
 function macroWithCandidateSource(enabled = false) {
   return normalizeRouteGraphMacro({
@@ -33,6 +34,25 @@ function macroWithCandidateSource(enabled = false) {
 }
 
 describe('CandidateSelectorMacroForm', () => {
+  it('shows affinity only when the macro owns an external Entry', () => {
+    const embedded = macroWithCandidateSource(false);
+    const embeddedRoot = create(<CandidateSelectorMacroForm macro={embedded} readonly={false} endpoints={[]} macros={[]} onChange={vi.fn()} />);
+    expect(embeddedRoot.root.findAllByType(AffinityEditor)).toHaveLength(0);
+
+    const external = normalizeRouteGraphMacro({
+      ...embedded,
+      config: {
+        ...embedded.config,
+        surface: {
+          ...embedded.config.surface,
+          entry: { kind: 'external', match: { requestedModelPattern: 'external-model' } },
+        },
+      },
+    });
+    const externalRoot = create(<CandidateSelectorMacroForm macro={external} readonly={false} endpoints={[]} macros={[]} onChange={vi.fn()} />);
+    expect(externalRoot.root.findAllByType(AffinityEditor)).toHaveLength(1);
+  });
+
   it('authors the candidate universe on the macro rather than a fallback stage input', () => {
     const onChange = vi.fn();
     const macro = macroWithCandidateSource(false);

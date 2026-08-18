@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 
 import {
   createProxyRelayHarness,
   type ProxyRelayHarness,
 } from '../../../testing/proxyRelayHarness.js';
 import { doneSseChunk } from '../../../testing/upstreamMock.js';
+import { mapRouteRuntimeSnapshotToResponse } from '../../services/routeRuntimeDecisionSnapshotService.js';
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -548,5 +550,57 @@ describe('/v1/responses relay with scenario upstreams', () => {
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'responses-failure-model'
       && String(log.errorMessage || '').includes('responses upstream unavailable'))).toBe(true);
+  });
+
+  it('records a route runtime snapshot when every candidate is rejected before dispatch', async () => {
+    const model = 'responses-no-runtime-target';
+    const { managedKey, site, candidate } = await harness.seedRoute({ model });
+    await harness.db.update(harness.schema.sites)
+      .set({ status: 'disabled' })
+      .where(eq(harness.schema.sites.id, site.id))
+      .run();
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { 'x-api-key': managedKey.key },
+      payload: { model, input: 'do not dispatch' },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(harness.upstream.calls).toHaveLength(0);
+    const request = await harness.db.select().from(harness.schema.proxyRequests)
+      .where(eq(harness.schema.proxyRequests.requestedModel, model))
+      .get();
+    expect(request).toMatchObject({
+      status: 'failure',
+      httpStatus: 503,
+      runtimeEndpointId: null,
+      finalExecutionAttemptId: null,
+    });
+    const snapshot = JSON.parse(request?.decisionSnapshot || '{}');
+    expect(snapshot).toMatchObject({
+      match: {
+        requestedModel: model,
+        entryId: expect.any(String),
+      },
+      endpoint: null,
+      executionAttempt: null,
+      decision: {
+        unavailable: {
+          reason: 'execution_attempts_exhausted',
+          rejectedAttempts: [{
+            executionAttemptId: candidate.executionAttemptId,
+            executionTargetId: candidate.executionTargetId,
+            reason: 'site_disabled',
+          }],
+        },
+      },
+    });
+    expect(mapRouteRuntimeSnapshotToResponse(request?.decisionSnapshot)).toMatchObject({
+      source: 'snapshot',
+      request: { downstreamPath: '/v1/responses', stream: false },
+      decision: { unavailable: { reason: 'execution_attempts_exhausted' } },
+    });
   });
 });

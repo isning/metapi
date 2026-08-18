@@ -52,6 +52,7 @@ import { loadRouteGroupManagementCatalogRevision } from "./routeGroupManagementC
 import { getActiveRouteGraphSourceVersion } from "./routeGraphService.js";
 import { ensureRouteGraphExecutionTargetEndpoint } from "./routeGraphExecutionTargetEndpointService.js";
 import { RouteGroupCommandError } from "./routeGroupCommandError.js";
+import { normalizeEntryAffinityConfig } from "../../shared/routeAffinity.js";
 
 type RouteGroupVisibility = "public" | "internal";
 
@@ -353,6 +354,7 @@ function replaceMacroConfiguration(input: {
   dispatcherPolicy: DispatcherPolicy | undefined;
   filters: { operations: RouteFilter[] } | null | undefined;
   failureBackoff?: RouteFailureBackoffOverride | null;
+  affinity?: import("../../shared/routeAffinity.js").EntryAffinityConfig | null;
 }): RouteGraphMacro {
   const current = input.macro;
   const presentation =
@@ -388,6 +390,9 @@ function replaceMacroConfiguration(input: {
       ...(presentation ? { presentation } : {}),
       ...(input.failureBackoff === undefined ? {} : {
         failureBackoff: input.failureBackoff || undefined,
+      }),
+      ...(input.affinity === undefined ? {} : {
+        affinity: input.affinity || undefined,
       }),
     },
     metadata: {
@@ -465,6 +470,7 @@ export async function createRouteGroupFromPayload(
         enabled: input.enabled !== false,
         policy,
         failureBackoff: input.failureBackoff,
+        affinity: input.affinity ? normalizeEntryAffinityConfig(input.affinity) : input.affinity,
         filters: filters ? { operations: filters.operations } : null,
         ...(sourceSelection.kind === "model_pattern"
           ? { candidateSource: sourceSelection }
@@ -544,6 +550,9 @@ export async function updateRouteGroupFromPayload(
         filters,
         failureBackoff: hasOwn(body, "failureBackoff")
           ? (input.failureBackoff || null)
+          : undefined,
+        affinity: hasOwn(body, "affinity")
+          ? (input.affinity ? normalizeEntryAffinityConfig(input.affinity) : null)
           : undefined,
       });
       if (sourceSelection) {

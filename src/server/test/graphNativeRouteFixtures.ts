@@ -16,6 +16,7 @@ type GraphNativeRouteFixtureInput = {
   displayIcon?: string | null;
   enabled?: boolean;
   dispatcherPolicy?: RouteGroupCreatePayload['dispatcherPolicy'];
+  affinity?: RouteGroupCreatePayload['affinity'];
 };
 
 export function resetGraphNativeRouteFixtures() {
@@ -43,6 +44,7 @@ export async function createGraphNativeRouteFixture(input: GraphNativeRouteFixtu
     },
     dispatcherPolicy: input.dispatcherPolicy ?? null,
     enabled: input.enabled ?? true,
+    ...(input.affinity ? { affinity: input.affinity } : {}),
   });
   await publishCurrentGraphNativeRouteFixtures();
   return routeGroup;

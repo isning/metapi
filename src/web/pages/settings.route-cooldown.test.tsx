@@ -128,7 +128,9 @@ describe('Settings route cooldown cap', () => {
         }),
         proxyFirstByteTimeoutSec: 0,
         routeFailureCooldownMaxSec: 10,
+        siteApiEndpointBackoffDefault: { cooldownSec: 300, cooldownOn: ['transport', 'gateway'] },
         routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 } },
+        routeAffinityDefault: { kind: 'disabled' },
         routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });
@@ -224,7 +226,9 @@ describe('Settings route cooldown cap', () => {
         }),
         proxyFirstByteTimeoutSec: 7,
         routeFailureCooldownMaxSec: 30 * 24 * 60 * 60,
+        siteApiEndpointBackoffDefault: { cooldownSec: 300, cooldownOn: ['transport', 'gateway'] },
         routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 4, levelsSec: [0, 30, 120], maxSec: 120 } },
+        routeAffinityDefault: { kind: 'disabled' },
         routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });

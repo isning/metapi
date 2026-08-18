@@ -26,6 +26,12 @@ import { compactCompiledRouterBundle as compactRuntimeBundle } from './compiledR
 import {
   normalizeRouteFailureBackoffOverride,
 } from './routeFailureBackoff.js';
+import {
+  DEFAULT_ROUTE_AFFINITY_POLICY,
+  normalizeEntryAffinityConfig,
+  resolveRouteAffinityPolicy,
+  validateEntryAffinityConfig,
+} from './routeAffinity.js';
 export {
   DEFAULT_ROUTE_FAILURE_BACKOFF_POLICY,
   normalizeRouteFailureBackoffOverride,
@@ -503,6 +509,7 @@ function normalizeRouteExecutableTarget(input) {
   const accountId = normalizePositiveInteger(raw.accountId);
   const siteId = normalizePositiveInteger(raw.siteId);
   const executionTargetId = normalizePositiveInteger(raw.transportBinding?.executionTargetId);
+  const executionTargetSourceRef = normalizeString(raw.executionTargetSourceRef);
   const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
   return {
     targetId,
@@ -513,6 +520,7 @@ function normalizeRouteExecutableTarget(input) {
     ...(accountId ? { accountId } : {}),
     ...(siteId ? { siteId } : {}),
     ...(executionTargetId ? { transportBinding: { kind: 'execution_target', executionTargetId } } : {}),
+    ...(executionTargetSourceRef ? { executionTargetSourceRef } : {}),
     ...(Number.isFinite(Number(raw.weight)) ? { weight: Number(raw.weight) } : {}),
     ...(isPlainObject(raw.metadata) ? { metadata: raw.metadata } : {}),
     ...(isPlainObject(raw.compatibilityPolicy) ? { compatibilityPolicy: raw.compatibilityPolicy } : {}),
@@ -605,6 +613,9 @@ export function validateNativeRouteGraphSourcePolicies(sourceInput) {
 
   for (const node of Array.isArray(sourceInput.nodes) ? sourceInput.nodes : []) {
     if (!isPlainObject(node)) continue;
+    if (node.type === 'entry' && node.affinity !== undefined) {
+      errors.push(...validateEntryAffinityConfig(node.affinity).map((error) => `Invalid Entry affinity. ${error}`));
+    }
     if (node.type === 'dispatcher' && node.policy !== undefined) {
       validateDispatcher(node.policy, 'Invalid dispatcher policy');
     }
@@ -620,6 +631,9 @@ export function validateNativeRouteGraphSourcePolicies(sourceInput) {
     }
     if (macro.config.policy !== undefined) {
       validateDispatcher(macro.config.policy, 'Invalid macro dispatcher policy');
+    }
+    if (macro.config.affinity !== undefined) {
+      errors.push(...validateEntryAffinityConfig(macro.config.affinity).map((error) => `Invalid macro affinity. ${error}`));
     }
     for (const group of Array.isArray(macro.config.groups) ? macro.config.groups : []) {
       if (!isPlainObject(group)) continue;
@@ -647,6 +661,7 @@ export function normalizeRouteGraphNode(input) {
       ...base,
       type,
       match: normalizeRouteGraphMatchSpec(raw.match),
+      ...(isPlainObject(raw.affinity) ? { affinity: normalizeEntryAffinityConfig(raw.affinity) } : {}),
     };
   }
   if (type === 'route_endpoint') {
@@ -904,6 +919,7 @@ function normalizeCandidateSelectorConfig(input) {
     };
   const rawPolicy = isPlainObject(raw.policy) ? raw.policy : {};
   const failureBackoff = normalizeRouteFailureBackoffOverride(raw.failureBackoff);
+  const affinity = isPlainObject(raw.affinity) ? normalizeEntryAffinityConfig(raw.affinity) : null;
   const rawSurfacePorts = Array.isArray(rawSurface.ports) ? rawSurface.ports.map(normalizeMacroSurfacePort).filter((port) => port.id) : [];
   const defaultSurfacePorts = buildCandidateSelectorSurfacePorts({
     entry,
@@ -927,6 +943,7 @@ function normalizeCandidateSelectorConfig(input) {
     },
     policy: normalizeDispatcherPolicy(rawPolicy),
     ...(failureBackoff ? { failureBackoff } : {}),
+    ...(affinity ? { affinity } : {}),
     ...(filterOperations.length > 0 ? { filters: { operations: filterOperations } } : {}),
     ...(candidateSource?.kind === 'model_pattern'
       ? { candidateSource }
@@ -1040,6 +1057,7 @@ export function buildCandidateSelectorMacro(input) {
       policy: isPlainObject(input?.policy)
         ? normalizeDispatcherPolicy(input.policy)
         : { kind: 'inherit_default' },
+      ...(isPlainObject(input?.affinity) ? { affinity: normalizeEntryAffinityConfig(input.affinity) } : {}),
       ...(isPlainObject(input?.filters) ? { filters: normalizeCandidateSelectorConfig({ filters: input.filters }).filters } : {}),
       groups: candidateStages.map((group) => ({
         id: group.id,
@@ -1429,6 +1447,7 @@ function compiledEndpointTargetsForRouteEndpoint(endpointNode, endpointId, sourc
       ...(target.siteId !== undefined ? { siteId: target.siteId } : {}),
       ...(Number.isFinite(Number(target.weight)) ? { weight: Number(target.weight) } : {}),
       ...(isPlainObject(target.transportBinding) ? { transportBinding: target.transportBinding } : {}),
+      ...(normalizeString(target.executionTargetSourceRef) ? { executionTargetSourceRef: normalizeString(target.executionTargetSourceRef) } : {}),
       metadata: isPlainObject(target.metadata) ? target.metadata : {},
       ...(isPlainObject(target.compatibilityPolicy)
         ? { compatibilityPolicy: target.compatibilityPolicy }
@@ -2017,6 +2036,7 @@ function buildRouteProgramOpsForEntry(input) {
 function buildCompiledRouterPlanSource(input) {
   const semanticSource = input?.semanticSource;
   const primitiveSource = input?.primitiveSource;
+  const affinityDefault = input?.affinityDefault || DEFAULT_ROUTE_AFFINITY_POLICY;
   const {
     nodesById,
     routeEndpoints,
@@ -2032,11 +2052,16 @@ function buildCompiledRouterPlanSource(input) {
   for (const entry of entries) {
     if (entry.enabled === false || !normalizeString(entry.publicModelName)) continue;
     const entryNode = nodesById[entry.nodeId];
+    const affinity = normalizeEntryAffinityConfig(entryNode?.affinity);
     const program = {
       id: routeProgramIdForEntry(entry),
       entryNodeId: entry.nodeId,
       publicModelName: entry.publicModelName,
       enabled: entry.enabled !== false,
+      affinity: {
+        policy: resolveRouteAffinityPolicy(affinity.policy, affinityDefault),
+        pools: affinity.pools || [],
+      },
       ops: [],
       ...(isPlainObject(entryNode?.metadata) ? { metadata: entryNode.metadata } : {}),
       sourceRef: routeProgramSourceRefFromNode(entryNode),
@@ -2562,11 +2587,54 @@ function buildCompiledRouterPlanFromRouteProgram(program, diagnostics) {
 
   const indexes = visitOp(program.startOpId, [], [], [], new Set());
   if (!indexes || indexes.length === 0 || executionAlternatives.length === 0) return null;
+  const reachableTargetIdsBySourceRef = new Map();
+  const reachableTargetIds = new Set();
+  for (const alternative of executionAlternatives) {
+    const attempt = alternative.executionAttempt;
+    const executionTargetId = normalizePositiveInteger(attempt?.transportBinding?.executionTargetId);
+    if (!executionTargetId) continue;
+    reachableTargetIds.add(executionTargetId);
+    const executionTargetSourceRef = normalizeString(attempt?.executionTargetSourceRef);
+    if (executionTargetSourceRef) reachableTargetIdsBySourceRef.set(executionTargetSourceRef, executionTargetId);
+  }
+  const affinityPools = [];
+  const explicitlyAssignedTargetIds = new Set();
+  for (const configuredPool of Array.isArray(program.affinity?.pools) ? program.affinity.pools : []) {
+    const executionTargetIds = [];
+    for (const member of configuredPool.members || []) {
+      const sourceRef = normalizeString(member?.sourceRef);
+      const executionTargetId = reachableTargetIdsBySourceRef.get(sourceRef);
+      if (!executionTargetId) {
+        addDiagnostic(diagnostics, 'error', 'route_graph.affinity_member_unreachable', `Affinity pool ${configuredPool.id} references execution target ${sourceRef || '<missing>'} that is not reachable from Entry ${program.entryNodeId}.`, program.entryNodeId);
+        continue;
+      }
+      executionTargetIds.push(executionTargetId);
+      explicitlyAssignedTargetIds.add(executionTargetId);
+    }
+    if (executionTargetIds.length > 0) {
+      affinityPools.push({
+        id: configuredPool.id,
+        ...(configuredPool.label ? { label: configuredPool.label } : {}),
+        executionTargetIds: Array.from(new Set(executionTargetIds)),
+      });
+    }
+  }
+  if (program.affinity?.policy?.kind === 'pool') {
+    for (const executionTargetId of reachableTargetIds) {
+      if (explicitlyAssignedTargetIds.has(executionTargetId)) continue;
+      affinityPools.push({ id: `target:${executionTargetId}`, executionTargetIds: [executionTargetId] });
+      addDiagnostic(diagnostics, 'warning', 'route_graph.affinity_implicit_singleton', `Execution target ${executionTargetId} is not assigned to an affinity pool for Entry ${program.entryNodeId}; it will use a private single-target pool.`, program.entryNodeId);
+    }
+  }
   return {
     id: program.id,
     entryNodeId: program.entryNodeId,
     publicModelName: program.publicModelName,
     enabled: program.enabled !== false,
+    affinity: {
+      policy: program.affinity?.policy || DEFAULT_ROUTE_AFFINITY_POLICY,
+      pools: affinityPools,
+    },
     ...(isPlainObject(program.metadata) ? { metadata: program.metadata } : {}),
     filterStages,
     executionAlternatives,
@@ -2937,6 +3005,7 @@ function lowerCandidateSelectorMacro(macro, sourceNodeIndexes, sourceMacrosById)
       enabled: macro.enabled !== false,
       ownership: 'derived',
       match: config.surface.entry.match,
+      ...(config.affinity ? { affinity: config.affinity } : {}),
       metadata: {
         ...(normalizeString(macroMetadataProvenance.binding) ? { macroBinding: normalizeString(macroMetadataProvenance.binding) } : {}),
       },
@@ -3579,6 +3648,7 @@ function compileRouteGraph(sourceInput, options = {}) {
   const routerPlanSource = buildCompiledRouterPlanSource({
     semanticSource: lowered.semanticSource,
     primitiveSource: lowered.primitiveSource,
+    affinityDefault: options.affinityDefault,
   });
   if (!includePrimitiveSource) {
     lowered.primitiveSource.nodes = [];
@@ -3613,6 +3683,75 @@ export function validateRouteGraphSource(sourceInput) {
 
 export function compileRouteGraphSource(sourceInput, options = {}) {
   return compileRouteGraph(sourceInput, options);
+}
+
+/**
+ * Enumerates the execution targets that may participate in affinity for one
+ * semantic Entry owner.  The compiled plan is the authority here: walking the
+ * editable graph cannot account for lowered macros, graph references, or
+ * workspace windows that omit off-screen branches.
+ */
+export function collectCompiledRouteAffinityTargets(compiledGraphInput, focusInput, sourceGraphInput = null) {
+  const compiledGraph = isPlainObject(compiledGraphInput) ? compiledGraphInput : {};
+  const sourceGraph = isPlainObject(sourceGraphInput) ? sourceGraphInput : compiledGraph;
+  const bundle = isPlainObject(compiledGraph.compiledRouterBundle)
+    ? compiledGraph.compiledRouterBundle
+    : null;
+  const focus = isPlainObject(focusInput) ? focusInput : {};
+  const focusKind = normalizeString(focus.kind);
+  const focusId = normalizeString(focus.id);
+  if (!bundle || !focusId || (focusKind !== 'node' && focusKind !== 'macro')) return [];
+  const focusMacro = focusKind === 'macro'
+    ? (Array.isArray(sourceGraph.macros) ? sourceGraph.macros : []).find((macro) => normalizeString(macro?.id) === focusId)
+    : null;
+  const macroEndpointIds = new Set();
+  for (const group of Array.isArray(focusMacro?.config?.groups) ? focusMacro.config.groups : []) {
+    const input = isPlainObject(group?.input) ? group.input : {};
+    if (input.kind === 'route_endpoints') {
+      for (const endpointId of Array.isArray(input.endpointIds) ? input.endpointIds : []) {
+        if (normalizeString(endpointId)) macroEndpointIds.add(normalizeString(endpointId));
+      }
+    }
+    if (input.kind === 'inline_endpoints') {
+      for (const endpoint of Array.isArray(input.endpoints) ? input.endpoints : []) {
+        if (normalizeString(endpoint?.endpointId)) macroEndpointIds.add(normalizeString(endpoint.endpointId));
+      }
+    }
+  }
+
+  const targets = new Map();
+  for (const plan of Array.isArray(bundle.plans) ? bundle.plans : []) {
+    const sourceRef = isPlainObject(plan?.sourceRef) ? plan.sourceRef : {};
+    for (const alternative of Array.isArray(plan?.executionAlternatives) ? plan.executionAlternatives : []) {
+      const alternativeSourceRefs = [
+        sourceRef,
+        ...(Array.isArray(alternative?.fallbackStages)
+          ? alternative.fallbackStages.map((stage) => isPlainObject(stage?.sourceRef) ? stage.sourceRef : {})
+          : []),
+      ];
+      const ownsAlternative = focusKind === 'node'
+        ? normalizeString(plan?.entryNodeId) === focusId
+        : alternativeSourceRefs.some((ref) => normalizeString(ref.macroId) === focusId)
+          || macroEndpointIds.has(normalizeString(alternative?.endpoint?.endpointId));
+      if (!ownsAlternative) continue;
+      const attempt = isPlainObject(alternative?.executionAttempt) ? alternative.executionAttempt : null;
+      const executionTargetSourceRef = normalizeString(attempt?.executionTargetSourceRef);
+      const executionTargetId = normalizePositiveInteger(attempt?.transportBinding?.executionTargetId);
+      if (!executionTargetSourceRef || !executionTargetId || targets.has(executionTargetSourceRef)) continue;
+      targets.set(executionTargetSourceRef, {
+        sourceRef: executionTargetSourceRef,
+        executionTargetId,
+        model: normalizeString(attempt.model),
+        ...(attempt.siteId !== undefined ? { siteId: attempt.siteId } : {}),
+        ...(attempt.accountId !== undefined ? { accountId: attempt.accountId } : {}),
+        ...(attempt.tokenId !== undefined ? { tokenId: attempt.tokenId } : {}),
+        ...(isPlainObject(alternative.endpoint) && normalizeString(alternative.endpoint.endpointId)
+          ? { endpointId: normalizeString(alternative.endpoint.endpointId) }
+          : {}),
+      });
+    }
+  }
+  return Array.from(targets.values());
 }
 
 export function findRouteGraphEntryForModel(compiledGraph, model) {

@@ -70,6 +70,7 @@ type SurfaceSelectedExecutionAttempt = {
   executionTargetId: number;
   routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
   failureBackoff?: unknown;
+  affinity?: import('../../services/proxyTargetCoordinator.js').ProxyAffinitySuccess | null;
 };
 
 function credentialFailureKindForAttempt(
@@ -218,6 +219,7 @@ export async function createSurfaceRuntimeDecisionSession(input: {
   request?: CompiledRouteRuntimeRequest | null;
   downstreamPolicy: DownstreamRoutingPolicy;
   stickyExecutionTargetId?: number | null;
+  affinityKey?: string | null;
   forcedExecutionAttemptId?: string | null;
 }): Promise<RouteRuntimeDecisionSession> {
   return await createRouteRuntimeDecisionSession(input);
@@ -307,13 +309,31 @@ export function bindSurfaceStickyTarget(input: {
   selected: {
     target: { id: number };
     account?: { credentialMode?: string | null; oauthProvider?: string | null } | null;
+    affinity?: import('../../services/proxyTargetCoordinator.js').ProxyAffinitySuccess | null;
+    routeRuntimeSnapshot?: RouteRuntimeSnapshotBody;
   };
-}): void {
+}): import('../../services/proxyTargetCoordinator.js').ProxyAffinityUpdateResult | null {
+  if (input.selected.affinity) {
+    const result = proxyTargetCoordinator.recordSuccessfulAffinitySelection(input.selected.affinity);
+    const snapshot = input.selected.routeRuntimeSnapshot?.executionAttempt?.affinity;
+    if (snapshot) {
+      snapshot.bindingOutcome = result.reason;
+      snapshot.resultingPrimaryPoolId = result.binding?.scope === 'pool'
+        ? result.binding.primaryPoolId
+        : null;
+      snapshot.resultingPrimaryExecutionTargetId = result.binding?.scope === 'target'
+        ? result.binding.primaryExecutionTargetId
+        : null;
+      snapshot.resultingRevision = result.binding?.revision ?? null;
+    }
+    return result;
+  }
   proxyTargetCoordinator.bindStickyTarget(
     input.stickySessionKey,
     input.selected.target.id,
     input.selected.account || undefined,
   );
+  return null;
 }
 
 export function clearSurfaceStickyTarget(input: {
@@ -322,6 +342,10 @@ export function clearSurfaceStickyTarget(input: {
     target: { id: number };
   };
 }): void {
+  // Graph-native affinity keeps its primary across ordinary attempt failures.
+  // Invalid Entry/Pool/Target identities are cleared when a new decision
+  // session validates the binding against the active immutable artifact.
+  if ('affinity' in input.selected && input.selected.affinity) return;
   proxyTargetCoordinator.clearStickyTarget(
     input.stickySessionKey,
     input.selected.target.id,
@@ -547,6 +571,7 @@ export async function recordSurfaceSuccess(input: {
     errorLabel: string;
   };
   suppressLogUsageSource?: boolean;
+  stickySessionKey?: string | null;
 }): Promise<{
   resolvedUsage: SurfaceResolvedUsageSummary;
   estimatedCost: number | null;
@@ -658,6 +683,10 @@ export async function recordSurfaceSuccess(input: {
       completionTokens: resolvedUsage.completionTokens,
       totalTokens: resolvedUsage.totalTokens,
     };
+  bindSurfaceStickyTarget({
+    stickySessionKey: input.stickySessionKey,
+    selected: input.selected,
+  });
   await input.logSuccess({
     selected: input.selected,
     modelRequested: input.requestedModel,
@@ -721,26 +750,6 @@ export function createSurfaceFailureToolkit(input: {
     billingDetails?: unknown;
     upstreamPath?: string | null;
   }) => {
-    if (input.executionSession && (args.status === 'success' || args.status === 'failed')) {
-      await completeCompiledRuntimeExecutionSession(input.executionSession, {
-        status: args.status === 'success' ? 'success' : 'failure',
-        httpStatus: args.httpStatus,
-        executionAttemptId: args.selected.executionAttemptId,
-        runtimeEndpointId: args.selected.runtimeEndpointId,
-        actualModel: args.selected.actualModel ?? null,
-        siteId: typeof args.selected.site.id === 'number' ? args.selected.site.id : null,
-        accountId: args.selected.account.id,
-        isStream: args.isStream ?? null,
-        latencyMs: args.latencyMs,
-        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
-        promptTokens: args.promptTokens ?? null,
-        completionTokens: args.completionTokens ?? null,
-        totalTokens: args.totalTokens ?? null,
-        estimatedCost: args.estimatedCost ?? null,
-        billingDetails: args.billingDetails ?? null,
-        errorMessage: args.errorMessage,
-      });
-    }
     await writeSurfaceProxyLog({
       warningScope: input.warningScope,
       requestId: input.requestId ?? null,
@@ -765,6 +774,27 @@ export function createSurfaceFailureToolkit(input: {
       clientContext: input.clientContext,
       downstreamApiKeyId: input.downstreamApiKeyId,
     });
+    if (input.executionSession && (args.status === 'success' || args.status === 'failed')) {
+      await completeCompiledRuntimeExecutionSession(input.executionSession, {
+        status: args.status === 'success' ? 'success' : 'failure',
+        httpStatus: args.httpStatus,
+        executionAttemptId: args.selected.executionAttemptId,
+        runtimeEndpointId: args.selected.runtimeEndpointId,
+        actualModel: args.selected.actualModel ?? null,
+        siteId: typeof args.selected.site.id === 'number' ? args.selected.site.id : null,
+        accountId: args.selected.account.id,
+        isStream: args.isStream ?? null,
+        latencyMs: args.latencyMs,
+        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
+        promptTokens: args.promptTokens ?? null,
+        completionTokens: args.completionTokens ?? null,
+        totalTokens: args.totalTokens ?? null,
+        estimatedCost: args.estimatedCost ?? null,
+        billingDetails: args.billingDetails ?? null,
+        errorMessage: args.errorMessage,
+        decisionSnapshot: args.selected.routeRuntimeSnapshot,
+      });
+    }
   };
 
   const runBestEffort = (label: string, fn: () => Promise<unknown>) => {

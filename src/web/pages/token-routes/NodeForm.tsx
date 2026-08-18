@@ -14,6 +14,7 @@ import { Switch } from '../../components/ui/switch/index.js';
 import { tr } from '../../i18n.js';
 import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
 import { FailureBackoffEditor } from './FailureBackoffEditor.js';
+import { AffinityEditor, type AffinityTargetOption } from './AffinityEditor.js';
 
 const FILTER_TYPES: Array<{ value: RouteFilter['type']; label: string }> = [
   { value: 'rewrite_model', label: tr('pages.tokenRoutes.nodeForm.filterRewriteModel') },
@@ -71,6 +72,7 @@ export function NodeForm({
   onDelete,
   policyRegistry,
   referenceEndpoints = [],
+  affinityTargets = [],
   referenceEndpointCatalog,
 }: {
   node: RouteGraphNode;
@@ -79,6 +81,7 @@ export function NodeForm({
   onDelete: () => void;
   policyRegistry?: DispatchPolicyRegistryPayload | null;
   referenceEndpoints?: Array<{ id: string; label: string }>;
+  affinityTargets?: AffinityTargetOption[];
   referenceEndpointCatalog?: {
     query: string;
     loading: boolean;
@@ -88,11 +91,11 @@ export function NodeForm({
   };
 }) {
   const patch = (data: Partial<RouteGraphNode>) => onChange({ ...node, ...data } as RouteGraphNode);
-  return <div className="grid gap-4 text-sm"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.name')}<Input disabled={readonly} value={node.name || ''} onChange={(event) => patch({ name: event.target.value })} /></label><label className="flex items-center justify-between gap-3 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.enabled')}<Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => patch({ enabled })} /></label>{node.type === 'entry' && <EntryNodeForm node={node} readonly={readonly} onChange={patch} />}{node.type === 'filter' && <FilterOperationsEditor value={node.operations} disabled={readonly} onChange={(operations) => patch({ operations } as Partial<RouteGraphNode>)} />}{node.type === 'dispatcher' && <DispatcherNodeForm node={node} readonly={readonly} registry={policyRegistry} onChange={patch} />}{node.type === 'route_endpoint' && <RouteEndpointNodeForm node={node} readonly={readonly} registry={policyRegistry} referenceEndpoints={referenceEndpoints.filter((item) => item.id !== node.routeEndpointId)} referenceEndpointCatalog={referenceEndpointCatalog} onChange={patch} />}{node.type === 'synthetic_endpoint' && <SyntheticEndpointNodeForm node={node} readonly={readonly} onChange={patch} />}{!readonly && <Button type="button" variant="destructive" size="sm" onClick={onDelete}><Trash2 className="size-4" />{tr('pages.tokenRoutes.nodeForm.delete')}</Button>}</div>;
+  return <div className="grid gap-4 text-sm"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.name')}<Input disabled={readonly} value={node.name || ''} onChange={(event) => patch({ name: event.target.value })} /></label><label className="flex items-center justify-between gap-3 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.enabled')}<Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => patch({ enabled })} /></label>{node.type === 'entry' && <EntryNodeForm node={node} readonly={readonly} affinityTargets={affinityTargets || []} onChange={patch} />}{node.type === 'filter' && <FilterOperationsEditor value={node.operations} disabled={readonly} onChange={(operations) => patch({ operations } as Partial<RouteGraphNode>)} />}{node.type === 'dispatcher' && <DispatcherNodeForm node={node} readonly={readonly} registry={policyRegistry} onChange={patch} />}{node.type === 'route_endpoint' && <RouteEndpointNodeForm node={node} readonly={readonly} registry={policyRegistry} referenceEndpoints={referenceEndpoints.filter((item) => item.id !== node.routeEndpointId)} referenceEndpointCatalog={referenceEndpointCatalog} onChange={patch} />}{node.type === 'synthetic_endpoint' && <SyntheticEndpointNodeForm node={node} readonly={readonly} onChange={patch} />}{!readonly && <Button type="button" variant="destructive" size="sm" onClick={onDelete}><Trash2 className="size-4" />{tr('pages.tokenRoutes.nodeForm.delete')}</Button>}</div>;
 }
 
-function EntryNodeForm({ node, readonly, onChange }: { node: Extract<RouteGraphNode, { type: 'entry' }>; readonly: boolean; onChange: (patch: Partial<RouteGraphNode>) => void }) {
-  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.requestedModelPattern')}<Input disabled={readonly} value={node.match.requestedModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, requestedModelPattern: event.target.value } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.upstreamModel')}<Input disabled={readonly} value={node.match.currentModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, currentModelPattern: event.target.value || undefined } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.publicDisplayName')}<Input disabled={readonly} value={node.match.displayName || ''} onChange={(event) => onChange({ match: { ...node.match, displayName: event.target.value || null } } as Partial<RouteGraphNode>)} /></label></div>;
+function EntryNodeForm({ node, readonly, affinityTargets, onChange }: { node: Extract<RouteGraphNode, { type: 'entry' }>; readonly: boolean; affinityTargets: AffinityTargetOption[]; onChange: (patch: Partial<RouteGraphNode>) => void }) {
+  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.requestedModelPattern')}<Input disabled={readonly} value={node.match.requestedModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, requestedModelPattern: event.target.value } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.upstreamModel')}<Input disabled={readonly} value={node.match.currentModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, currentModelPattern: event.target.value || undefined } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.publicDisplayName')}<Input disabled={readonly} value={node.match.displayName || ''} onChange={(event) => onChange({ match: { ...node.match, displayName: event.target.value || null } } as Partial<RouteGraphNode>)} /></label><div className="rounded-lg border bg-muted/10 p-3"><AffinityEditor disabled={readonly} value={node.affinity || { policy: { kind: 'inherit_default' }, pools: [] }} targetOptions={affinityTargets} onChange={(affinity) => onChange({ affinity } as Partial<RouteGraphNode>)} /></div></div>;
 }
 
 function DispatcherNodeForm({ node, readonly, registry, onChange }: { node: Extract<RouteGraphNode, { type: 'dispatcher' }>; readonly: boolean; registry?: DispatchPolicyRegistryPayload | null; onChange: (patch: Partial<RouteGraphNode>) => void }) {

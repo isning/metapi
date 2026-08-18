@@ -52,6 +52,7 @@ export type RouteGroupFacadeMacroInput = {
   enabled?: boolean;
   policy?: DispatcherPolicy | null;
   failureBackoff?: RouteFailureBackoffOverride | null;
+  affinity?: CandidateSelectorMacroConfig["affinity"] | null;
   filters?: { operations: RouteFilter[] } | null;
   candidateSource?: CandidateSelectorMacroConfig["candidateSource"] | null;
   stages?: RouteGroupFacadeStage[];
@@ -184,6 +185,7 @@ export function createRouteGroupFacadeMacro(
       surface: macroSurface(input),
       policy: input.policy || { kind: "inherit_default" },
       ...(input.failureBackoff ? { failureBackoff: input.failureBackoff } : {}),
+      ...(input.affinity ? { affinity: input.affinity } : {}),
       ...(input.filters ? { filters: input.filters } : {}),
       ...(input.candidateSource ? { candidateSource: input.candidateSource } : {}),
       groups: normalizeStages(input.stages, !!input.candidateSource),

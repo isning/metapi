@@ -11,6 +11,7 @@ import { tr } from '../../i18n.js';
 import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
 import { FailureBackoffEditor } from './FailureBackoffEditor.js';
 import { FilterOperationsEditor } from './NodeForm.js';
+import { AffinityEditor, type AffinityTargetOption } from './AffinityEditor.js';
 
 type Group = CandidateSelectorMacroConfig['groups'][number];
 type GroupInput = Group['input'];
@@ -140,6 +141,7 @@ export function CandidateSelectorMacroForm({
   registry,
   endpoints,
   macros,
+  affinityTargets = [],
   onChange,
 }: {
   macro: RouteGraphMacro;
@@ -147,6 +149,7 @@ export function CandidateSelectorMacroForm({
   registry?: DispatchPolicyRegistryPayload | null;
   endpoints: Array<{ id: string; label: string }>;
   macros: Array<{ id: string; label: string }>;
+  affinityTargets?: AffinityTargetOption[];
   onChange: (macro: RouteGraphMacro) => void;
 }) {
   const patchConfig = (patch: Partial<CandidateSelectorMacroConfig>) => onChange({
@@ -194,6 +197,9 @@ export function CandidateSelectorMacroForm({
         <DispatcherPolicySelect disabled={readonly} value={macro.config.policy} registry={registry} onChange={(policy) => patchConfig({ policy: policy || { kind: 'inherit_default' } })} />
       </label>
       <FailureBackoffEditor disabled={readonly} value={macro.config.failureBackoff || null} onChange={(failureBackoff) => patchConfig({ failureBackoff: failureBackoff || undefined })} />
+      {macro.config.surface.entry.kind === 'external' ? (
+        <div className="rounded-lg border bg-muted/10 p-3"><AffinityEditor disabled={readonly} value={macro.config.affinity || { policy: { kind: 'inherit_default' }, pools: [] }} targetOptions={affinityTargets} onChange={(affinity) => patchConfig({ affinity })} /></div>
+      ) : null}
       <div className="grid gap-2 rounded-md border p-3">
         <label className="grid gap-1.5 text-muted-foreground">
           {tr('pages.tokenRoutes.routeGraphWorkspace.macroCandidateSource')}

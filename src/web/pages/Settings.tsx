@@ -10,6 +10,8 @@ import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
 import { FailureBackoffEditor } from './token-routes/FailureBackoffEditor.js';
+import { AffinityEditor } from './token-routes/AffinityEditor.js';
+import type { ResolvedRouteAffinityPolicy } from '../../shared/routeAffinity.js';
 import CostPolicySettingsSection from './settings/CostPolicySettingsSection.js';
 import DispatchPolicyEditor from './settings/DispatchPolicyEditor.js';
 import {
@@ -33,6 +35,7 @@ import ToneBadge from '../components/ToneBadge.js';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Label } from '../components/ui/label/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
@@ -86,7 +89,12 @@ type RuntimeSettings = {
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
+  siteApiEndpointBackoffDefault: {
+    cooldownSec: number;
+    cooldownOn: Array<'transport' | 'gateway' | 'rate_limit' | 'upstream_server'>;
+  };
   routeFailureBackoffDefault: { mode: 'custom'; policy: { failureThreshold: number; levelsSec: number[]; maxSec: number } } | { mode: 'disabled' };
+  routeAffinityDefault: ResolvedRouteAffinityPolicy;
   routeRuntimeCacheTtlMs: number;
   dispatchPolicyRegistry: DispatchPolicyRegistryPayload;
   systemProxyUrl: string;
@@ -248,7 +256,9 @@ export default function Settings() {
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
+    siteApiEndpointBackoffDefault: { cooldownSec: 300, cooldownOn: ['transport', 'gateway'] },
     routeFailureBackoffDefault: { mode: 'custom', policy: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 } },
+    routeAffinityDefault: { kind: 'disabled' },
     routeRuntimeCacheTtlMs: 1500,
     dispatchPolicyRegistry: defaultDispatchPolicyRegistry,
     systemProxyUrl: '',
@@ -412,7 +422,9 @@ export default function Settings() {
           : 0,
         routeFailureCooldownMaxValue: routeCooldownInput.value,
         routeFailureCooldownMaxUnit: routeCooldownInput.unit,
+        siteApiEndpointBackoffDefault: runtimeInfo.siteApiEndpointBackoffDefault || { cooldownSec: 300, cooldownOn: ['transport', 'gateway'] },
         routeFailureBackoffDefault: runtimeInfo.routeFailureBackoffDefault || { mode: 'custom', policy: { failureThreshold: 3, levelsSec: [0, 600, 3600, 86400], maxSec: 86400 } },
+        routeAffinityDefault: runtimeInfo.routeAffinityDefault || { kind: 'disabled' },
         routeRuntimeCacheTtlMs: Number(runtimeInfo.routeRuntimeCacheTtlMs) >= 100
           ? Math.trunc(Number(runtimeInfo.routeRuntimeCacheTtlMs))
           : 1500,
@@ -740,6 +752,8 @@ export default function Settings() {
           runtime.routeFailureCooldownMaxUnit,
         ),
         routeFailureBackoffDefault: runtime.routeFailureBackoffDefault,
+        siteApiEndpointBackoffDefault: runtime.siteApiEndpointBackoffDefault,
+        routeAffinityDefault: runtime.routeAffinityDefault,
         routeRuntimeCacheTtlMs: runtime.routeRuntimeCacheTtlMs,
         disableCrossProtocolFallback: runtime.disableCrossProtocolFallback,
       });
@@ -1540,6 +1554,78 @@ export default function Settings() {
                 if (!value) return;
                 setRuntime((current) => ({ ...current, routeFailureBackoffDefault: value }));
               }}
+            />
+          </div>
+
+          <div className="grid gap-3 border-t pt-4">
+            <div>
+              <div className="text-sm font-medium">{tr('pages.settings.apiEndpointBackoffDefault')}</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.settings.apiEndpointBackoffDefaultHint')}</div>
+            </div>
+            <SettingsField label={tr('pages.settings.apiEndpointBackoffCooldown')}>
+              <Input
+                className="max-w-40"
+                type="number"
+                min={1}
+                max={86400}
+                step={1}
+                value={runtime.siteApiEndpointBackoffDefault.cooldownSec}
+                onChange={(event) => {
+                  const cooldownSec = Number(event.target.value);
+                  if (!Number.isFinite(cooldownSec)) return;
+                  setRuntime((current) => ({
+                    ...current,
+                    siteApiEndpointBackoffDefault: {
+                      ...current.siteApiEndpointBackoffDefault,
+                      cooldownSec: Math.max(1, Math.min(86400, Math.trunc(cooldownSec))),
+                    },
+                  }));
+                }}
+              />
+            </SettingsField>
+            <div className="grid gap-2">
+              <div className="text-xs font-medium text-muted-foreground">{tr('pages.settings.apiEndpointBackoffOn')}</div>
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                {([
+                  ['transport', 'pages.settings.apiEndpointBackoffTransport'],
+                  ['gateway', 'pages.settings.apiEndpointBackoffGateway'],
+                  ['rate_limit', 'pages.settings.apiEndpointBackoffRateLimit'],
+                  ['upstream_server', 'pages.settings.apiEndpointBackoffUpstreamServer'],
+                ] as const).map(([failureClass, label]) => (
+                  <Label key={failureClass} className="flex items-center gap-2 text-sm font-normal">
+                    <Checkbox
+                      checked={runtime.siteApiEndpointBackoffDefault.cooldownOn.includes(failureClass)}
+                      onCheckedChange={(checked) => setRuntime((current) => ({
+                        ...current,
+                        siteApiEndpointBackoffDefault: {
+                          ...current.siteApiEndpointBackoffDefault,
+                          cooldownOn: checked === true
+                            ? [...new Set([...current.siteApiEndpointBackoffDefault.cooldownOn, failureClass])]
+                            : current.siteApiEndpointBackoffDefault.cooldownOn.filter((item) => item !== failureClass),
+                        },
+                      }))}
+                    />
+                    {tr(label)}
+                  </Label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-2 border-t pt-4">
+            <div className="text-sm font-medium">{tr('pages.settings.affinityDefault')}</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.settings.affinityDefaultHint')}</div>
+            <AffinityEditor
+              allowInherit={false}
+              showPools={false}
+              showHeader={false}
+              value={{ policy: runtime.routeAffinityDefault }}
+              onChange={(value) => setRuntime((current) => ({
+                ...current,
+                routeAffinityDefault: value.policy.kind === 'inherit_default'
+                  ? { kind: 'disabled' }
+                  : value.policy,
+              }))}
             />
           </div>
 

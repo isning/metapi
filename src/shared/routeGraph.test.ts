@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCandidateSelectorMacro,
+  collectCompiledRouteAffinityTargets,
   compileRouteGraphSource,
   findRouteGraphEntryForModel,
   getRouteGraphMacroPorts,
@@ -38,6 +39,144 @@ describe('route graph native exposure semantics', () => {
       },
     });
     expect(macro.config.failureBackoff).toEqual({ mode: 'disabled' });
+  });
+
+  it('resolves an Entry-local pool across independent endpoint branches by sourceRef', () => {
+    const source = {
+      nodes: [
+        {
+          id: 'entry:affinity-branches',
+          type: 'entry',
+          enabled: true,
+          ownership: 'manual',
+          match: { requestedModelPattern: 'affinity-branches' },
+          affinity: {
+            policy: { kind: 'pool', ttlSec: 600, crossPoolFallback: 'deny' },
+            pools: [{
+              id: 'pool:shared-state',
+              members: [
+                { kind: 'execution_target', sourceRef: 'source:branch-a' },
+                { kind: 'execution_target', sourceRef: 'source:branch-b' },
+              ],
+            }],
+          },
+        },
+        { id: 'dispatcher:affinity-branches', type: 'dispatcher', enabled: true, ownership: 'manual', mode: 'route' },
+        {
+          id: 'endpoint:affinity-a',
+          type: 'route_endpoint',
+          routeEndpointId: 'endpoint:affinity-a',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          ownerKind: 'manual',
+          sourceKind: 'upstream_model',
+          enabled: true,
+          ownership: 'manual',
+          config: {
+            targets: [{
+              targetId: 'target:branch-a',
+              model: 'branch-a',
+              executionTargetSourceRef: 'source:branch-a',
+              transportBinding: { kind: 'execution_target', executionTargetId: 301 },
+            }],
+          },
+        },
+        {
+          id: 'endpoint:affinity-b',
+          type: 'route_endpoint',
+          routeEndpointId: 'endpoint:affinity-b',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          ownerKind: 'manual',
+          sourceKind: 'upstream_model',
+          enabled: true,
+          ownership: 'manual',
+          config: {
+            targets: [{
+              targetId: 'target:branch-b',
+              model: 'branch-b',
+              executionTargetSourceRef: 'source:branch-b',
+              transportBinding: { kind: 'execution_target', executionTargetId: 302 },
+            }],
+          },
+        },
+      ],
+      edges: [
+        { id: 'edge:affinity-entry', sourceNodeId: 'entry:affinity-branches', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:affinity-branches', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'edge:affinity-a', sourceNodeId: 'endpoint:affinity-a', sourcePortId: 'route.out', targetNodeId: 'dispatcher:affinity-branches', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'edge:affinity-b', sourceNodeId: 'endpoint:affinity-b', sourcePortId: 'route.out', targetNodeId: 'dispatcher:affinity-branches', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+      ],
+    };
+
+    const result = compileRouteGraphSource(source);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([]);
+    expect(result.compiled.compiledRouterBundle?.plans[0]?.affinity).toEqual({
+      policy: { kind: 'pool', ttlSec: 600, crossPoolFallback: 'deny' },
+      pools: [{ id: 'pool:shared-state', executionTargetIds: [301, 302] }],
+    });
+    expect(collectCompiledRouteAffinityTargets(result.compiled, { kind: 'node', id: 'entry:affinity-branches' })).toEqual([
+      expect.objectContaining({ sourceRef: 'source:branch-a', executionTargetId: 301, model: 'branch-a' }),
+      expect.objectContaining({ sourceRef: 'source:branch-b', executionTargetId: 302, model: 'branch-b' }),
+    ]);
+    expect(collectCompiledRouteAffinityTargets(result.compiled, { kind: 'node', id: 'entry:unrelated' })).toEqual([]);
+  });
+
+  it('projects targets owned by a lowered macro from alternative provenance', () => {
+    const compiled = {
+      compiledRouterBundle: {
+        plans: [{
+          entryNodeId: 'entry:public',
+          sourceRef: { nodeId: 'entry:public' },
+          executionAlternatives: [{
+            fallbackStages: [{
+              stageId: 'stage:one',
+              sourceRef: { macroId: 'macro:managed-route' },
+            }],
+            endpoint: { endpointId: 'endpoint:one' },
+            executionAttempt: {
+              model: 'model-one',
+              executionTargetSourceRef: 'source:one',
+              transportBinding: { executionTargetId: 401 },
+            },
+          }],
+        }],
+      },
+    };
+
+    expect(collectCompiledRouteAffinityTargets(compiled, { kind: 'macro', id: 'macro:managed-route' })).toEqual([
+      expect.objectContaining({ sourceRef: 'source:one', executionTargetId: 401, model: 'model-one' }),
+    ]);
+    expect(collectCompiledRouteAffinityTargets(compiled, { kind: 'macro', id: 'macro:other' })).toEqual([]);
+  });
+
+  it('projects a single-stage macro target after fallback provenance is elided', () => {
+    const compiled = {
+      macros: [{
+        id: 'macro:single-stage',
+        config: { groups: [{ input: { kind: 'route_endpoints', endpointIds: ['endpoint:single'] } }] },
+      }],
+      compiledRouterBundle: {
+        plans: [{
+          entryNodeId: 'entry:public',
+          executionAlternatives: [{
+            fallbackStages: [],
+            endpoint: { endpointId: 'endpoint:single' },
+            executionAttempt: {
+              model: 'model-single',
+              executionTargetSourceRef: 'source:single',
+              transportBinding: { executionTargetId: 402 },
+            },
+          }],
+        }],
+      },
+    };
+
+    expect(collectCompiledRouteAffinityTargets(compiled, { kind: 'macro', id: 'macro:single-stage' })).toEqual([
+      expect.objectContaining({ sourceRef: 'source:single', executionTargetId: 402 }),
+    ]);
   });
 
   it('resolves connection editability only from the port contract', () => {

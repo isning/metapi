@@ -470,6 +470,8 @@ describe('responses websocket transport', () => {
     rejectedUpgradeBody = 'Upgrade Required';
     startExecutionSessionMock.mockResolvedValue({
       requestId: 'request:responses-websocket-test',
+      downstreamPath: '/v1/responses:websocket',
+      isStream: true,
       startedAtMs: Date.now(),
     });
     bindExecutionDecisionMock.mockResolvedValue(undefined);
@@ -639,7 +641,7 @@ describe('responses websocket transport', () => {
     });
     expect(bindExecutionDecisionMock).toHaveBeenCalledTimes(1);
     expect(bindExecutionDecisionMock).toHaveBeenCalledWith(expect.objectContaining({
-      requestId: 'request:responses-websocket-test',
+      session: expect.objectContaining({ requestId: 'request:responses-websocket-test' }),
     }));
     expect(insertProxyLogMock).toHaveBeenCalledTimes(1);
     expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({

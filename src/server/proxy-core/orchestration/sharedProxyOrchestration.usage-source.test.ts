@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const formatUtcSqlDateTimeMock = vi.fn();
 const composeProxyLogMessageMock = vi.fn();
 const insertProxyLogMock = vi.fn();
+const completeCompiledRuntimeExecutionSessionMock = vi.fn();
 
 const runtimeIdentity = {
   executionAttemptId: 'ea_11',
@@ -62,6 +63,12 @@ vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
 }));
 
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  completeCompiledRuntimeExecutionSession: (...args: unknown[]) => (
+    completeCompiledRuntimeExecutionSessionMock(...args)
+  ),
+}));
+
 vi.mock('../../services/runtimeDispatch.js', () => ({
   dispatchRuntimeRequest: vi.fn(),
 }));
@@ -98,6 +105,46 @@ describe('shared surface usage source logging', () => {
     formatUtcSqlDateTimeMock.mockReset();
     composeProxyLogMessageMock.mockReset();
     insertProxyLogMock.mockReset();
+    completeCompiledRuntimeExecutionSessionMock.mockReset();
+  });
+
+  it('persists the terminal attempt before publishing the request completion', async () => {
+    const persistenceOrder: string[] = [];
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-08-17 14:34:57');
+    composeProxyLogMessageMock.mockReturnValue(null);
+    insertProxyLogMock.mockImplementation(async () => {
+      persistenceOrder.push('attempt');
+    });
+    completeCompiledRuntimeExecutionSessionMock.mockImplementation(async () => {
+      persistenceOrder.push('request');
+    });
+
+    const { createSurfaceFailureToolkit } = await import('./sharedProxyOrchestration.js');
+    const toolkit = createSurfaceFailureToolkit({
+      requestId: 'request:retry-success',
+      executionSession: { requestId: 'request:retry-success' } as any,
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+    });
+
+    await toolkit.log({
+      selected: {
+        target: { id: 11 },
+        account: { id: 24, username: 'a1208733578' },
+        site: { id: 29, name: '猫肥' },
+        actualModel: 'gpt-5.6-terra',
+        routeRuntimeSnapshot: { compiledRuntime: { bundleHash: 'bundle:test' } },
+        ...runtimeIdentity,
+      } as any,
+      modelRequested: 'gpt-5.6-terra',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 38_000,
+      errorMessage: null,
+      retryCount: 1,
+    });
+
+    expect(persistenceOrder).toEqual(['attempt', 'request']);
   });
 
   it('forwards usage source through the failure toolkit log wrapper', async () => {

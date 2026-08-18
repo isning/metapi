@@ -5,6 +5,14 @@ import type {
   RouteGraphWorkspaceIndexPage,
   RouteGraphWorkspaceRepresentation,
 } from '../../shared/routeGraphWorkspace.js';
+import {
+  collectCompiledRouteAffinityTargets,
+  compileRouteGraphSource,
+  type CompiledRouteGraph,
+  type RouteGraphAffinityTargetProjection,
+  type RouteEndpointConfig,
+  type RouteGraphSource,
+} from '../../shared/routeGraph.js';
 import { buildRouteGraphFocusedWorkspace } from './routeGraphFocusProjectionService.js';
 import {
   lowerRouteGraphPrimitiveFocus,
@@ -29,6 +37,8 @@ type RevisionWorkspaceCache = {
   indexPages: Map<string, RouteGraphWorkspaceIndexPage>;
   focusProjections: Map<string, RouteGraphFocusedWorkspace>;
   primitiveArtifacts: Map<string, RouteGraphPrimitiveFocusArtifact>;
+  compiledGraph: CompiledRouteGraph;
+  affinityTargets: Map<string, RouteGraphAffinityTargetProjection[]>;
 };
 
 let revisionCache: RevisionWorkspaceCache | null = null;
@@ -54,8 +64,54 @@ function cacheForDraft(input: {
     indexPages: new Map(),
     focusProjections: new Map(),
     primitiveArtifacts: new Map(),
+    compiledGraph: compileRouteGraphSource(input.graph).compiled,
+    affinityTargets: new Map(),
   };
   return revisionCache;
+}
+
+function affinityEndpointLabels(graph: RouteGraphSource): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const node of graph.nodes) {
+    if (node.type !== 'route_endpoint') continue;
+    const config = node.config && typeof node.config === 'object' && !Array.isArray(node.config)
+      ? node.config as RouteEndpointConfig
+      : null;
+    for (const target of config?.targets || []) {
+      if (target.executionTargetSourceRef) {
+        labels.set(target.executionTargetSourceRef, node.name || node.routeEndpointId);
+      }
+    }
+  }
+  for (const macro of graph.macros || []) {
+    for (const group of macro.config.groups) {
+      if (group.input.kind !== 'inline_endpoints') continue;
+      for (const target of group.input.endpoints) {
+        if (target.executionTargetSourceRef) {
+          labels.set(target.executionTargetSourceRef, macro.name || macro.id);
+        }
+      }
+    }
+  }
+  return labels;
+}
+
+function projectAffinityTargets(
+  cache: RevisionWorkspaceCache,
+  graph: RouteGraphSource,
+  focus: RouteGraphFocusRef,
+): RouteGraphFocusedWorkspace['affinityTargets'] {
+  const key = focusKey(focus);
+  let targets = cache.affinityTargets.get(key);
+  if (!targets) {
+    targets = collectCompiledRouteAffinityTargets(cache.compiledGraph, focus, graph);
+    cache.affinityTargets.set(key, targets);
+  }
+  const labels = affinityEndpointLabels(graph);
+  return targets.map((target) => ({
+    ...target,
+    ...(labels.get(target.sourceRef) ? { endpointLabel: labels.get(target.sourceRef) } : {}),
+  }));
 }
 
 export async function getRouteGraphWorkspaceRevisionContext(): Promise<{
@@ -132,6 +188,7 @@ export async function getRouteGraphFocusedWorkspace(input: {
       semanticIndex: cache.semanticIndex,
     });
   }
+  workspace.affinityTargets = projectAffinityTargets(cache, draft.workingGraph, input.focus);
   boundedSet(cache.focusProjections, projectionKey, workspace, FOCUS_PROJECTION_CACHE_LIMIT);
   return structuredClone(workspace);
 }

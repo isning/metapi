@@ -301,6 +301,7 @@ function automaticMacroForModel(input: {
       source,
       executionEndpoint.targets.map((target) => ({
         id: target.id,
+        sourceRef: target.sourceRef,
         upstreamModelName: target.upstreamModelName,
         enabled: target.enabled !== false,
       })),

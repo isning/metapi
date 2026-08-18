@@ -20,6 +20,7 @@ import {
 } from '../../testing/routeGroupMemberTestUtils.js';
 import type { RouteGroupCreatePayload } from '../contracts/routeGroupPayloads.js';
 import { resolveFailureCooldownMs, resolveRouteFailureBackoffPolicy } from './routeRuntimeExecutionService.js';
+import { proxyTargetCoordinator, resetProxyTargetCoordinatorState } from './proxyTargetCoordinator.js';
 
 type DbModule = typeof import('../db/index.js');
 type CompiledRuntimeExecutionModule = typeof import('./routeRuntimeExecutionService.js');
@@ -117,6 +118,7 @@ describe('routeRuntimeExecutionService', () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     invalidateRouteGraphReadCaches();
+    resetProxyTargetCoordinatorState();
   });
 
   afterAll(() => {
@@ -136,6 +138,7 @@ describe('routeRuntimeExecutionService', () => {
       fallbackStageOrder?: number;
       withoutToken?: boolean;
     }>;
+    affinity?: RouteGroupCreatePayload['affinity'];
   }) {
     const route = await createGraphNativeRouteFixture({
       modelPattern: input.model,
@@ -185,6 +188,28 @@ describe('routeRuntimeExecutionService', () => {
         executionTargetId,
       });
     }
+    if (input.affinity) {
+      const sourceRefs = await Promise.all(candidates.map(async (candidate) => (
+        await db.select({ sourceRef: schema.runtimeExecutionTargets.sourceRef })
+          .from(schema.runtimeExecutionTargets)
+          .where(eq(schema.runtimeExecutionTargets.id, candidate.executionTargetId))
+          .get()
+      )));
+      const { updateRouteGroupFromPayload } = await import('./routeGroupManagementService.js');
+      const refs = sourceRefs.map((item) => item?.sourceRef).filter((item): item is string => !!item);
+      await updateRouteGroupFromPayload(route.id, {
+        affinity: {
+          ...input.affinity,
+          pools: input.affinity.pools?.map((pool) => ({
+            ...pool,
+            members: pool.members.map((member) => ({
+              ...member,
+              sourceRef: refs[Number(member.sourceRef)] || member.sourceRef,
+            })),
+          })),
+        },
+      });
+    }
     const version = await publishCurrentGraphNativeRouteFixtures();
     const runtimePointer = await db.select().from(schema.compiledRuntimeActiveArtifact).get();
     if (!runtimePointer) throw new Error('Published test route is missing an active runtime artifact');
@@ -222,7 +247,7 @@ describe('routeRuntimeExecutionService', () => {
   });
 
   it('does not route a New API session connection without a model API key', async () => {
-    await seedRoute({
+    const seeded = await seedRoute({
       model: 'runtime-new-api-session-without-model-key',
       candidates: [{
         siteName: 'new-api-session-only',
@@ -233,6 +258,75 @@ describe('routeRuntimeExecutionService', () => {
     await expect(selectRouteRuntimeExecutionAttempt({
       requestedModel: 'runtime-new-api-session-without-model-key',
     })).resolves.toBeNull();
+
+    const session = await createRouteRuntimeDecisionSession({
+      requestedModel: 'runtime-new-api-session-without-model-key',
+    });
+    await expect(selectRouteRuntimeDecisionInSession(session)).resolves.toMatchObject({
+      kind: 'unavailable',
+      routeEntrypointId: expect.any(String),
+      runtimeArtifactId: seeded.runtimeArtifactId,
+      routeRuntimeSnapshot: {
+        endpoint: null,
+        executionAttempt: null,
+        decision: {
+          unavailable: {
+            reason: 'execution_attempts_exhausted',
+            rejectedAttempts: [{
+              executionAttemptId: seeded.candidates[0]!.executionAttemptId,
+              executionTargetId: seeded.candidates[0]!.executionTargetId,
+              reason: 'missing_token',
+            }],
+          },
+        },
+      },
+    });
+  });
+
+  it('returns request-level evidence when no compiled route matches the requested model', async () => {
+    await seedRoute({ model: 'runtime-known-model' });
+    const session = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-unknown-model' });
+
+    await expect(selectRouteRuntimeDecisionInSession(session)).resolves.toMatchObject({
+      kind: 'unavailable',
+      routeEntrypointId: null,
+      routeRuntimeSnapshot: {
+        match: {
+          requestedModel: 'runtime-unknown-model',
+          planId: null,
+          entryId: null,
+        },
+        decision: {
+          unavailable: {
+            reason: 'no_matching_route',
+            rejectedAttempts: [],
+          },
+        },
+      },
+    });
+    await expect(selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-unknown-model',
+    })).resolves.toBeNull();
+  });
+
+  it('returns request-level evidence when no active runtime artifact exists', async () => {
+    const session = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-without-artifact' });
+
+    await expect(selectRouteRuntimeDecisionInSession(session)).resolves.toMatchObject({
+      kind: 'unavailable',
+      routeEntrypointId: null,
+      runtimeArtifactId: null,
+      routeRuntimeSnapshot: {
+        decision: {
+          unavailable: {
+            reason: 'no_active_runtime',
+            rejectedAttempts: [],
+          },
+        },
+        endpoint: null,
+        executionAttempt: null,
+      },
+    });
   });
 
   it('uses the account token value rather than the session connection credential', async () => {
@@ -370,6 +464,32 @@ describe('routeRuntimeExecutionService', () => {
     });
 
     expect(selected?.executionTargetId).toBe(candidates[1]?.executionTargetId);
+    expect(selected?.routeRuntimeSnapshot.decision?.selectedAlternativeId).toBeTruthy();
+    expect(selected?.routeRuntimeSnapshot.decision?.selectors.length).toBeGreaterThan(0);
+    expect(selected?.routeRuntimeSnapshot.decision?.selectors[0]?.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        choiceId: expect.any(String),
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            executionTargetId: candidates[1]!.executionTargetId,
+            executionAttemptId: candidates[1]!.executionAttemptId,
+            upstreamModel: 'runtime-cel-selection',
+            credential: expect.objectContaining({
+              site: expect.objectContaining({ name: 'runtime-cel-b' }),
+              account: expect.objectContaining({ id: candidates[1]!.account.id }),
+              token: expect.objectContaining({ id: candidates[1]!.token!.id }),
+            }),
+          }),
+        ]),
+        enabled: true,
+        eligible: true,
+        selected: true,
+        weight: expect.any(Number),
+        contribution: expect.any(Number),
+        order: expect.any(Number),
+        score: expect.any(Number),
+      }),
+    ]));
   });
 
   it('does not let read-only projections advance production round-robin state', async () => {
@@ -414,6 +534,64 @@ describe('routeRuntimeExecutionService', () => {
     if (sessionDecision?.kind !== 'execution_attempt') throw new Error('Expected an execution attempt');
     expect(sessionDecision.attempt.runtimeArtifactId).toBe(firstPublication.runtimeArtifactId);
     expect(freshDecision?.runtimeArtifactId).toBe(activePointer?.artifactId);
+  });
+
+  it('keeps Entry Pool primary during temporary fallback and fails back after recovery', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-affinity-temporary',
+      candidates: [{ siteName: 'affinity-primary', weight: 100 }, { siteName: 'affinity-fallback', weight: 1 }],
+      affinity: {
+        policy: { kind: 'pool', ttlSec: 300, crossPoolFallback: 'temporary' },
+        pools: [{ id: 'primary', members: [{ kind: 'execution_target', sourceRef: '0' }] }],
+      },
+    });
+    const key = 'key:test|generic|openai.chat_completions|runtime-affinity-temporary|session-1';
+    const firstSession = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-affinity-temporary', affinityKey: key });
+    const first = await selectRouteRuntimeDecisionInSession(firstSession);
+    expect(first?.kind).toBe('execution_attempt');
+    if (first?.kind !== 'execution_attempt' || !first.attempt.affinity) throw new Error('Expected initial affinity decision');
+    expect(first.attempt.executionTargetId).toBe(candidates[0]!.executionTargetId);
+    proxyTargetCoordinator.recordSuccessfulAffinitySelection(first.attempt.affinity);
+
+    const fallbackSession = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-affinity-temporary', affinityKey: key });
+    const fallback = await selectRouteRuntimeDecisionInSession(fallbackSession, {
+      disabledExecutionTargetIds: [candidates[0]!.executionTargetId],
+    });
+    expect(fallback?.kind).toBe('execution_attempt');
+    if (fallback?.kind !== 'execution_attempt' || !fallback.attempt.affinity) throw new Error('Expected temporary fallback');
+    expect(fallback.attempt.executionTargetId).toBe(candidates[1]!.executionTargetId);
+    expect(fallback.attempt.affinity.fallback).toBe(true);
+    proxyTargetCoordinator.recordSuccessfulAffinitySelection(fallback.attempt.affinity);
+
+    const recoveredSession = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-affinity-temporary', affinityKey: key });
+    const recovered = await selectRouteRuntimeDecisionInSession(recoveredSession);
+    expect(recovered?.kind).toBe('execution_attempt');
+    if (recovered?.kind !== 'execution_attempt') throw new Error('Expected recovered primary');
+    expect(recovered.attempt.executionTargetId).toBe(candidates[0]!.executionTargetId);
+  });
+
+  it('promotes a successful cross-pool fallback only after completion', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-affinity-promote',
+      candidates: [{ siteName: 'promote-primary', weight: 100 }, { siteName: 'promote-fallback', weight: 1 }],
+      affinity: {
+        policy: { kind: 'pool', ttlSec: 300, crossPoolFallback: 'promote_on_success' },
+        pools: [{ id: 'primary', members: [{ kind: 'execution_target', sourceRef: '0' }] }],
+      },
+    });
+    const key = 'key:test|generic|openai.chat_completions|runtime-affinity-promote|session-1';
+    const initial = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-affinity-promote', affinityKey: key });
+    const initialDecision = await selectRouteRuntimeDecisionInSession(initial);
+    if (initialDecision?.kind !== 'execution_attempt' || !initialDecision.attempt.affinity) throw new Error('Expected initial decision');
+    proxyTargetCoordinator.recordSuccessfulAffinitySelection(initialDecision.attempt.affinity);
+    const fallbackSession = await createRouteRuntimeDecisionSession({ requestedModel: 'runtime-affinity-promote', affinityKey: key });
+    const fallback = await selectRouteRuntimeDecisionInSession(fallbackSession, { disabledExecutionTargetIds: [candidates[0]!.executionTargetId] });
+    if (fallback?.kind !== 'execution_attempt' || !fallback.attempt.affinity) throw new Error('Expected promotion fallback');
+    proxyTargetCoordinator.recordSuccessfulAffinitySelection(fallback.attempt.affinity);
+    const promoted = proxyTargetCoordinator.getAffinityBinding(key);
+    expect(promoted).toMatchObject({ scope: 'pool' });
+    if (promoted?.scope !== 'pool') throw new Error('Expected pool binding');
+    expect(promoted.primaryPoolId).not.toBe('primary');
   });
 
   it('records concurrent success counters atomically', async () => {
@@ -575,6 +753,25 @@ describe('routeRuntimeExecutionService', () => {
     });
     expect(selected?.routeRuntimeSnapshot.compiledRuntime.bundleHash).toBeTruthy();
     expect(selected?.routeRuntimeSnapshot.metadata.executionAttempt).not.toHaveProperty('executionTargetId');
+  });
+
+  it('records selected fallback stages in the immutable decision snapshot', async () => {
+    const { candidates } = await seedRoute({
+      model: 'runtime-fallback-snapshot',
+      candidates: [
+        { siteName: 'fallback-stage-primary', siteStatus: 'disabled', fallbackStageOrder: 0 },
+        { siteName: 'fallback-stage-secondary', fallbackStageOrder: 1 },
+      ],
+    });
+
+    const selected = await selectRouteRuntimeExecutionAttempt({
+      requestedModel: 'runtime-fallback-snapshot',
+    });
+
+    expect(selected?.executionTargetId).toBe(candidates[1]!.executionTargetId);
+    expect(selected?.routeRuntimeSnapshot.decision?.fallbackStages).toEqual([
+      expect.objectContaining({ stageIndex: 1 }),
+    ]);
   });
 
   it('does not record selection state until a real upstream execution starts', async () => {

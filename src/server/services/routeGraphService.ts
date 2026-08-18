@@ -183,6 +183,7 @@ function compileRouteGraphWithSourceContractValidation(sourceGraph: unknown, opt
   const compiled = compileRouteGraphSource(sourceGraph, {
     includePrimitiveSource: false,
     compactRuntimeBundle: options.compactRuntimeBundle === true,
+    affinityDefault: config.routeAffinityDefault,
   });
   if (nativePolicyDiagnostics.length === 0 && automaticSourceDiagnostics.length === 0 && policyReferenceDiagnostics.length === 0) return compiled;
   const diagnostics = [...nativePolicyDiagnostics, ...automaticSourceDiagnostics, ...policyReferenceDiagnostics, ...compiled.diagnostics];

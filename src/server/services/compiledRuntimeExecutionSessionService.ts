@@ -6,6 +6,8 @@ import { formatUtcSqlDateTime } from './localTimeService.js';
 export type CompiledRuntimeExecutionSession = {
   requestId: string;
   startedAtMs: number;
+  downstreamPath: string;
+  isStream: boolean | null;
 };
 
 export type CompiledRuntimeExecutionTerminal = {
@@ -26,10 +28,29 @@ export type CompiledRuntimeExecutionTerminal = {
   actualModel?: string | null;
   siteId?: number | null;
   accountId?: number | null;
+  decisionSnapshot?: unknown;
 };
 
 function serializeJson(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
+}
+
+function serializeDecisionSnapshot(
+  session: CompiledRuntimeExecutionSession,
+  value: unknown,
+): string | null {
+  if (value == null) return null;
+  const body = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : { value };
+  return JSON.stringify({
+    capturedAt: new Date(session.startedAtMs).toISOString(),
+    request: {
+      downstreamPath: session.downstreamPath,
+      stream: session.isStream,
+    },
+    ...body,
+  });
 }
 
 export async function startCompiledRuntimeExecutionSession(input: {
@@ -49,7 +70,12 @@ export async function startCompiledRuntimeExecutionSession(input: {
     status: 'started',
     startedAt: formatUtcSqlDateTime(new Date(startedAtMs)),
   }).run();
-  return { requestId, startedAtMs };
+  return {
+    requestId,
+    startedAtMs,
+    downstreamPath: input.downstreamPath,
+    isStream: input.isStream ?? null,
+  };
 }
 
 export async function resumeCompiledRuntimeExecutionSession(
@@ -60,6 +86,8 @@ export async function resumeCompiledRuntimeExecutionSession(
   const row = await db.select({
     status: schema.proxyRequests.status,
     startedAt: schema.proxyRequests.startedAt,
+    downstreamPath: schema.proxyRequests.downstreamPath,
+    isStream: schema.proxyRequests.isStream,
   }).from(schema.proxyRequests)
     .where(eq(schema.proxyRequests.id, normalizedId))
     .get();
@@ -68,11 +96,13 @@ export async function resumeCompiledRuntimeExecutionSession(
   return {
     requestId: normalizedId,
     startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
+    downstreamPath: row.downstreamPath,
+    isStream: row.isStream == null ? null : Boolean(row.isStream),
   };
 }
 
 export async function bindCompiledRuntimeExecutionDecision(input: {
-  requestId: string;
+  session: CompiledRuntimeExecutionSession;
   routeEntrypointId: string;
   runtimeEndpointId: string;
   executionAttemptId: string;
@@ -84,9 +114,27 @@ export async function bindCompiledRuntimeExecutionDecision(input: {
     runtimeEndpointId: input.runtimeEndpointId,
     finalExecutionAttemptId: input.executionAttemptId,
     runtimeBundleHash: input.runtimeBundleHash ?? null,
-    decisionSnapshot: serializeJson(input.decisionSnapshot),
+    decisionSnapshot: serializeDecisionSnapshot(input.session, input.decisionSnapshot),
   }).where(and(
-    eq(schema.proxyRequests.id, input.requestId),
+    eq(schema.proxyRequests.id, input.session.requestId),
+    eq(schema.proxyRequests.status, 'started'),
+  )).run();
+}
+
+export async function bindCompiledRuntimeUnavailableDecision(input: {
+  session: CompiledRuntimeExecutionSession;
+  routeEntrypointId?: string | null;
+  runtimeBundleHash?: string | null;
+  decisionSnapshot: unknown;
+}): Promise<void> {
+  await db.update(schema.proxyRequests).set({
+    routeEntrypointId: input.routeEntrypointId ?? null,
+    runtimeEndpointId: null,
+    finalExecutionAttemptId: null,
+    runtimeBundleHash: input.runtimeBundleHash ?? null,
+    decisionSnapshot: serializeDecisionSnapshot(input.session, input.decisionSnapshot),
+  }).where(and(
+    eq(schema.proxyRequests.id, input.session.requestId),
     eq(schema.proxyRequests.status, 'started'),
   )).run();
 }
@@ -111,6 +159,9 @@ export async function completeCompiledRuntimeExecutionSession(
     totalTokens: terminal.totalTokens ?? null,
     estimatedCost: terminal.estimatedCost ?? null,
     billingDetails: serializeJson(terminal.billingDetails),
+    ...(terminal.decisionSnapshot === undefined
+      ? {}
+      : { decisionSnapshot: serializeDecisionSnapshot(session, terminal.decisionSnapshot) }),
     errorMessage: terminal.errorMessage ?? null,
     completedAt: formatUtcSqlDateTime(new Date()),
   }).where(and(

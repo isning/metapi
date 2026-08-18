@@ -8,6 +8,7 @@ import {
   type CompiledRuntimeProjection,
 } from './compiledRuntimeProjectionService.js';
 import { getCompiledRouterPlanById, type CompiledRouterBundle } from '../../shared/compiledRuntime.js';
+import type { ResolvedRouteAffinityPolicy } from '../../shared/routeAffinity.js';
 import type { CompiledRuntimePostBuildFilters } from './compiledRuntimePostBuildFilters.js';
 import type { CompiledRouteRuntimeRequest } from './compiledRuntimeRequestTypes.js';
 import { compiledRuntimeRequestUsageConstraints } from './compiledRuntimeUsageForecastService.js';
@@ -25,6 +26,7 @@ import {
 import {
   invalidateRouteRuntimeExecutionTargetState,
   loadRouteRuntimeExecutionTargetContext,
+  loadRouteRuntimeExecutionTargetContexts,
   type RouteRuntimeExecutionTargetContext,
 } from './routeRuntimeExecutionIdentityService.js';
 import { overlayCompiledRuntimeRoutingSignals } from './compiledRuntimeRoutingSignalOverlayService.js';
@@ -45,8 +47,10 @@ import {
 } from '../../shared/routeFailureBackoff.js';
 import type {
   RouteRuntimeCredentialSnapshot,
+  RouteRuntimeDecisionSnapshot,
   RouteRuntimeSnapshotBody,
 } from '../../shared/routeRuntimeSnapshot.js';
+import { proxyTargetCoordinator, type ProxyAffinityBinding, type ProxyAffinitySuccess } from './proxyTargetCoordinator.js';
 
 export const ROUTE_FAILURE_BACKOFF_SETTING_KEY = 'route_failure_backoff_default_v1';
 
@@ -129,6 +133,7 @@ export type RouteRuntimeExecutionAttempt = {
   routeEndpointCompatibilityPolicy?: RouteRuntimeSelection['routeEndpointCompatibilityPolicy'] | null;
   executionAttemptCompatibilityPolicy?: RouteRuntimeSelection['routeEndpointCompatibilityPolicy'] | null;
   failureBackoff?: RouteFailureBackoffOverride | null;
+  affinity?: ProxyAffinitySuccess | null;
 };
 
 export type RouteRuntimeSyntheticDecision = {
@@ -139,9 +144,19 @@ export type RouteRuntimeSyntheticDecision = {
   runtimeTrace: RouteRuntimeSelectionSnapshot['trace'];
 };
 
+export type RouteRuntimeUnavailableDecision = {
+  kind: 'unavailable';
+  routeEntrypointId: string | null;
+  runtimeArtifactId: string | null;
+  routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
+};
+
 export type RouteRuntimeDecision =
   | { kind: 'execution_attempt'; attempt: RouteRuntimeExecutionAttempt }
-  | RouteRuntimeSyntheticDecision;
+  | RouteRuntimeSyntheticDecision
+  | RouteRuntimeUnavailableDecision;
+
+type RouteRuntimeRejectedAttempt = NonNullable<RouteRuntimeDecisionSnapshot['unavailable']>['rejectedAttempts'][number];
 
 type ExecutionTargetIdentity = Omit<RouteRuntimeExecutionTargetContext, 'account'> & {
   account: AccountRow;
@@ -487,7 +502,7 @@ function executionTargetUnavailableReason(
   identity: ExecutionTargetIdentity,
   downstreamPolicy?: DownstreamRoutingPolicy | null,
   nowMs = Date.now(),
-): string | null {
+): RouteRuntimeRejectedAttempt['reason'] | null {
   if (identity.executionTarget.enabled === false) return 'execution_target_disabled';
   if (identity.account.status !== 'active') return 'account_inactive';
   if (isSiteDisabled(identity.site.status)) return 'site_disabled';
@@ -569,20 +584,40 @@ function routeRuntimeCredentialSnapshot(
   };
 }
 
-function routeRuntimeSnapshot(input: {
+async function routeRuntimeSnapshot(input: {
   selection: RouteRuntimeSelection;
-  identity: ExecutionTargetIdentity;
-  executionAttemptId: string;
-  executionTargetId: number;
-  actualModel: string;
+  identity?: ExecutionTargetIdentity | null;
+  executionAttemptId?: string | null;
+  executionTargetId?: number | null;
+  actualModel?: string | null;
   failureOverlay: RouteRuntimeFailureOverlay;
   request?: CompiledRouteRuntimeRequest | null;
-}): RouteRuntimeSnapshotBody {
+  unavailable?: NonNullable<RouteRuntimeDecisionSnapshot['unavailable']> | null;
+}): Promise<RouteRuntimeSnapshotBody> {
   const selectedAttempt = input.selection.selectedExecutionAttempt;
   const plan = input.selection.compiledPlanSnapshot;
-  const state = input.identity.state;
-  const credential = routeRuntimeCredentialSnapshot(input.identity);
+  const identity = input.identity ?? null;
+  const state = identity?.state ?? null;
+  const credential = identity ? routeRuntimeCredentialSnapshot(identity) : null;
+  const unavailable = input.unavailable ?? null;
   const requestUsage = compiledRuntimeRequestUsageConstraints(input.request);
+  const candidateExecutionTargetIds = Array.from(new Set(
+    (input.selection.selectionSnapshots || [])
+      .flatMap((selector) => selector.candidates)
+      .flatMap((candidate) => candidate.executionTargetIds),
+  ));
+  const candidateContextByExecutionTargetId = await loadRouteRuntimeExecutionTargetContexts(
+    candidateExecutionTargetIds,
+  );
+  const executionAttemptByTargetId = new Map<
+    number,
+    NonNullable<NonNullable<RouteRuntimeSelection['compiledProgramSnapshot']>['executionAlternatives'][number]['executionAttempt']>
+  >();
+  for (const alternative of input.selection.compiledProgramSnapshot?.executionAlternatives || []) {
+    const attempt = alternative.executionAttempt;
+    const executionTargetId = asPositiveInteger(attempt?.transportBinding?.executionTargetId);
+    if (attempt && executionTargetId) executionAttemptByTargetId.set(executionTargetId, attempt);
+  }
   return {
     compiledRuntime: {
       runtimeArtifactId: input.selection.runtimeArtifactId ?? null,
@@ -591,7 +626,7 @@ function routeRuntimeSnapshot(input: {
     },
     match: {
       requestedModel: asText(input.selection.requestedModel) || null,
-      actualModel: input.actualModel,
+      actualModel: input.actualModel ?? null,
       planId: asText(plan?.planId) || null,
       entryId: asText(input.selection.matchedEntryNodeId) || null,
       publicModelName: asText(plan?.publicModelName) || null,
@@ -608,24 +643,71 @@ function routeRuntimeSnapshot(input: {
         ? input.selection.metadata.executionAttempt
         : null,
     },
-    endpoint: selectedAttempt
+    decision: {
+      selectedAlternativeId: asText(input.selection.selectedAlternativeId) || null,
+      selectors: (input.selection.selectionSnapshots || []).map((selector) => ({
+        selectorId: selector.selectorId,
+        nodeId: selector.nodeId,
+        mode: selector.mode,
+        policySource: selector.resolvedPolicy.source,
+        policyId: selector.resolvedPolicy.id,
+        policyKind: selector.resolvedPolicy.kind,
+        selectionMode: selector.resolvedPolicy.selectionMode,
+        selectedChoiceId: selector.selectedChoiceId,
+        candidates: selector.candidates.map((candidate) => ({
+          choiceId: candidate.alternativeId,
+          endpointId: candidate.endpointId || null,
+          executionTargetIds: candidate.executionTargetIds,
+          targets: candidate.executionTargetIds.map((executionTargetId) => {
+            const context = candidateContextByExecutionTargetId.get(executionTargetId) || null;
+            const attempt = executionAttemptByTargetId.get(executionTargetId) || null;
+            return {
+              executionTargetId,
+              executionAttemptId: asText(attempt?.executionAttemptId) || null,
+              upstreamModel: asText(context?.executionTarget.upstreamModelName)
+                || asText(attempt?.model)
+                || null,
+              credential: context?.account
+                ? routeRuntimeCredentialSnapshot({ ...context, account: context.account })
+                : null,
+            };
+          }),
+          enabled: candidate.enabled,
+          eligible: candidate.policyEvaluation.eligible,
+          selected: candidate.alternativeId === selector.selectedChoiceId,
+          weight: candidate.weight,
+          contribution: candidate.policyEvaluation.contribution,
+          order: candidate.policyEvaluation.order,
+          score: candidate.policyEvaluation.score,
+        })),
+      })),
+      fallbackStages: (input.selection.fallbackStageSnapshots || []).map((stage) => ({
+        fallbackId: stage.fallbackId,
+        stageId: stage.stageId,
+        stageIndex: stage.stageIndex,
+        nodeId: stage.nodeId,
+      })),
+      ...(unavailable ? { unavailable } : {}),
+    },
+    endpoint: selectedAttempt && !unavailable
       ? {
           endpointId: asText(selectedAttempt.endpointId) || null,
-          executionTargetId: input.executionTargetId,
+          executionTargetId: input.executionTargetId ?? null,
           compatibilityPolicy: isRecord(input.selection.routeEndpointCompatibilityPolicy)
             ? input.selection.routeEndpointCompatibilityPolicy
             : null,
         }
       : null,
-    executionAttempt: selectedAttempt
+    executionAttempt: selectedAttempt && identity && !unavailable
       ? {
-          executionAttemptId: input.executionAttemptId,
-          model: input.actualModel,
-          executionTargetId: input.executionTargetId,
-          accountId: input.identity.account.id,
-          tokenId: input.identity.token?.id ?? null,
-          siteId: input.identity.site.id,
+          executionAttemptId: input.executionAttemptId ?? null,
+          model: input.actualModel ?? null,
+          executionTargetId: input.executionTargetId ?? null,
+          accountId: identity.account.id,
+          tokenId: identity.token?.id ?? null,
+          siteId: identity.site.id,
           credential,
+          affinity: null,
         }
       : null,
     requestUsage,
@@ -636,7 +718,7 @@ function routeRuntimeSnapshot(input: {
       },
       executionAttemptState: state
         ? {
-            executionTargetId: input.executionTargetId,
+            executionTargetId: input.executionTargetId ?? null,
             successCount: state.successCount,
             failCount: state.failCount,
             totalLatencyMs: state.totalLatencyMs,
@@ -663,13 +745,111 @@ function routeRuntimeSnapshot(input: {
   };
 }
 
-function toRouteRuntimeExecutionAttempt(input: {
+async function unavailableRouteRuntimeDecision(input: {
+  selection: RouteRuntimeSelection;
+  selectorState: RouteRuntimeSelectorStateProposal;
+  failureOverlay: RouteRuntimeFailureOverlay;
+  rejectedAttempts: RouteRuntimeRejectedAttempt[];
+  request?: CompiledRouteRuntimeRequest | null;
+}): Promise<RouteRuntimeDecisionProposal> {
+  return {
+    decision: {
+      kind: 'unavailable',
+      routeEntrypointId: asText(input.selection.matchedEntryNodeId) || null,
+      runtimeArtifactId: asText(input.selection.runtimeArtifactId) || null,
+      routeRuntimeSnapshot: await routeRuntimeSnapshot({
+        selection: input.selection,
+        actualModel: asText(input.selection.upstreamModel) || asText(input.selection.currentModel) || null,
+        failureOverlay: input.failureOverlay,
+        request: input.request,
+        unavailable: {
+          reason: 'execution_attempts_exhausted',
+          rejectedAttempts: input.rejectedAttempts,
+        },
+      }),
+    },
+    selectorState: input.selectorState,
+  };
+}
+
+function unavailableRouteRuntimeDecisionFromSession(
+  session: RouteRuntimeDecisionSession,
+  input: Pick<RouteRuntimeDecisionInput, 'disabledExecutionAttemptIds' | 'disabledExecutionTargetIds'>,
+): RouteRuntimeUnavailableDecision {
+  const artifact = session.artifact;
+  const bundle = artifact?.compiledGraph.compiledRouterBundle ?? null;
+  const planId = bundle ? matchCompiledRouterPlanId(bundle, session.requestedModel) : null;
+  const plan = planId && bundle ? getCompiledRouterPlanById(bundle, planId) : null;
+  const reason: NonNullable<RouteRuntimeDecisionSnapshot['unavailable']>['reason'] = !artifact || !bundle
+    ? 'no_active_runtime'
+    : !plan
+      ? 'no_matching_route'
+      : 'execution_attempts_exhausted';
+  return {
+    kind: 'unavailable',
+    routeEntrypointId: asText(plan?.entryNodeId) || null,
+    runtimeArtifactId: artifact?.artifactId ?? null,
+    routeRuntimeSnapshot: {
+      compiledRuntime: {
+        runtimeArtifactId: artifact?.artifactId ?? null,
+        bundleHash: artifact
+          ? asText(artifact.bundleHash)
+            || asText(bundle?.hash)
+            || asText(artifact.compiledGraph.hash)
+            || null
+          : null,
+        program: plan ?? null,
+      },
+      match: {
+        requestedModel: session.requestedModel || null,
+        actualModel: null,
+        planId: asText(plan?.id) || null,
+        entryId: asText(plan?.entryNodeId) || null,
+        publicModelName: asText(plan?.publicModelName) || null,
+        terminalKind: null,
+      },
+      metadata: {
+        graph: isRecord(bundle?.metadata) ? bundle.metadata : null,
+        plan: isRecord(plan?.metadata) ? plan.metadata : null,
+        selection: null,
+        endpoint: null,
+        executionAttempt: null,
+      },
+      decision: {
+        selectedAlternativeId: null,
+        selectors: [],
+        fallbackStages: [],
+        unavailable: {
+          reason,
+          rejectedAttempts: [],
+        },
+      },
+      endpoint: null,
+      executionAttempt: null,
+      requestUsage: compiledRuntimeRequestUsageConstraints(session.request),
+      state: {
+        failureOverlay: {
+          disabledExecutionAttemptIds: [...(input.disabledExecutionAttemptIds || [])],
+          disabledExecutionTargetIds: [...(input.disabledExecutionTargetIds || [])],
+        },
+        executionAttemptState: null,
+      },
+      filters: {
+        endpointPreference: null,
+        postBuild: null,
+      },
+      syntheticResponse: null,
+    },
+  };
+}
+
+async function toRouteRuntimeExecutionAttempt(input: {
   selection: RouteRuntimeSelection;
   identity: ExecutionTargetIdentity;
   requestedModel: string;
   failureOverlay: RouteRuntimeFailureOverlay;
   request?: CompiledRouteRuntimeRequest | null;
-}): RouteRuntimeExecutionAttempt {
+}): Promise<RouteRuntimeExecutionAttempt> {
   const { selection, identity } = input;
   const executionTargetId = identity.executionTarget.id;
   const executionAttemptId = asText(selection.selectedExecutionAttempt?.executionAttemptId);
@@ -678,7 +858,7 @@ function toRouteRuntimeExecutionAttempt(input: {
   const state = identity.state;
   const actualModel = sourceModelForAttempt(selection);
   const runtimeIdentity = requireRouteRuntimeIdentity(selection);
-  const runtimeSnapshotBody = routeRuntimeSnapshot({
+  const runtimeSnapshotBody = await routeRuntimeSnapshot({
     selection,
     identity,
     executionAttemptId,
@@ -736,6 +916,7 @@ export type RouteRuntimeDecisionInput = {
   downstreamPolicy?: DownstreamRoutingPolicy | null;
   retryCount?: number;
   stickyExecutionTargetId?: number | null;
+  affinityKey?: string | null;
   forcedExecutionAttemptId?: string | null;
   disabledExecutionAttemptIds?: string[];
   disabledExecutionTargetIds?: number[];
@@ -747,8 +928,66 @@ export type RouteRuntimeDecisionSession = {
   readonly downstreamPolicy: DownstreamRoutingPolicy | null;
   readonly forcedExecutionAttemptId: string | null;
   readonly stickyExecutionTargetId: number | null;
+  readonly affinity: RouteRuntimeAffinitySession | null;
   readonly artifact: ActiveRouteRuntimeArtifact | null;
 };
+
+type RouteRuntimeAffinitySession = {
+  key: string;
+  entryNodeId: string;
+  policy: ResolvedRouteAffinityPolicy;
+  targetIds: number[];
+  poolIdByTargetId: Map<number, string>;
+  targetIdsByPoolId: Map<string, number[]>;
+  binding: ProxyAffinityBinding | null;
+};
+
+function resolveRouteRuntimeAffinitySession(
+  artifact: ActiveRouteRuntimeArtifact | null,
+  requestedModel: string,
+  affinityKey?: string | null,
+): RouteRuntimeAffinitySession | null {
+  const key = asText(affinityKey);
+  const bundle = artifact?.compiledGraph.compiledRouterBundle;
+  if (!key || !bundle) return null;
+  const planId = matchCompiledRouterPlanId(bundle, requestedModel);
+  const plan = planId ? getCompiledRouterPlanById(bundle, planId) : null;
+  if (!plan?.affinity?.policy) return null;
+  const targetIds = Array.from(new Set((plan.executionAlternatives || []).flatMap((alternative) => {
+    const id = asPositiveInteger(alternative.executionAttempt?.transportBinding?.executionTargetId);
+    return id ? [id] : [];
+  })));
+  const targetIdsByPoolId = new Map<string, number[]>();
+  const poolIdByTargetId = new Map<number, string>();
+  for (const pool of plan.affinity.pools || []) {
+    const ids = Array.from(new Set((pool.executionTargetIds || []).map(asPositiveInteger).filter((id): id is number => id != null)));
+    if (!pool.id || ids.length === 0) continue;
+    targetIdsByPoolId.set(pool.id, ids);
+    for (const id of ids) poolIdByTargetId.set(id, pool.id);
+  }
+  let binding = proxyTargetCoordinator.getAffinityBinding(key);
+  const validBinding = binding?.entryNodeId === plan.entryNodeId && (
+    (plan.affinity.policy.kind === 'target'
+      && binding.scope === 'target'
+      && targetIds.includes(binding.primaryExecutionTargetId))
+    || (plan.affinity.policy.kind === 'pool'
+      && binding.scope === 'pool'
+      && targetIdsByPoolId.has(binding.primaryPoolId))
+  );
+  if (binding && !validBinding) {
+    proxyTargetCoordinator.clearAffinityBinding(key, binding.revision);
+    binding = null;
+  }
+  return {
+    key,
+    entryNodeId: plan.entryNodeId,
+    policy: plan.affinity.policy,
+    targetIds,
+    poolIdByTargetId,
+    targetIdsByPoolId,
+    binding,
+  };
+}
 
 export type RouteRuntimeDecisionProposal = {
   readonly decision: RouteRuntimeDecision;
@@ -759,13 +998,15 @@ export async function createRouteRuntimeDecisionSession(
   input: Omit<RouteRuntimeDecisionInput, 'retryCount' | 'disabledExecutionAttemptIds' | 'disabledExecutionTargetIds'>,
 ): Promise<RouteRuntimeDecisionSession> {
   const requestedModel = asText(input.requestedModel);
+  const artifact = await prepareRequestScopedRouteRuntimeArtifact(requestedModel, input.request);
   return Object.freeze({
     requestedModel,
     request: input.request ?? null,
     downstreamPolicy: input.downstreamPolicy ?? null,
     forcedExecutionAttemptId: asText(input.forcedExecutionAttemptId) || null,
     stickyExecutionTargetId: asPositiveInteger(input.stickyExecutionTargetId),
-    artifact: await prepareRequestScopedRouteRuntimeArtifact(requestedModel, input.request),
+    affinity: resolveRouteRuntimeAffinitySession(artifact, requestedModel, input.affinityKey),
+    artifact,
   });
 }
 
@@ -800,12 +1041,58 @@ async function proposeRouteRuntimeDecision(
     if (selection.selectedExecutionAttempt?.executionAttemptId !== forcedExecutionAttemptId) return null;
     const forcedExecutionTargetId = executionTargetIdFromSelection(selection);
     if (!forcedExecutionTargetId) return null;
-    if (!selectedRouteAllowedByDownstreamPolicy(selection, input.requestedModel, input.downstreamPolicy)) return null;
+    if (!selectedRouteAllowedByDownstreamPolicy(selection, input.requestedModel, input.downstreamPolicy)) {
+      return await unavailableRouteRuntimeDecision({
+        selection,
+        selectorState: proposal,
+        failureOverlay: {
+          disabledExecutionAttemptIds: [...(failureOverlay.disabledExecutionAttemptIds || []), forcedExecutionAttemptId],
+          disabledExecutionTargetIds: [...(failureOverlay.disabledExecutionTargetIds || []), forcedExecutionTargetId],
+        },
+        rejectedAttempts: [{
+          executionAttemptId: forcedExecutionAttemptId,
+          executionTargetId: forcedExecutionTargetId,
+          reason: 'route_scope_excluded',
+        }],
+        request: input.request,
+      });
+    }
     const identity = await loadExecutionTargetIdentity(forcedExecutionTargetId);
-    if (!identity) return null;
-    if (executionTargetUnavailableReason(identity, input.downstreamPolicy)) return null;
+    if (!identity) {
+      return await unavailableRouteRuntimeDecision({
+        selection,
+        selectorState: proposal,
+        failureOverlay: {
+          disabledExecutionAttemptIds: [...(failureOverlay.disabledExecutionAttemptIds || []), forcedExecutionAttemptId],
+          disabledExecutionTargetIds: [...(failureOverlay.disabledExecutionTargetIds || []), forcedExecutionTargetId],
+        },
+        rejectedAttempts: [{
+          executionAttemptId: forcedExecutionAttemptId,
+          executionTargetId: forcedExecutionTargetId,
+          reason: 'identity_missing',
+        }],
+        request: input.request,
+      });
+    }
+    const unavailableReason = executionTargetUnavailableReason(identity, input.downstreamPolicy);
+    if (unavailableReason) {
+      return await unavailableRouteRuntimeDecision({
+        selection,
+        selectorState: proposal,
+        failureOverlay: {
+          disabledExecutionAttemptIds: [...(failureOverlay.disabledExecutionAttemptIds || []), forcedExecutionAttemptId],
+          disabledExecutionTargetIds: [...(failureOverlay.disabledExecutionTargetIds || []), forcedExecutionTargetId],
+        },
+        rejectedAttempts: [{
+          executionAttemptId: forcedExecutionAttemptId,
+          executionTargetId: forcedExecutionTargetId,
+          reason: unavailableReason,
+        }],
+        request: input.request,
+      });
+    }
     return {
-      decision: { kind: 'execution_attempt', attempt: toRouteRuntimeExecutionAttempt({
+      decision: { kind: 'execution_attempt', attempt: await toRouteRuntimeExecutionAttempt({
         selection,
         identity,
         requestedModel: input.requestedModel,
@@ -851,7 +1138,7 @@ async function proposeRouteRuntimeDecision(
       const identity = await loadExecutionTargetIdentity(input.stickyExecutionTargetId);
       if (identity && !executionTargetUnavailableReason(identity, input.downstreamPolicy)) {
         return {
-          decision: { kind: 'execution_attempt', attempt: toRouteRuntimeExecutionAttempt({
+          decision: { kind: 'execution_attempt', attempt: await toRouteRuntimeExecutionAttempt({
             selection,
             identity,
             requestedModel: input.requestedModel,
@@ -865,6 +1152,40 @@ async function proposeRouteRuntimeDecision(
     }
   }
 
+  let lastRejectedSelection: RouteRuntimeSelection | null = null;
+  let lastRejectedSelectorState: RouteRuntimeSelectorStateProposal | null = null;
+  const rejectedAttempts: RouteRuntimeRejectedAttempt[] = [];
+  const rejectSelection = (input: {
+    selection: RouteRuntimeSelection;
+    proposal: RouteRuntimeSelectorStateProposal;
+    executionAttemptId: string;
+    executionTargetId: number;
+    reason: RouteRuntimeRejectedAttempt['reason'];
+  }) => {
+    disabledExecutionTargetIds.add(input.executionTargetId);
+    disabledExecutionAttemptIds.add(input.executionAttemptId);
+    lastRejectedSelection = input.selection;
+    lastRejectedSelectorState = input.proposal;
+    rejectedAttempts.push({
+      executionAttemptId: input.executionAttemptId,
+      executionTargetId: input.executionTargetId,
+      reason: input.reason,
+    });
+  };
+  const exhaustedDecision = async (): Promise<RouteRuntimeDecisionProposal | null> => {
+    if (!lastRejectedSelection || !lastRejectedSelectorState || rejectedAttempts.length === 0) return null;
+    return await unavailableRouteRuntimeDecision({
+      selection: lastRejectedSelection,
+      selectorState: lastRejectedSelectorState,
+      failureOverlay: {
+        disabledExecutionAttemptIds: Array.from(disabledExecutionAttemptIds),
+        disabledExecutionTargetIds: Array.from(disabledExecutionTargetIds),
+      },
+      rejectedAttempts,
+      request: input.request,
+    });
+  };
+
   for (;;) {
     const failureOverlay: RouteRuntimeFailureOverlay = {
       disabledExecutionAttemptIds: Array.from(disabledExecutionAttemptIds),
@@ -876,7 +1197,7 @@ async function proposeRouteRuntimeDecision(
       request: input.request,
       failureOverlay,
     });
-    if (!selection) return null;
+    if (!selection) return await exhaustedDecision();
     if (selection.terminalKind === 'synthetic_response') {
       return {
         decision: {
@@ -895,9 +1216,8 @@ async function proposeRouteRuntimeDecision(
     if (!executionAttemptId) return null;
     const excludedCountBefore = disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size;
     if (!selectedRouteAllowedByDownstreamPolicy(selection, input.requestedModel, input.downstreamPolicy)) {
-      disabledExecutionTargetIds.add(executionTargetId);
-      disabledExecutionAttemptIds.add(executionAttemptId);
-      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return null;
+      rejectSelection({ selection, proposal, executionAttemptId, executionTargetId, reason: 'route_scope_excluded' });
+      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return await exhaustedDecision();
       continue;
     }
     if (disabledExecutionTargetIds.has(executionTargetId) || disabledExecutionAttemptIds.has(executionAttemptId)) {
@@ -908,20 +1228,24 @@ async function proposeRouteRuntimeDecision(
     }
     const identity = await loadExecutionTargetIdentity(executionTargetId);
     if (!identity) {
-      disabledExecutionTargetIds.add(executionTargetId);
-      disabledExecutionAttemptIds.add(executionAttemptId);
-      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return null;
+      rejectSelection({ selection, proposal, executionAttemptId, executionTargetId, reason: 'identity_missing' });
+      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return await exhaustedDecision();
       continue;
     }
     const unavailableReason = executionTargetUnavailableReason(identity, input.downstreamPolicy);
     if (unavailableReason) {
-      disabledExecutionTargetIds.add(executionTargetId);
-      disabledExecutionAttemptIds.add(executionAttemptId);
-      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return null;
+      rejectSelection({
+        selection,
+        proposal,
+        executionAttemptId,
+        executionTargetId,
+        reason: unavailableReason as RouteRuntimeRejectedAttempt['reason'],
+      });
+      if (disabledExecutionTargetIds.size + disabledExecutionAttemptIds.size === excludedCountBefore) return await exhaustedDecision();
       continue;
     }
     return {
-      decision: { kind: 'execution_attempt', attempt: toRouteRuntimeExecutionAttempt({
+      decision: { kind: 'execution_attempt', attempt: await toRouteRuntimeExecutionAttempt({
         selection,
         identity,
         requestedModel: input.requestedModel,
@@ -939,25 +1263,184 @@ export function commitRouteRuntimeDecisionProposal(
   return commitRouteRuntimeSelectorStateProposal(proposal.selectorState);
 }
 
+function affinityFallbackBehavior(policy: ResolvedRouteAffinityPolicy): 'deny' | 'temporary' | 'promote_on_success' {
+  if (policy.kind === 'pool') return policy.crossPoolFallback;
+  if (policy.kind === 'target') return policy.crossTargetFallback;
+  return 'deny';
+}
+
+function withAffinityDecision(
+  proposal: RouteRuntimeDecisionProposal | null,
+  affinity: RouteRuntimeAffinitySession | null,
+  fallback: boolean,
+): RouteRuntimeDecisionProposal | null {
+  if (!proposal || proposal.decision.kind !== 'execution_attempt' || !affinity) return proposal;
+  const selectedExecutionTargetId = proposal.decision.attempt.executionTargetId;
+  const behavior = affinityFallbackBehavior(affinity.policy);
+  const affinitySelection: ProxyAffinitySuccess = {
+    affinityKey: affinity.key,
+    entryNodeId: affinity.entryNodeId,
+    mode: affinity.policy.kind,
+    selectedExecutionTargetId,
+    selectedPoolId: affinity.poolIdByTargetId.get(selectedExecutionTargetId) || null,
+    primaryRevision: affinity.binding?.revision ?? null,
+    primaryPoolId: affinity.binding?.scope === 'pool' ? affinity.binding.primaryPoolId : null,
+    primaryExecutionTargetId: affinity.binding?.scope === 'target'
+      ? affinity.binding.primaryExecutionTargetId
+      : null,
+    fallback,
+    promoteOnSuccess: behavior === 'promote_on_success',
+    ttlSec: affinity.policy.kind === 'disabled' ? 0 : affinity.policy.ttlSec,
+  };
+  return {
+    ...proposal,
+    decision: {
+      ...proposal.decision,
+      attempt: {
+        ...proposal.decision.attempt,
+        routeRuntimeSnapshot: {
+          ...proposal.decision.attempt.routeRuntimeSnapshot,
+          executionAttempt: proposal.decision.attempt.routeRuntimeSnapshot.executionAttempt
+            ? {
+                ...proposal.decision.attempt.routeRuntimeSnapshot.executionAttempt,
+                affinity: {
+                  mode: affinitySelection.mode,
+                  selectedPoolId: affinitySelection.selectedPoolId || null,
+                  selectedExecutionTargetId: affinitySelection.selectedExecutionTargetId,
+                  primaryPoolId: affinitySelection.primaryPoolId || null,
+                  primaryExecutionTargetId: affinitySelection.primaryExecutionTargetId || null,
+                  primaryRevision: affinitySelection.primaryRevision || null,
+                  fallback: affinitySelection.fallback,
+                  promoteOnSuccess: affinitySelection.promoteOnSuccess,
+                  bindingOutcome: affinitySelection.mode === 'disabled' ? 'disabled' : 'pending',
+                  resultingPrimaryPoolId: null,
+                  resultingPrimaryExecutionTargetId: null,
+                  resultingRevision: null,
+                },
+              }
+            : null,
+        },
+        affinity: affinitySelection,
+      },
+    },
+  };
+}
+
+function mergeUnavailableDecisionEvidence(
+  primary: RouteRuntimeDecisionProposal | null,
+  fallback: RouteRuntimeDecisionProposal | null,
+): RouteRuntimeDecisionProposal | null {
+  if (primary?.decision.kind !== 'unavailable' || fallback?.decision.kind !== 'unavailable') {
+    return fallback;
+  }
+  const primarySnapshot = primary.decision.routeRuntimeSnapshot;
+  const fallbackSnapshot = fallback.decision.routeRuntimeSnapshot;
+  const rejectedByIdentity = new Map<string, RouteRuntimeRejectedAttempt>();
+  for (const rejected of [
+    ...(primarySnapshot.decision?.unavailable?.rejectedAttempts || []),
+    ...(fallbackSnapshot.decision?.unavailable?.rejectedAttempts || []),
+  ]) {
+    rejectedByIdentity.set(
+      `${rejected.executionAttemptId || ''}:${rejected.executionTargetId || ''}:${rejected.reason}`,
+      rejected,
+    );
+  }
+  return {
+    ...fallback,
+    decision: {
+      ...fallback.decision,
+      routeRuntimeSnapshot: {
+        ...fallbackSnapshot,
+        decision: fallbackSnapshot.decision
+          ? {
+              ...fallbackSnapshot.decision,
+              unavailable: {
+                reason: 'execution_attempts_exhausted',
+                rejectedAttempts: Array.from(rejectedByIdentity.values()),
+              },
+            }
+          : fallbackSnapshot.decision,
+        state: {
+          ...fallbackSnapshot.state,
+          failureOverlay: {
+            disabledExecutionAttemptIds: Array.from(new Set([
+              ...primarySnapshot.state.failureOverlay.disabledExecutionAttemptIds,
+              ...fallbackSnapshot.state.failureOverlay.disabledExecutionAttemptIds,
+            ])),
+            disabledExecutionTargetIds: Array.from(new Set([
+              ...primarySnapshot.state.failureOverlay.disabledExecutionTargetIds,
+              ...fallbackSnapshot.state.failureOverlay.disabledExecutionTargetIds,
+            ])),
+          },
+        },
+      },
+    },
+  };
+}
+
 export async function proposeRouteRuntimeDecisionInSession(
   session: RouteRuntimeDecisionSession,
   input: Pick<RouteRuntimeDecisionInput, 'retryCount' | 'disabledExecutionAttemptIds' | 'disabledExecutionTargetIds'> = {},
 ): Promise<RouteRuntimeDecisionProposal | null> {
-  return await proposeRouteRuntimeDecision({
+  const baseInput: RouteRuntimeDecisionInput = {
     requestedModel: session.requestedModel,
     request: session.request,
     downstreamPolicy: session.downstreamPolicy,
     forcedExecutionAttemptId: session.forcedExecutionAttemptId,
-    stickyExecutionTargetId: session.stickyExecutionTargetId,
+    stickyExecutionTargetId: session.affinity ? null : session.stickyExecutionTargetId,
     ...input,
+  };
+  const affinity = session.affinity;
+  if (!affinity?.binding) {
+    return withAffinityDecision(
+      await proposeRouteRuntimeDecision(baseInput, session.artifact),
+      affinity,
+      false,
+    );
+  }
+
+  const primaryTargetIds = affinity.binding.scope === 'target'
+    ? [affinity.binding.primaryExecutionTargetId]
+    : affinity.targetIdsByPoolId.get(affinity.binding.primaryPoolId) || [];
+  const primaryTargetIdSet = new Set(primaryTargetIds);
+  const disabledOutsidePrimary = affinity.targetIds.filter((id) => !primaryTargetIdSet.has(id));
+  const primaryProposal = await proposeRouteRuntimeDecision({
+    ...baseInput,
+    stickyExecutionTargetId: null,
+    disabledExecutionTargetIds: Array.from(new Set([
+      ...(input.disabledExecutionTargetIds || []),
+      ...disabledOutsidePrimary,
+    ])),
   }, session.artifact);
+  if (primaryProposal?.decision.kind === 'execution_attempt') {
+    return withAffinityDecision(primaryProposal, affinity, false);
+  }
+
+  if (affinityFallbackBehavior(affinity.policy) === 'deny') {
+    return primaryProposal;
+  }
+  const fallbackProposal = await proposeRouteRuntimeDecision({
+    ...baseInput,
+    stickyExecutionTargetId: null,
+    disabledExecutionTargetIds: Array.from(new Set([
+      ...(input.disabledExecutionTargetIds || []),
+      ...primaryTargetIds,
+    ])),
+  }, session.artifact);
+  const mergedFallbackProposal = mergeUnavailableDecisionEvidence(primaryProposal, fallbackProposal);
+  return withAffinityDecision(
+    mergedFallbackProposal,
+    affinity,
+    mergedFallbackProposal?.decision.kind === 'execution_attempt',
+  );
 }
 
 export async function previewRouteRuntimeDecisionInSession(
   session: RouteRuntimeDecisionSession,
   input: Pick<RouteRuntimeDecisionInput, 'retryCount' | 'disabledExecutionAttemptIds' | 'disabledExecutionTargetIds'> = {},
 ): Promise<RouteRuntimeDecision | null> {
-  return (await proposeRouteRuntimeDecisionInSession(session, input))?.decision ?? null;
+  const decision = (await proposeRouteRuntimeDecisionInSession(session, input))?.decision ?? null;
+  return decision?.kind === 'unavailable' ? null : decision;
 }
 
 export async function selectRouteRuntimeDecisionInSession(
@@ -966,7 +1449,8 @@ export async function selectRouteRuntimeDecisionInSession(
 ): Promise<RouteRuntimeDecision | null> {
   for (;;) {
     const proposal = await proposeRouteRuntimeDecisionInSession(session, input);
-    if (!proposal) return null;
+    if (!proposal) return unavailableRouteRuntimeDecisionFromSession(session, input);
+    if (proposal.decision.kind === 'unavailable') return proposal.decision;
     if (commitRouteRuntimeDecisionProposal(proposal)) return proposal.decision;
   }
 }
@@ -974,7 +1458,8 @@ export async function selectRouteRuntimeDecisionInSession(
 export async function previewRouteRuntimeDecision(
   input: RouteRuntimeDecisionInput,
 ): Promise<RouteRuntimeDecision | null> {
-  return (await proposeRouteRuntimeDecision(input))?.decision ?? null;
+  const decision = (await proposeRouteRuntimeDecision(input))?.decision ?? null;
+  return decision?.kind === 'unavailable' ? null : decision;
 }
 
 export async function selectRouteRuntimeDecision(

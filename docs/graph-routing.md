@@ -13,7 +13,8 @@ behavior is never inferred from the editor layout.
 | Operations | [Graph editor](./route-graph-editor-guide.md) | Advanced semantic graph editing and diagnostics |
 | Runtime | [Runtime route flow](./model-route-flow.md) | Marketplace and Model Tester explanations |
 | Runtime | [Probability and cost](./route-probability-cost.md) | Conditional probabilities and theoretical cost |
-| Runtime | [Session affinity and cache-aware routing](./adr/0021-session-affinity-and-cache-aware-routing.md) | Strict sessions, content hints, and warm/cold expected cost |
+| Runtime | [Session affinity and cache-aware routing](./adr/0021-session-affinity-and-cache-aware-routing.md) | Strict-session evidence, content hints, and warm/cold expected cost |
+| Runtime | [Entry-scoped affinity pools](./adr/0022-entry-scoped-affinity-pools.md) | Disabled, Pool, and fixed-target affinity with explicit fallback and promotion semantics |
 | Reference | [Source JSON](./route-graph-json-overview.md) | Source graph import, export, and validation |
 | Reference | [Nodes](./route-graph-nodes-reference.md) | Node, macro, port, and policy fields |
 | Reference | [Metadata and CEL](./route-graph-metadata-cel-reference.md) | CEL scopes and stable metadata |
