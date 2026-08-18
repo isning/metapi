@@ -29,6 +29,7 @@ import '@xyflow/react/dist/style.css';
 import { tr } from '../i18n.js';
 import { cn } from '../lib/utils.js';
 import EmptyStateBlock from './EmptyStateBlock.js';
+import RuntimeIdentifier, { formatRuntimeIdentifier } from './RuntimeIdentifier.js';
 import ToneBadge from './ToneBadge.js';
 import EstimateLevelBadge from './pricing/EstimateLevelBadge.js';
 import { Card, CardContent } from './ui/card/index.js';
@@ -789,12 +790,8 @@ function formatId(value: string | number | null | undefined): string {
   return String(value);
 }
 
-function LongRuntimeId({ value, className }: { value: string | number | null | undefined; className?: string }) {
-  return (
-    <span className={cn('min-w-0 break-all font-mono text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]', className)}>
-      {formatId(value)}
-    </span>
-  );
+function LongRuntimeId({ value, className, kind, context }: { value: string | number | null | undefined; className?: string; kind?: React.ComponentProps<typeof RuntimeIdentifier>['kind']; context?: React.ReactNode }) {
+  return <RuntimeIdentifier value={value} className={cn('text-muted-foreground', className)} kind={kind} context={context} />;
 }
 
 function formatModelRouteFlowTemplate(key: string, replacements: Record<string, string | number>) {
@@ -1017,8 +1014,8 @@ function terminalNodeForAlternative(input: {
     order,
     title: attempt ? attemptLabel(attempt) : tr('components.modelRouteFlow.noTerminalOutcome'),
     subtitle: [
-      alternative.endpointId ? `${tr('components.modelRouteFlow.endpointIdentity')}: ${alternative.endpointId}` : '',
-      attempt ? `${tr('components.modelRouteFlow.executionAttemptIdentity')}: ${attempt.executionAttemptId}` : '',
+      alternative.endpointId ? `${tr('components.modelRouteFlow.endpointIdentity')}: ${formatRuntimeIdentifier(alternative.endpointId, { kind: 'route-endpoint' })}` : '',
+      attempt ? `${tr('components.modelRouteFlow.executionAttemptIdentity')}: ${formatRuntimeIdentifier(attempt.executionAttemptId, { kind: 'execution-attempt' })}` : '',
     ].filter(Boolean).join(' · ') || null,
     badges: [
       { label: tr('components.modelRouteFlow.executionTerminal'), tone: selected ? '-success' : '-muted' },
@@ -1661,7 +1658,7 @@ function SelectedTerminalInspector({ flow }: { flow: ModelRouteFlowData }) {
           <div className="flex flex-wrap gap-1.5">
             <ProbabilityBadge status={attempt.probabilityStatus} value={attempt.probability} />
             <ToneBadge tone="-muted">{attempt.model || 'N/A'}</ToneBadge>
-            {attempt.endpointId ? <ToneBadge tone="-muted" className="max-w-56 truncate">{attempt.endpointId}</ToneBadge> : null}
+            {attempt.endpointId ? <ToneBadge tone="-muted" className="max-w-56"><LongRuntimeId value={attempt.endpointId} kind="route-endpoint" /></ToneBadge> : null}
             {attempt.executionTargetId != null ? <ToneBadge tone="-muted">{tr('components.modelRouteFlow.executionTarget')} {attempt.executionTargetId}</ToneBadge> : null}
           </div>
         </div>
@@ -1791,7 +1788,7 @@ function AlternativesView({ flow }: { flow: ModelRouteFlowData }) {
                   {selected ? <ToneBadge tone="-success">{tr('components.modelRouteFlow.selectedBranch')}</ToneBadge> : null}
                 </div>
                 <div className="mt-1">
-                  <LongRuntimeId value={alternative.endpointId || alternative.alternativeId} />
+                  <LongRuntimeId value={alternative.endpointId || alternative.alternativeId} kind="route-endpoint" />
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1814,7 +1811,7 @@ function AlternativesView({ flow }: { flow: ModelRouteFlowData }) {
                       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold">{attemptLabel(attempt)}</div>
-                          <div className="mt-1"><LongRuntimeId value={attempt.executionAttemptId} /></div>
+                          <div className="mt-1"><LongRuntimeId value={attempt.executionAttemptId} kind="execution-attempt" context={[attempt.accountLabel, attempt.siteName, attempt.tokenLabel || attempt.tokenGroup].filter(Boolean).join(' · ') || undefined} /></div>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           <ProbabilityBadge status={attempt.probabilityStatus} value={attempt.probability} />
@@ -1822,7 +1819,7 @@ function AlternativesView({ flow }: { flow: ModelRouteFlowData }) {
                         </div>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-5">
-                        <MiniMetric label={tr('components.modelRouteFlow.endpoint')} value={<LongRuntimeId value={attempt.endpointId} className="text-foreground" />} />
+                        <MiniMetric label={tr('components.modelRouteFlow.endpoint')} value={<LongRuntimeId value={attempt.endpointId} kind="route-endpoint" className="text-foreground" />} />
                         <MiniMetric label={tr('components.modelRouteFlow.model')} value={attempt.model || 'N/A'} />
                         <MiniMetric label={tr('components.modelAnalysisPanel.successRate')} value={formatPercent(attempt.health.successRate)} />
                         <MiniMetric label={tr('pages.models.firstTokenLatency')} value={formatNumber(attempt.health.avgFirstTokenLatencyMs, 'ms')} />
@@ -1904,10 +1901,10 @@ function ExecutionAttemptsView({ flow }: { flow: ModelRouteFlowData }) {
             {attempts.map((attempt) => (
               <TableRow key={attempt.executionAttemptId} data-state={runtime?.selected.executionAttemptId === attempt.executionAttemptId ? 'selected' : undefined}>
                 <TableCell>
-                  <LongRuntimeId value={attempt.executionAttemptId} className="text-foreground" />
+                  <LongRuntimeId value={attempt.executionAttemptId} kind="execution-attempt" className="text-foreground" context={[attempt.accountLabel, attempt.siteName, attempt.tokenLabel || attempt.tokenGroup].filter(Boolean).join(' · ') || undefined} />
                   <div className="mt-1 text-xs text-muted-foreground">{attemptLabel(attempt)}</div>
                 </TableCell>
-                <TableCell><LongRuntimeId value={attempt.endpointId} className="text-foreground" /></TableCell>
+                <TableCell><LongRuntimeId value={attempt.endpointId} kind="route-endpoint" className="text-foreground" /></TableCell>
                 <TableCell className="font-mono text-xs">{attempt.model || 'N/A'}</TableCell>
                 <TableCell>
                   <div className="text-sm">{attempt.accountLabel || formatId(attempt.accountId)}</div>
@@ -2015,7 +2012,7 @@ function CostView({ flow }: { flow: ModelRouteFlowData }) {
                 return (
                   <TableRow key={attempt.executionAttemptId}>
                     <TableCell>
-                      <LongRuntimeId value={attempt.executionAttemptId} className="text-foreground" />
+                      <LongRuntimeId value={attempt.executionAttemptId} kind="execution-attempt" className="text-foreground" />
                       <div className="mt-1 text-xs text-muted-foreground">{attempt.modelName}</div>
                     </TableCell>
                     <TableCell>
@@ -2111,7 +2108,7 @@ function FlowHeader({ flow }: { flow: ModelRouteFlowData }) {
           </div>
           <div className="grid min-w-52 gap-1 text-xs text-muted-foreground">
             <div>{tr('components.modelRouteFlow.projectedAt')}: <span className="font-mono text-foreground">{flow.projectedAt}</span></div>
-            <div>{tr('components.modelRouteFlow.bundleHash')}: <LongRuntimeId value={runtime?.runtimeRef.bundleHash || 'N/A'} className="text-foreground" /></div>
+            <div>{tr('components.modelRouteFlow.bundleHash')}: <LongRuntimeId value={runtime?.runtimeRef.bundleHash} kind="runtime-artifact" className="text-foreground" /></div>
           </div>
         </div>
       </CardContent>

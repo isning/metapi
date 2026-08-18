@@ -1,5 +1,6 @@
 import type {
   RouteRuntimeExecutionAttemptSnapshot,
+  RouteRuntimeDecisionSnapshot,
   RouteRuntimeFiltersSnapshot,
   RouteRuntimeMetadataSnapshot,
   RouteRuntimeSnapshot,
@@ -43,6 +44,10 @@ function stringArray(value: unknown): string[] | null {
 function positiveIntegerArray(value: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
   return value.every((item) => Number.isSafeInteger(item) && item > 0) ? value as number[] : null;
+}
+
+function isNullablePositiveInteger(value: unknown): value is number | null {
+  return value === null || (Number.isSafeInteger(value) && Number(value) > 0);
 }
 
 function nullableRecord(value: unknown): Record<string, unknown> | null | undefined {
@@ -156,7 +161,211 @@ function parseExecutionAttempt(value: unknown): RouteRuntimeExecutionAttemptSnap
     || !isNullableNumber(value.siteId)
     || (value.credential !== null && !isRecord(value.credential))
   ) return undefined;
-  return value as RouteRuntimeExecutionAttemptSnapshot;
+  const affinity = parseAffinity(value.affinity);
+  if (affinity === undefined) return undefined;
+  return {
+    ...(value as Omit<RouteRuntimeExecutionAttemptSnapshot, 'affinity'>),
+    affinity,
+  };
+}
+
+function parseAffinity(value: unknown): RouteRuntimeExecutionAttemptSnapshot['affinity'] | undefined {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const mode = value.mode;
+  const bindingOutcome = value.bindingOutcome;
+  if (
+    (mode !== 'disabled' && mode !== 'pool' && mode !== 'target')
+    || !isNullableText(value.selectedPoolId)
+    || !isNullableNumber(value.selectedExecutionTargetId)
+    || !isNullableText(value.primaryPoolId)
+    || !isNullableNumber(value.primaryExecutionTargetId)
+    || !isNullableNumber(value.primaryRevision)
+    || typeof value.fallback !== 'boolean'
+    || typeof value.promoteOnSuccess !== 'boolean'
+    || ![
+      'pending',
+      'bound',
+      'primary_refreshed',
+      'temporary_fallback',
+      'promoted',
+      'stale_ignored',
+      'invalid',
+      'disabled',
+    ].includes(String(bindingOutcome))
+    || !isNullableText(value.resultingPrimaryPoolId)
+    || !isNullableNumber(value.resultingPrimaryExecutionTargetId)
+    || !isNullableNumber(value.resultingRevision)
+  ) return undefined;
+  return {
+    mode,
+    selectedPoolId: value.selectedPoolId,
+    selectedExecutionTargetId: value.selectedExecutionTargetId,
+    primaryPoolId: value.primaryPoolId,
+    primaryExecutionTargetId: value.primaryExecutionTargetId,
+    primaryRevision: value.primaryRevision,
+    fallback: value.fallback,
+    promoteOnSuccess: value.promoteOnSuccess,
+    bindingOutcome: bindingOutcome as NonNullable<RouteRuntimeExecutionAttemptSnapshot['affinity']>['bindingOutcome'],
+    resultingPrimaryPoolId: value.resultingPrimaryPoolId,
+    resultingPrimaryExecutionTargetId: value.resultingPrimaryExecutionTargetId,
+    resultingRevision: value.resultingRevision,
+  };
+}
+
+function parseDecisionCandidate(value: unknown): RouteRuntimeDecisionSnapshot['selectors'][number]['candidates'][number] | null {
+  if (!isRecord(value)) return null;
+  if (
+    typeof value.choiceId !== 'string'
+    || !isNullableText(value.endpointId)
+    || typeof value.enabled !== 'boolean'
+    || typeof value.eligible !== 'boolean'
+    || typeof value.selected !== 'boolean'
+    || typeof value.weight !== 'number'
+    || !Number.isFinite(value.weight)
+    || typeof value.contribution !== 'number'
+    || !Number.isFinite(value.contribution)
+    || typeof value.order !== 'number'
+    || !Number.isFinite(value.order)
+    || typeof value.score !== 'number'
+    || !Number.isFinite(value.score)
+  ) return null;
+  const executionTargetIds = positiveIntegerArray(value.executionTargetIds);
+  if (!executionTargetIds) return null;
+  let targets: NonNullable<RouteRuntimeDecisionSnapshot['selectors'][number]['candidates'][number]['targets']> | undefined;
+  if (value.targets !== undefined) {
+    if (!Array.isArray(value.targets)) return null;
+    targets = [];
+    for (const rawTarget of value.targets) {
+      if (
+        !isRecord(rawTarget)
+        || !Number.isSafeInteger(rawTarget.executionTargetId)
+        || Number(rawTarget.executionTargetId) <= 0
+        || !isNullableText(rawTarget.executionAttemptId)
+        || !isNullableText(rawTarget.upstreamModel)
+        || (rawTarget.credential !== null && !isRecord(rawTarget.credential))
+      ) return null;
+      targets.push({
+        executionTargetId: Number(rawTarget.executionTargetId),
+        executionAttemptId: rawTarget.executionAttemptId,
+        upstreamModel: rawTarget.upstreamModel,
+        credential: rawTarget.credential as typeof targets[number]['credential'],
+      });
+    }
+    const targetIds = targets.map((target) => target.executionTargetId);
+    if (
+      new Set(targetIds).size !== targetIds.length
+      || targetIds.some((targetId) => !executionTargetIds.includes(targetId))
+    ) return null;
+  }
+  return {
+    choiceId: value.choiceId,
+    endpointId: value.endpointId,
+    executionTargetIds,
+    ...(targets ? { targets } : {}),
+    enabled: value.enabled,
+    eligible: value.eligible,
+    selected: value.selected,
+    weight: value.weight,
+    contribution: value.contribution,
+    order: value.order,
+    score: value.score,
+  };
+}
+
+function parseDecision(value: unknown): RouteRuntimeDecisionSnapshot | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value) || !isNullableText(value.selectedAlternativeId)) return undefined;
+  if (!Array.isArray(value.selectors) || !Array.isArray(value.fallbackStages)) return undefined;
+  const selectors: RouteRuntimeDecisionSnapshot['selectors'] = [];
+  for (const rawSelector of value.selectors) {
+    if (!isRecord(rawSelector)) return undefined;
+    const policySource = rawSelector.policySource;
+    const policyKind = rawSelector.policyKind;
+    if (
+      typeof rawSelector.selectorId !== 'string'
+      || !isNullableText(rawSelector.nodeId)
+      || typeof rawSelector.mode !== 'string'
+      || (policySource !== 'default' && policySource !== 'registry' && policySource !== 'inline' && policySource !== 'builtin')
+      || !isNullableText(rawSelector.policyId)
+      || (policyKind !== null && policyKind !== 'cel' && policyKind !== 'builtin')
+      || !isNullableText(rawSelector.selectionMode)
+      || !isNullableText(rawSelector.selectedChoiceId)
+      || !Array.isArray(rawSelector.candidates)
+    ) return undefined;
+    const candidates = rawSelector.candidates.map(parseDecisionCandidate);
+    if (candidates.some((candidate) => candidate === null)) return undefined;
+    selectors.push({
+      selectorId: rawSelector.selectorId,
+      nodeId: rawSelector.nodeId,
+      mode: rawSelector.mode,
+      policySource,
+      policyId: rawSelector.policyId,
+      policyKind,
+      selectionMode: rawSelector.selectionMode,
+      selectedChoiceId: rawSelector.selectedChoiceId,
+      candidates: candidates as RouteRuntimeDecisionSnapshot['selectors'][number]['candidates'],
+    });
+  }
+  const fallbackStages: RouteRuntimeDecisionSnapshot['fallbackStages'] = [];
+  for (const rawStage of value.fallbackStages) {
+    if (
+      !isRecord(rawStage)
+      || typeof rawStage.fallbackId !== 'string'
+      || typeof rawStage.stageId !== 'string'
+      || !Number.isSafeInteger(rawStage.stageIndex)
+      || typeof rawStage.nodeId !== 'string'
+    ) return undefined;
+    fallbackStages.push({
+      fallbackId: rawStage.fallbackId,
+      stageId: rawStage.stageId,
+      stageIndex: rawStage.stageIndex as number,
+      nodeId: rawStage.nodeId,
+    });
+  }
+  let unavailable: RouteRuntimeDecisionSnapshot['unavailable'];
+  if (value.unavailable !== undefined) {
+    if (
+      !isRecord(value.unavailable)
+      || !['execution_attempts_exhausted', 'no_active_runtime', 'no_matching_route'].includes(String(value.unavailable.reason))
+      || !Array.isArray(value.unavailable.rejectedAttempts)
+    ) return undefined;
+    const allowedReasons = new Set([
+      'execution_target_disabled',
+      'account_inactive',
+      'site_disabled',
+      'cooldown',
+      'downstream_policy_excluded',
+      'missing_token',
+      'identity_missing',
+      'route_scope_excluded',
+    ]);
+    const rejectedAttempts = [] as NonNullable<RouteRuntimeDecisionSnapshot['unavailable']>['rejectedAttempts'];
+    for (const rejected of value.unavailable.rejectedAttempts) {
+      if (
+        !isRecord(rejected)
+        || !isNullableText(rejected.executionAttemptId)
+        || !isNullablePositiveInteger(rejected.executionTargetId)
+        || typeof rejected.reason !== 'string'
+        || !allowedReasons.has(rejected.reason)
+      ) return undefined;
+      rejectedAttempts.push({
+        executionAttemptId: rejected.executionAttemptId,
+        executionTargetId: rejected.executionTargetId,
+        reason: rejected.reason as typeof rejectedAttempts[number]['reason'],
+      });
+    }
+    unavailable = {
+      reason: value.unavailable.reason as NonNullable<RouteRuntimeDecisionSnapshot['unavailable']>['reason'],
+      rejectedAttempts,
+    };
+  }
+  return {
+    selectedAlternativeId: value.selectedAlternativeId,
+    selectors,
+    fallbackStages,
+    ...(unavailable ? { unavailable } : {}),
+  };
 }
 
 function parseSyntheticResponse(value: unknown): ProxyLogRouteRuntimeSnapshot['syntheticResponse'] | undefined {
@@ -192,6 +401,7 @@ function parseCanonicalSnapshot(value: unknown): ProxyLogRouteRuntimeSnapshot | 
   if (terminalKind !== null && terminalKind !== 'endpoint' && terminalKind !== 'synthetic_response') return null;
 
   const metadata = parseMetadata(record.metadata);
+  const decision = parseDecision(record.decision);
   const endpoint = parseEndpoint(record.endpoint);
   const executionAttempt = parseExecutionAttempt(record.executionAttempt);
   const state = parseState(record.state);
@@ -200,6 +410,7 @@ function parseCanonicalSnapshot(value: unknown): ProxyLogRouteRuntimeSnapshot | 
   const syntheticResponse = parseSyntheticResponse(record.syntheticResponse);
   if (
     !metadata
+    || decision === undefined
     || endpoint === undefined
     || executionAttempt === undefined
     || !state
@@ -228,6 +439,7 @@ function parseCanonicalSnapshot(value: unknown): ProxyLogRouteRuntimeSnapshot | 
       terminalKind,
     },
     metadata,
+    decision,
     endpoint,
     executionAttempt,
     requestUsage,

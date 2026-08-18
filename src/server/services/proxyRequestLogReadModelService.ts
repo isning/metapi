@@ -1,6 +1,10 @@
 import { and, desc, eq, exists, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import { summarizeProxyBillingDetails } from './billingCostFact.js';
+import {
+  parseProxyBillingSummary,
+  summarizeProxyBillingDetails,
+  type ProxyBillingSummary,
+} from './billingCostFact.js';
 import { withProxyLogSelectFields } from './proxyLogStore.js';
 
 export type ProxyRequestStatusFilter = 'all' | 'success' | 'failed';
@@ -39,6 +43,23 @@ export type ProxyRequestAttemptJoinedRow = {
 export type ProxyRequestLogRecord = {
   request: ProxyRequestRow;
   attempts: ProxyRequestAttemptJoinedRow[];
+  debugTrace: ProxyRequestDebugTraceSummary | null;
+  billingSummary: ProxyBillingSummary | null;
+};
+
+export type ProxyRequestDebugTraceSummary = {
+  id: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  sessionId: string | null;
+  requestedModel: string | null;
+  clientKind: string | null;
+  selectedExecutionAttemptId: string | null;
+  routeEntrypointId: string | null;
+  runtimeEndpointId: string | null;
+  finalStatus: string | null;
+  finalHttpStatus: number | null;
+  finalUpstreamPath: string | null;
 };
 
 function attemptSearchCondition(search: string) {
@@ -146,6 +167,50 @@ async function loadAttemptsByRequestIds(requestIds: string[], includeBillingDeta
   return grouped;
 }
 
+async function loadDebugTraceSummariesByRequestIds(requestIds: string[]) {
+  const grouped = new Map<string, ProxyRequestDebugTraceSummary>();
+  if (requestIds.length === 0) return grouped;
+
+  const rows = await db.select({
+    id: schema.proxyDebugTraces.id,
+    requestId: schema.proxyDebugTraces.requestId,
+    createdAt: schema.proxyDebugTraces.createdAt,
+    updatedAt: schema.proxyDebugTraces.updatedAt,
+    sessionId: schema.proxyDebugTraces.sessionId,
+    requestedModel: schema.proxyDebugTraces.requestedModel,
+    clientKind: schema.proxyDebugTraces.clientKind,
+    selectedExecutionAttemptId: schema.proxyDebugTraces.selectedExecutionAttemptId,
+    routeEntrypointId: schema.proxyDebugTraces.routeEntrypointId,
+    runtimeEndpointId: schema.proxyDebugTraces.runtimeEndpointId,
+    finalStatus: schema.proxyDebugTraces.finalStatus,
+    finalHttpStatus: schema.proxyDebugTraces.finalHttpStatus,
+    finalUpstreamPath: schema.proxyDebugTraces.finalUpstreamPath,
+  }).from(schema.proxyDebugTraces)
+    .where(inArray(schema.proxyDebugTraces.requestId, requestIds))
+    .orderBy(desc(schema.proxyDebugTraces.updatedAt), desc(schema.proxyDebugTraces.id))
+    .all();
+
+  for (const row of rows) {
+    const requestId = String(row.requestId || '').trim();
+    if (!requestId || grouped.has(requestId)) continue;
+    grouped.set(requestId, {
+      id: row.id,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      sessionId: row.sessionId,
+      requestedModel: row.requestedModel,
+      clientKind: row.clientKind,
+      selectedExecutionAttemptId: row.selectedExecutionAttemptId,
+      routeEntrypointId: row.routeEntrypointId,
+      runtimeEndpointId: row.runtimeEndpointId,
+      finalStatus: row.finalStatus,
+      finalHttpStatus: row.finalHttpStatus,
+      finalUpstreamPath: row.finalUpstreamPath,
+    });
+  }
+  return grouped;
+}
+
 export async function listProxyRequestLogPage(input: ProxyRequestLogFilters & { limit: number; offset: number }) {
   const where = requestWhereClause(input);
   let rowsQuery = db.select().from(schema.proxyRequests);
@@ -158,9 +223,18 @@ export async function listProxyRequestLogPage(input: ProxyRequestLogFilters & { 
     rowsQuery.orderBy(desc(schema.proxyRequests.startedAt)).limit(input.limit).offset(input.offset).all(),
     totalQuery.get(),
   ]);
-  const attempts = await loadAttemptsByRequestIds(requestRows.map((row) => row.id), false);
+  const requestIds = requestRows.map((row) => row.id);
+  const [attempts, debugTraces] = await Promise.all([
+    loadAttemptsByRequestIds(requestIds, false),
+    loadDebugTraceSummariesByRequestIds(requestIds),
+  ]);
   return {
-    rows: requestRows.map((request) => ({ request, attempts: attempts.get(request.id) || [] })),
+    rows: requestRows.map((request) => ({
+      request,
+      attempts: attempts.get(request.id) || [],
+      debugTrace: debugTraces.get(request.id) || null,
+      billingSummary: parseProxyBillingSummary(request.billingDetails),
+    })),
     total: Number(totalRow?.total || 0),
   };
 }
@@ -172,8 +246,16 @@ export async function getProxyRequestLogDetail(requestId: string): Promise<Proxy
     .where(eq(schema.proxyRequests.id, normalizedId))
     .get();
   if (!request) return undefined;
-  const attempts = await loadAttemptsByRequestIds([normalizedId], true);
-  return { request, attempts: attempts.get(normalizedId) || [] };
+  const [attempts, debugTraces] = await Promise.all([
+    loadAttemptsByRequestIds([normalizedId], true),
+    loadDebugTraceSummariesByRequestIds([normalizedId]),
+  ]);
+  return {
+    request,
+    attempts: attempts.get(normalizedId) || [],
+    debugTrace: debugTraces.get(normalizedId) || null,
+    billingSummary: parseProxyBillingSummary(request.billingDetails),
+  };
 }
 
 export async function getProxyRequestLogMetaFacts(input: {

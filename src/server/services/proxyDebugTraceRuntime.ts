@@ -4,6 +4,7 @@ import type {
 } from '../proxy-core/orchestration/endpointFlow.js';
 import {
   finalizeProxyDebugTrace,
+  appendProxyDebugTracePreflightOutcome,
   insertProxyDebugAttempt,
   normalizeProxyDebugResponseHeaders,
   startProxyDebugTraceSession,
@@ -27,6 +28,7 @@ function parseDebugTextPayload(rawText: string): unknown {
 }
 
 export async function startSurfaceProxyDebugTrace(input: {
+  requestId?: string | null;
   downstreamPath: string;
   clientKind?: string | null;
   sessionId?: string | null;
@@ -65,6 +67,18 @@ export async function safeUpdateSurfaceProxyDebugRuntime(
     await updateProxyDebugTraceRuntime(session.traceId, input);
   } catch (error) {
     console.warn('[proxy-debug] failed to update endpoint candidates', error);
+  }
+}
+
+export async function safeAppendSurfaceProxyDebugPreflightOutcome(
+  session: ProxyDebugTraceSession | null,
+  outcome: unknown,
+): Promise<void> {
+  if (!session) return;
+  try {
+    await appendProxyDebugTracePreflightOutcome(session.traceId, outcome);
+  } catch (error) {
+    console.warn('[proxy-debug] failed to record preflight outcome', error);
   }
 }
 

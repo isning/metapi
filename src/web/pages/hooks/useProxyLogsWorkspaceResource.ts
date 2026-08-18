@@ -12,7 +12,32 @@ export type ProxyLogDetailState = {
   loading: boolean;
   data?: ProxyRequestLogDetail;
   error?: string;
+  observedRevision?: string;
 };
+
+export function proxyRequestLogRevision(log: ProxyRequestLog): string {
+  return JSON.stringify({
+    status: log.status,
+    httpStatus: log.httpStatus,
+    completedAt: log.completedAt,
+    finalExecutionAttemptId: log.finalExecutionAttemptId,
+    debugTrace: log.debugTrace ? {
+      id: log.debugTrace.id,
+      updatedAt: log.debugTrace.updatedAt,
+      selectedExecutionAttemptId: log.debugTrace.selectedExecutionAttemptId,
+      finalStatus: log.debugTrace.finalStatus,
+      finalHttpStatus: log.debugTrace.finalHttpStatus,
+      finalUpstreamPath: log.debugTrace.finalUpstreamPath,
+    } : null,
+    attempts: log.attempts.map((attempt) => ({
+      id: attempt.id,
+      executionAttemptId: attempt.executionAttemptId,
+      status: attempt.status,
+      httpStatus: attempt.httpStatus,
+      createdAt: attempt.createdAt,
+    })),
+  });
+}
 
 export type ProxyLogsWorkspaceQuery = {
   limit: number;
@@ -52,6 +77,8 @@ export function useProxyLogsWorkspaceResource(input: {
   const [sites, setSites] = useState<ProxyLogsWorkspaceSite[]>([]);
   const [clientOptions, setClientOptions] = useState<ProxyLogClientOption[]>([]);
   const [detailById, setDetailById] = useState<Record<string, ProxyLogDetailState>>({});
+  const detailByIdRef = useRef<Record<string, ProxyLogDetailState>>({});
+  const detailLoadSeq = useRef<Record<string, number>>({});
   const loadSeq = useRef(0);
   const metaLoadSeq = useRef(0);
 
@@ -104,22 +131,57 @@ export function useProxyLogsWorkspaceResource(input: {
     }
   }, [hasInvalidTimeRange, query]);
 
-  const loadDetail = useCallback(async (id: string) => {
-    const existing = detailById[id];
-    if (existing?.loading || existing?.data) return;
-    setDetailById((current) => ({ ...current, [id]: { loading: true } }));
+  const loadDetail = useCallback(async (
+    id: string,
+    options?: {
+      force?: boolean;
+      observedRevision?: string;
+      preserveVisibleData?: boolean;
+    },
+  ) => {
+    const existing = detailByIdRef.current[id];
+    if (existing?.loading || (!options?.force && existing?.data)) return;
+    const seq = (detailLoadSeq.current[id] || 0) + 1;
+    detailLoadSeq.current[id] = seq;
+    setDetailById((current) => ({
+      ...current,
+      [id]: {
+        ...(options?.preserveVisibleData ? current[id] : {}),
+        loading: true,
+        observedRevision: options?.observedRevision,
+      },
+    }));
     try {
       const data = await api.getProxyRequestLogDetail(id);
-      setDetailById((current) => ({ ...current, [id]: { loading: false, data } }));
+      if (detailLoadSeq.current[id] !== seq) return;
+      setDetailById((current) => ({
+        ...current,
+        [id]: {
+          loading: false,
+          data,
+          observedRevision: options?.observedRevision,
+        },
+      }));
     } catch (error: any) {
+      if (detailLoadSeq.current[id] !== seq) return;
       const message = error?.message || 'Failed to load log details';
-      setDetailById((current) => ({ ...current, [id]: { loading: false, error: message } }));
+      setDetailById((current) => ({
+        ...current,
+        [id]: {
+          loading: false,
+          error: message,
+          observedRevision: options?.observedRevision,
+        },
+      }));
       onError?.(message);
     }
-  }, [detailById, onError]);
+  }, [onError]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadMeta(); }, [loadMeta]);
+  useEffect(() => {
+    detailByIdRef.current = detailById;
+  }, [detailById]);
 
   return { logs, summary, total, loading, sites, clientOptions, detailById, load, loadMeta, loadDetail };
 }

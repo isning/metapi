@@ -1,6 +1,12 @@
 import type { ProxyBillingQuote } from '../../shared/proxyBilling.js';
 import type { BillingCostSummary } from '../../shared/billingCost.js';
 
+export type ProxyBillingSummary = {
+  quote: ProxyBillingQuote | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+};
+
 function parseJsonObject(value: unknown): Record<string, unknown> | null {
   if (typeof value === 'string') {
     try {
@@ -44,6 +50,22 @@ export function parseProxyBillingQuote(value: unknown): ProxyBillingQuote | null
     estimateLevel: optionalText(quote.estimateLevel) as ProxyBillingQuote['estimateLevel'],
     planFingerprint: optionalText(quote.planFingerprint),
   };
+}
+
+function optionalTokenCount(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+export function parseProxyBillingSummary(value: unknown): ProxyBillingSummary | null {
+  const details = parseJsonObject(value);
+  if (!details) return null;
+  const usage = parseJsonObject(details.usage);
+  const quote = parseProxyBillingQuote(details);
+  const cacheReadTokens = optionalTokenCount(usage?.cacheReadTokens);
+  const cacheCreationTokens = optionalTokenCount(usage?.cacheCreationTokens);
+  if (!quote && cacheReadTokens == null && cacheCreationTokens == null) return null;
+  return { quote, cacheReadTokens, cacheCreationTokens };
 }
 
 export function summarizeProxyBillingDetails(values: unknown[]): BillingCostSummary {

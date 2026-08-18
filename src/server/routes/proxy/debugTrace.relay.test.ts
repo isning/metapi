@@ -153,9 +153,13 @@ describe('proxy debug trace relay capture', () => {
 
     const attempts = await harness.db.select().from(harness.schema.proxyDebugAttempts).all();
     expect(attempts.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(attempts.map((entry: typeof attempts[number]) => entry.executionAttemptId))).toEqual(
+      new Set([traces[0]!.selectedExecutionAttemptId]),
+    );
     expect(attempts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         traceId: traces[0]!.id,
+        executionAttemptId: expect.any(String),
         attemptIndex: 0,
         endpoint: 'responses',
         requestPath: '/v1/responses',
@@ -165,6 +169,7 @@ describe('proxy debug trace relay capture', () => {
       }),
       expect.objectContaining({
         traceId: traces[0]!.id,
+        executionAttemptId: expect.any(String),
         attemptIndex: 1,
         endpoint: 'chat',
         requestPath: '/v1/chat/completions',
@@ -198,6 +203,42 @@ describe('proxy debug trace relay capture', () => {
           message: { role: 'assistant', content: 'debug trace response' },
         }),
       ],
+    });
+  });
+
+  it('records endpoint-pool preflight blocking when no upstream HTTP request is sent', async () => {
+    const { site, candidate, managedKey } = await harness.seedRoute({ model: 'debug-preflight-model' });
+    config.proxyDebugTraceEnabled = true;
+    await harness.db.insert(harness.schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://cooling.example.com',
+      enabled: true,
+      cooldownUntil: '2999-01-01T00:00:00.000Z',
+      lastFailureReason: 'HTTP 502: fetch failed',
+    }).run();
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-api-key': managedKey.key },
+      payload: {
+        model: 'debug-preflight-model',
+        messages: [{ role: 'user', content: 'blocked before dispatch' }],
+      },
+    });
+
+    expect(response.statusCode).toBeGreaterThanOrEqual(500);
+    expect(harness.upstream.calls).toHaveLength(0);
+    const trace = (await harness.db.select().from(harness.schema.proxyDebugTraces).all())[0];
+    expect(trace).toBeTruthy();
+    expect(JSON.parse(trace!.runtimeTraceJson || '{}')).toMatchObject({
+      preflightOutcomes: [expect.objectContaining({
+        executionAttemptId: candidate.executionAttemptId,
+        kind: 'site_api_endpoint_pool_unavailable',
+        reason: 'all_endpoints_cooling_down',
+        coolingDownEndpointCount: 1,
+        nextAvailableAt: '2999-01-01T00:00:00.000Z',
+      })],
     });
   });
 

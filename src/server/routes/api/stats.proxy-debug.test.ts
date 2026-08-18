@@ -56,6 +56,7 @@ describe('stats proxy debug api', () => {
     await store.insertProxyDebugAttempt({
       traceId: trace.id,
       attemptIndex: 0,
+      executionAttemptId: 'execution-attempt:test:gpt-4.1',
       endpoint: 'chat',
       requestPath: '/v1/chat/completions',
       targetUrl: 'https://example.com/v1/chat/completions',
@@ -72,6 +73,27 @@ describe('stats proxy debug api', () => {
       fallbackScope: null,
       failureClass: null,
       memoryWrite: { action: 'success', preferredEndpoint: 'chat' },
+    });
+    await store.insertProxyDebugAttempt({
+      traceId: trace.id,
+      attemptIndex: 1,
+      executionAttemptId: 'execution-attempt:test:fallback',
+      endpoint: 'responses',
+      requestPath: '/v1/responses',
+      targetUrl: 'https://example.com/v1/responses',
+      runtimeExecutor: 'fallback',
+      requestHeaders: { authorization: 'Bearer fallback' },
+      requestBody: { model: 'gpt-4.1', input: 'fallback' },
+      responseStatus: 503,
+      responseHeaders: { 'content-type': 'application/json' },
+      responseBody: { error: 'fallback failed' },
+      rawErrorText: 'fallback failed',
+      recoverApplied: true,
+      downgradeDecision: true,
+      downgradeReason: 'endpoint_fallback',
+      fallbackScope: 'endpoint',
+      failureClass: 'upstream_error',
+      memoryWrite: { action: 'fallback', preferredEndpoint: 'chat' },
     });
     await store.finalizeProxyDebugTrace(trace.id, {
       finalStatus: 'success',
@@ -97,17 +119,66 @@ describe('stats proxy debug api', () => {
     expect(detailResponse.statusCode).toBe(200);
     const detailBody = detailResponse.json() as {
       trace?: { requestedModel?: string; sessionId?: string };
-      attempts?: Array<{ endpoint?: string; responseStatus?: number; fallbackScope?: string | null; failureClass?: string | null }>;
+      attempts?: Array<{ executionAttemptId?: string | null; endpoint?: string; endpointType?: string; responseStatus?: number; fallbackScope?: string | null; failureClass?: string | null }>;
     };
     expect(detailBody.trace).toMatchObject({
       requestedModel: 'gpt-4.1',
       sessionId: 'sess-9',
     });
     expect(detailBody.attempts?.[0]).toMatchObject({
+      executionAttemptId: 'execution-attempt:test:gpt-4.1',
       endpoint: 'chat',
+      endpointType: 'openai.chat_completions',
       responseStatus: 200,
       fallbackScope: null,
       failureClass: null,
+    });
+    expect(detailBody.trace).not.toHaveProperty('requestBodyJson');
+    expect(detailBody.attempts?.[0]).not.toHaveProperty('requestBodyJson');
+
+    const bodyDetailResponse = await app.inject({
+      method: 'GET',
+      url: `/api/stats/proxy-debug/traces/${trace.id}?includeBodies=1`,
+    });
+    expect(bodyDetailResponse.statusCode).toBe(200);
+    const bodyDetail = bodyDetailResponse.json() as {
+      trace?: { requestBodyJson?: string; finalResponseBodyJson?: string };
+      attempts?: Array<{ requestBodyJson?: string; responseBodyJson?: string; memoryWriteJson?: string }>;
+    };
+    expect(bodyDetail.trace?.requestBodyJson).toContain('gpt-4.1');
+    expect(bodyDetail.trace?.finalResponseBodyJson).toContain('chatcmpl_123');
+    expect(bodyDetail.attempts?.[0]?.requestBodyJson).toContain('gpt-4.1');
+    expect(bodyDetail.attempts?.[0]?.responseBodyJson).toContain('chatcmpl_123');
+    expect(bodyDetail.attempts?.[0]?.memoryWriteJson).toContain('preferredEndpoint');
+
+    const targetAttempt = (await store.getProxyDebugTraceDetail(trace.id))?.attempts[0];
+    expect(targetAttempt?.id).toEqual(expect.any(Number));
+    const targetedBodyResponse = await app.inject({
+      method: 'GET',
+      url: `/api/stats/proxy-debug/traces/${trace.id}?includeBodies=1&attemptId=${targetAttempt?.id}`,
+    });
+    expect(targetedBodyResponse.statusCode).toBe(200);
+    const targetedBody = targetedBodyResponse.json() as {
+      trace?: { requestBodyJson?: string; finalResponseBodyJson?: string };
+      attempts?: Array<{ id?: number; requestBodyJson?: string; responseBodyJson?: string; memoryWriteJson?: string }>;
+    };
+    expect(targetedBody.trace).not.toHaveProperty('requestBodyJson');
+    expect(targetedBody.trace).not.toHaveProperty('finalResponseBodyJson');
+    expect(targetedBody.attempts).toHaveLength(2);
+    expect(targetedBody.attempts?.[0]?.requestBodyJson).toContain('gpt-4.1');
+    expect(targetedBody.attempts?.[0]?.responseBodyJson).toContain('chatcmpl_123');
+    expect(targetedBody.attempts?.[0]?.memoryWriteJson).toContain('preferredEndpoint');
+    expect(targetedBody.attempts?.[1]).not.toHaveProperty('requestBodyJson');
+    expect(targetedBody.attempts?.[1]).not.toHaveProperty('responseBodyJson');
+    expect(targetedBody.attempts?.[1]).not.toHaveProperty('memoryWriteJson');
+
+    const invalidAttemptResponse = await app.inject({
+      method: 'GET',
+      url: `/api/stats/proxy-debug/traces/${trace.id}?includeBodies=1&attemptId=1junk`,
+    });
+    expect(invalidAttemptResponse.statusCode).toBe(400);
+    expect(invalidAttemptResponse.json()).toMatchObject({
+      message: 'proxy debug attempt id is invalid',
     });
   });
 });

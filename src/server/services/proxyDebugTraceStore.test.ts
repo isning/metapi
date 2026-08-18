@@ -75,10 +75,16 @@ describe('proxyDebugTraceStore', () => {
         reason: 'platform default + sticky session',
       },
     });
+    await store.appendProxyDebugTracePreflightOutcome(trace.id, {
+      executionAttemptId: 'ea_preflight',
+      kind: 'site_api_endpoint_pool_unavailable',
+      reason: 'all_endpoints_cooling_down',
+    });
 
     const attempt = await store.insertProxyDebugAttempt({
       traceId: trace.id,
       attemptIndex: 0,
+      executionAttemptId: 'ea_c',
       endpoint: 'responses',
       requestPath: '/responses',
       targetUrl: 'https://chatgpt.com/backend-api/codex/responses',
@@ -141,16 +147,23 @@ describe('proxyDebugTraceStore', () => {
     });
 
     const detail = await store.getProxyDebugTraceDetail(trace.id);
+    expect(JSON.parse(detail?.trace.runtimeTraceJson || '{}')).toMatchObject({
+      protocol: { endpointCandidates: ['responses', 'chat'] },
+      context: { reason: 'platform default + sticky session' },
+      preflightOutcomes: [{ executionAttemptId: 'ea_preflight' }],
+    });
     expect(detail?.trace.requestHeadersJson || '').toContain('Bearer developer-token');
-    expect(detail?.trace.requestBodyJson || '').toContain('"hello"');
-    expect(detail?.trace.finalResponseBodyJson || '').toContain('Channel busy');
+    expect(detail?.trace).not.toHaveProperty('requestBodyJson');
+    expect(detail?.trace).not.toHaveProperty('finalResponseBodyJson');
     expect(detail?.trace.routeEntrypointId).toBe('entry:debug:gpt-4o');
     expect(detail?.trace.runtimeEndpointId).toBe('endpoint:debug:primary');
     expect(detail?.attempts).toHaveLength(1);
     expect(detail?.attempts[0]?.requestHeadersJson || '').toContain('developer-token');
-    expect(detail?.attempts[0]?.responseBodyJson || '').toContain('forbidden');
+    expect(detail?.attempts[0]).not.toHaveProperty('responseBodyJson');
     expect(detail?.attempts[0]).toMatchObject({
+      executionAttemptId: 'ea_c',
       endpoint: 'responses',
+      endpointType: 'openai.responses',
       runtimeExecutor: 'codex',
       responseStatus: 403,
       downgradeDecision: true,
@@ -158,6 +171,11 @@ describe('proxyDebugTraceStore', () => {
       fallbackScope: 'api_variant',
       failureClass: 'protocol_mismatch',
     });
+
+    const bodyDetail = await store.getProxyDebugTraceDetail(trace.id, { includeBodies: true });
+    expect(bodyDetail?.trace.requestBodyJson || '').toContain('"hello"');
+    expect(bodyDetail?.trace.finalResponseBodyJson || '').toContain('Channel busy');
+    expect(bodyDetail?.attempts[0]?.responseBodyJson || '').toContain('forbidden');
   });
 
   it('stores truncated debug payload previews as valid JSON text for json-capable databases', async () => {
@@ -177,8 +195,10 @@ describe('proxyDebugTraceStore', () => {
     });
 
     const detail = await store.getProxyDebugTraceDetail(trace.id);
-    const headersPayload = JSON.parse(detail?.trace.requestHeadersJson || 'null');
-    const bodyPayload = JSON.parse(detail?.trace.requestBodyJson || 'null');
+    expect(detail?.trace).not.toHaveProperty('requestBodyJson');
+    const bodyDetail = await store.getProxyDebugTraceDetail(trace.id, { includeBodies: true });
+    const headersPayload = JSON.parse(bodyDetail?.trace.requestHeadersJson || 'null');
+    const bodyPayload = JSON.parse(bodyDetail?.trace.requestBodyJson || 'null');
 
     expect(headersPayload).toMatchObject({
       __metapiTruncated: true,
@@ -204,6 +224,30 @@ describe('proxyDebugTraceStore', () => {
     expect(store.normalizeProxyDebugResponseHeaders(response.headers)).toEqual({
       'content-type': 'application/json',
       'x-trace-id': 'trace-123',
+    });
+  });
+
+  it('binds a trace directly to its request for request-history joins', async () => {
+    const requestId = 'request:debug-link';
+    await db.insert(schema.proxyRequests).values({
+      id: requestId,
+      downstreamPath: '/v1/responses',
+      requestedModel: 'gpt-5.6',
+      status: 'started',
+      startedAt: '2026-08-17 00:00:00',
+    }).run();
+
+    const trace = await store.createProxyDebugTrace({
+      requestId,
+      downstreamPath: '/v1/responses',
+      clientKind: 'codex',
+      requestedModel: 'gpt-5.6',
+    });
+
+    const list = await store.listProxyDebugTraces({ limit: 20 });
+    expect(list.find((item) => item.id === trace.id)).toMatchObject({
+      requestId,
+      requestedModel: 'gpt-5.6',
     });
   });
 });

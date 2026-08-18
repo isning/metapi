@@ -558,6 +558,8 @@ function mapProxyRequestLogRecord(
     attempts: row.attempts.map((attempt) => mapProxyRequestAttempt(attempt, {
       includeBillingDetails: options?.includeDetails === true,
     })),
+    debugTrace: row.debugTrace,
+    billingSummary: row.billingSummary,
     ...(options?.includeDetails
       ? {
           billingDetails: parseProxyLogBillingDetails(request.billingDetails),
@@ -779,7 +781,7 @@ export async function statsRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get<{ Params: { id: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { includeBodies?: string; attemptId?: string } }>(
     "/api/stats/proxy-debug/traces/:id",
     async (request, reply) => {
       const id = Number.parseInt(request.params.id, 10);
@@ -789,7 +791,23 @@ export async function statsRoutes(app: FastifyInstance) {
           .send({ message: "proxy debug trace id is invalid" });
       }
 
-      const detail = await getProxyDebugTraceDetail(id);
+      const attemptIdRaw = request.query.attemptId?.trim();
+      const attemptBodyId = attemptIdRaw == null || attemptIdRaw === ""
+        ? undefined
+        : Number.parseInt(attemptIdRaw, 10);
+      if (attemptIdRaw && (
+        !/^\d+$/.test(attemptIdRaw)
+        || attemptBodyId == null
+        || !Number.isSafeInteger(attemptBodyId)
+        || attemptBodyId <= 0
+      )) {
+        return reply.code(400).send({ message: "proxy debug attempt id is invalid" });
+      }
+
+      const detail = await getProxyDebugTraceDetail(id, {
+        includeBodies: request.query.includeBodies === "1",
+        attemptBodyId,
+      });
       if (!detail) {
         return reply.code(404).send({ message: "proxy debug trace not found" });
       }

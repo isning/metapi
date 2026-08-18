@@ -56,6 +56,8 @@ describe("stats proxy logs routes", () => {
     await db.delete(schema.modelDayUsage).run();
     await db.delete(schema.siteHourUsage).run();
     await db.delete(schema.siteDayUsage).run();
+    await db.delete(schema.proxyDebugAttempts).run();
+    await db.delete(schema.proxyDebugTraces).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.proxyRequests).run();
     await db.delete(schema.downstreamApiKeys).run();
@@ -182,7 +184,7 @@ describe("stats proxy logs routes", () => {
       formatUtcSqlDateTime(new Date("2026-03-09T08:03:00.000Z")),
     ];
 
-    await insertRequestAttempts([
+    const insertedRequests = await insertRequestAttempts([
         {
           accountId: account.id,
           downstreamApiKeyId: downstreamKey.id,
@@ -248,6 +250,20 @@ describe("stats proxy logs routes", () => {
         },
       ]);
 
+    await db.insert(schema.proxyDebugTraces).values({
+      requestId: insertedRequests[1]!.requestId,
+      downstreamPath: "/v1/chat/completions",
+      clientKind: "codex",
+      sessionId: "session:stats-test",
+      requestedModel: "gpt-4o-mini",
+      selectedExecutionAttemptId: "attempt:gpt-4o-mini",
+      finalStatus: "failed",
+      finalHttpStatus: 502,
+      finalUpstreamPath: "/v1/chat/completions",
+      createdAt: timestamps[1],
+      updatedAt: timestamps[1],
+    }).run();
+
     const response = await app.inject({
       method: "GET",
       url: "/api/stats/proxy-logs?limit=1&offset=1&status=failed&search=gpt",
@@ -278,6 +294,20 @@ describe("stats proxy logs routes", () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0]?.requestedModel).toBe("gpt-4o-mini");
     expect(body.items[0]?.status).toBe("failure");
+    expect(body.items[0]?.debugTrace).toMatchObject({
+      sessionId: "session:stats-test",
+      clientKind: "codex",
+      finalHttpStatus: 502,
+      finalUpstreamPath: "/v1/chat/completions",
+    });
+    expect(body.items[0]?.billingSummary).toMatchObject({
+      quote: {
+        amount: 0.2,
+        unit: "currency",
+        currency: "USD",
+        estimateLevel: "exact",
+      },
+    });
     const listedAttempt = body.items[0]?.attempts as Array<Record<string, unknown>>;
     expect(listedAttempt[0]?.downstreamKeyName).toBe("项目A-Key");
     expect(listedAttempt[0]?.downstreamKeyGroupName).toBe("项目A");
@@ -538,6 +568,21 @@ describe("stats proxy logs routes", () => {
       ...attemptValues,
       requestId,
     }).run();
+    await db.insert(schema.proxyDebugTraces).values({
+      requestId,
+      downstreamPath: "/v1/chat",
+      clientKind: "codex",
+      sessionId: "session:proxy-log-detail",
+      requestedModel: "gpt-5",
+      selectedExecutionAttemptId: executionAttemptId,
+      routeEntrypointId,
+      runtimeEndpointId,
+      finalStatus: "success",
+      finalHttpStatus: 200,
+      finalUpstreamPath: "/api/chat",
+      createdAt: logFixture.createdAt,
+      updatedAt: logFixture.createdAt,
+    }).run();
 
     const localDay = getLocalDayRangeUtc().localDay;
     await db
@@ -588,6 +633,8 @@ describe("stats proxy logs routes", () => {
       billingDetails: Record<string, unknown> | null;
       decisionSnapshot: Record<string, any>;
       runtimeUsage: Record<string, any>;
+      debugTrace: Record<string, any> | null;
+      billingSummary: Record<string, any> | null;
     };
 
     expect(body.id).toBe(requestId);
@@ -614,6 +661,23 @@ describe("stats proxy logs routes", () => {
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
+    });
+    expect(body.billingSummary).toMatchObject({
+      quote: {
+        amount: 0.12,
+        unit: "currency",
+        currency: "USD",
+        estimateLevel: "exact",
+      },
+    });
+    expect(body.debugTrace).toMatchObject({
+      sessionId: "session:proxy-log-detail",
+      selectedExecutionAttemptId: executionAttemptId,
+      routeEntrypointId,
+      runtimeEndpointId,
+      finalStatus: "success",
+      finalHttpStatus: 200,
+      finalUpstreamPath: "/api/chat",
     });
     expect(body.decisionSnapshot).toMatchObject({
       source: "snapshot",

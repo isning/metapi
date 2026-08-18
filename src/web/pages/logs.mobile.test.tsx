@@ -11,7 +11,9 @@ describe('ProxyLogs mobile layout', () => {
     );
     expect(source).toContain('<ResponsiveFilterPanel');
     expect(source).toContain('compact');
-    expect(source).toContain('grid grid-cols-2 gap-x-2.5 gap-y-2');
-    expect(source).toContain("subtitle={formatDateTimeLocal(log.createdAt)}");
+    expect(source).toContain('grid grid-cols-2 gap-x-4 gap-y-1');
+    expect(source).toContain('subtitle={');
+    expect(source).toContain('RequestPathsDetail');
+    expect(source.match(/<DetailDisclosureCard title=\{tr\('pages\.proxyLogs\.requestPaths'\)\}>/g)?.length).toBe(2);
   });
 });

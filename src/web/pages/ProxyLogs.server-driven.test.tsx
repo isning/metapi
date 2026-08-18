@@ -10,7 +10,6 @@ const { apiMock } = vi.hoisted(() => ({
     getProxyLogsQuery: vi.fn(),
     getProxyLogsMeta: vi.fn(),
     getProxyRequestLogDetail: vi.fn(),
-    getProxyDebugTraces: vi.fn(),
     getProxyDebugTraceDetail: vi.fn(),
     getRuntimeSettings: vi.fn(),
     getSites: vi.fn(),
@@ -71,6 +70,8 @@ function buildProxyRequestFixture(input: Record<string, any>) {
     decisionSnapshot,
     runtimeUsage,
     billingDetails,
+    billingSummary,
+    debugTrace,
     ...attemptFacts
   } = input;
   const executionAttemptId = String(input.executionAttemptId || `attempt:test:${id}`);
@@ -114,6 +115,8 @@ function buildProxyRequestFixture(input: Record<string, any>) {
     decisionSnapshot,
     runtimeUsage,
     billingDetails,
+    billingSummary,
+    debugTrace,
   };
 }
 
@@ -158,6 +161,31 @@ function buildListResponse(overrides?: Partial<{
         downstreamKeyName: '移动端灰度',
         downstreamKeyGroupName: '项目A',
         downstreamKeyTags: ['VIP', '灰度'],
+        billingSummary: {
+          quote: {
+            amount: 0.0088,
+            unit: 'currency',
+            currency: 'USD',
+            source: 'provider_catalog',
+            sourceId: null,
+            estimateLevel: 'exact',
+            planFingerprint: 'plan:test',
+          },
+          cacheReadTokens: 227072,
+          cacheCreationTokens: 1024,
+        },
+        debugTrace: {
+          id: 701,
+          createdAt: '2026-03-28 18:00:00',
+          requestedModel: 'gpt-4o',
+          downstreamPath: '/v1/responses',
+          finalStatus: 'failed',
+          finalHttpStatus: 502,
+          finalUpstreamPath: '/responses',
+          clientKind: 'codex',
+          sessionId: 'sess-debug-1',
+          selectedExecutionAttemptId: 'attempt:test:101',
+        },
       }),
     ],
     total: 1,
@@ -175,6 +203,66 @@ function buildListResponse(overrides?: Partial<{
       { value: 'family:codex', label: '协议 · Codex' },
     ],
     ...overrides,
+  };
+}
+
+function buildProxyDebugTraceDetail(options?: { includeBodies?: boolean; attemptId?: number }) {
+  const includeBodies = options?.includeBodies === true;
+  const includeTraceBodies = includeBodies && options?.attemptId == null;
+  const includeAttemptBodies = includeBodies && (options?.attemptId == null || options?.attemptId === 9001);
+  return {
+    trace: {
+      id: 701,
+      requestedModel: 'gpt-4o',
+      sessionId: 'sess-debug-1',
+      downstreamPath: '/v1/responses',
+      finalStatus: 'failed',
+      finalHttpStatus: 502,
+      finalUpstreamPath: '/responses',
+      clientKind: 'codex',
+      selectedExecutionAttemptId: 'attempt:test:101',
+      routeEntrypointId: 'entry:gpt-4o',
+      runtimeEndpointId: 'endpoint:gpt-4o:responses',
+      selectedSiteId: 12,
+      selectedSitePlatform: 'new-api',
+      selectedSiteDisplay: {
+        id: 12,
+        label: 'main-site',
+        platform: 'new-api',
+        url: 'https://upstream.example.com',
+      },
+      requestHeadersJson: '{\n  "authorization": "Bearer demo"\n}',
+      finalResponseHeadersJson: '{\n  "x-request-id": "req_final"\n}',
+      runtimeTraceJson: '{\n  "context": { "downstreamFormat": "openai/responses" }\n}',
+      ...(includeTraceBodies ? {
+        requestBodyJson: '{\n  "model": "gpt-4o"\n}',
+        finalResponseBodyJson: '{\n  "error": "bad gateway"\n}',
+      } : {}),
+    },
+    attempts: [
+      {
+        id: 9001,
+        attemptIndex: 0,
+        executionAttemptId: 'attempt:test:101',
+        endpoint: 'openai/responses',
+        endpointType: 'openai.responses',
+        requestPath: '/v1/responses',
+        targetUrl: 'https://upstream.example.com/responses',
+        runtimeExecutor: 'default',
+        requestHeadersJson: '{\n  "content-type": "application/json"\n}',
+        responseStatus: 502,
+        responseHeadersJson: '{\n  "x-request-id": "req_1"\n}',
+        rawErrorText: 'bad gateway',
+        recoverApplied: true,
+        downgradeDecision: false,
+        downgradeReason: null,
+        ...(includeAttemptBodies ? {
+          requestBodyJson: '{\n  "model": "gpt-4o"\n}',
+          responseBodyJson: '{\n  "error": "bad gateway"\n}',
+          memoryWriteJson: '{\n  "blocked": ["responses"]\n}',
+        } : {}),
+      },
+    ],
   };
 }
 
@@ -280,6 +368,71 @@ describe('ProxyLogs server-driven page', () => {
           terminalKind: 'endpoint',
           publicModelName: 'gpt-4o',
         },
+        decision: {
+          selectedAlternativeId: 'choice:primary',
+          selectors: [{
+            selectorId: 'selector:weighted',
+            nodeId: 'selector:gpt-4o',
+            mode: 'weighted',
+            policySource: 'inline',
+            policyId: 'policy:cost-aware',
+            policyKind: 'builtin',
+            selectionMode: 'weighted',
+            selectedChoiceId: 'choice:primary',
+            candidates: [
+              {
+                choiceId: 'choice:primary',
+                endpointId: 'endpoint:gpt-4o',
+                executionTargetIds: [12],
+                targets: [{
+                  executionTargetId: 12,
+                  executionAttemptId: 'attempt:gpt-4o:primary',
+                  upstreamModel: 'gpt-4o',
+                  credential: {
+                    site: { id: 2, name: 'main-site', url: 'https://main-site.example.com', platform: 'new-api' },
+                    account: { id: 3, username: 'tester', status: 'active' },
+                    token: { id: 8, name: 'Premium Token', tokenGroup: 'premium', enabled: true, valueStatus: 'ready', source: 'manual' },
+                  },
+                }],
+                enabled: true,
+                eligible: true,
+                selected: true,
+                weight: 80,
+                contribution: 0.9,
+                order: 0,
+                score: 72,
+              },
+              {
+                choiceId: 'choice:secondary',
+                endpointId: 'endpoint:gpt-4o:secondary',
+                executionTargetIds: [15],
+                targets: [{
+                  executionTargetId: 15,
+                  executionAttemptId: 'attempt:gpt-4o:secondary',
+                  upstreamModel: 'gpt-4o',
+                  credential: {
+                    site: { id: 4, name: 'backup-site', url: 'https://backup-site.example.com', platform: 'one-hub' },
+                    account: { id: 5, username: 'backup-user', status: 'active' },
+                    token: { id: 9, name: 'Backup Token', tokenGroup: 'fallback', enabled: true, valueStatus: 'ready', source: 'manual' },
+                  },
+                }],
+                enabled: true,
+                eligible: false,
+                selected: false,
+                weight: 20,
+                contribution: 0.4,
+                order: 1,
+                score: 8,
+              },
+            ],
+          }],
+          fallbackStages: [{
+            fallbackId: 'fallback:gpt-4o',
+            stageId: 'stage:secondary',
+            stageIndex: 1,
+            nodeId: 'selector:gpt-4o',
+          }],
+        },
         endpoint: {
           endpointId: 'endpoint:gpt-4o',
           executionTargetId: 12,
@@ -313,6 +466,20 @@ describe('ProxyLogs server-driven page', () => {
               source: 'manual',
             },
             oauthRouteUnitId: null,
+          },
+          affinity: {
+            mode: 'pool',
+            selectedPoolId: 'pool:fallback',
+            selectedExecutionTargetId: 12,
+            primaryPoolId: 'pool:primary',
+            primaryExecutionTargetId: 15,
+            primaryRevision: 2,
+            fallback: true,
+            promoteOnSuccess: true,
+            bindingOutcome: 'promoted',
+            resultingPrimaryPoolId: 'pool:fallback',
+            resultingPrimaryExecutionTargetId: 12,
+            resultingRevision: 3,
           },
         },
         state: {
@@ -423,65 +590,7 @@ describe('ProxyLogs server-driven page', () => {
         },
       },
     }));
-    apiMock.getProxyDebugTraces.mockResolvedValue({
-      items: [
-        {
-          id: 701,
-          createdAt: '2026-03-28 18:00:00',
-          requestedModel: 'gpt-4o',
-          downstreamPath: '/v1/responses',
-          finalStatus: 'failed',
-          finalUpstreamPath: '/responses',
-          clientKind: 'codex',
-          sessionId: 'sess-debug-1',
-        },
-      ],
-    });
-    apiMock.getProxyDebugTraceDetail.mockResolvedValue({
-      trace: {
-        id: 701,
-        requestedModel: 'gpt-4o',
-        sessionId: 'sess-debug-1',
-        downstreamPath: '/v1/responses',
-        finalStatus: 'failed',
-        finalHttpStatus: 502,
-        finalUpstreamPath: '/responses',
-        clientKind: 'codex',
-        selectedExecutionAttemptId: 'ea_2j',
-        routeEntrypointId: 'entry:gpt-4o',
-        runtimeEndpointId: 'endpoint:gpt-4o:responses',
-        selectedSiteId: 12,
-        selectedSitePlatform: 'new-api',
-        selectedSiteDisplay: {
-          id: 12,
-          label: 'main-site',
-          platform: 'new-api',
-          url: 'https://upstream.example.com',
-        },
-        requestHeadersJson: '{\n  "authorization": "Bearer demo"\n}',
-        runtimeTraceJson: '{\n  "context": { "downstreamFormat": "openai/responses" }\n}',
-      },
-      attempts: [
-        {
-          id: 9001,
-          attemptIndex: 0,
-          endpoint: 'openai/responses',
-          requestPath: '/v1/responses',
-          targetUrl: 'https://upstream.example.com/responses',
-          runtimeExecutor: 'default',
-          requestHeadersJson: '{\n  "content-type": "application/json"\n}',
-          requestBodyJson: '{\n  "model": "gpt-4o"\n}',
-          responseStatus: 502,
-          responseHeadersJson: '{\n  "x-request-id": "req_1"\n}',
-          responseBodyJson: '{\n  "error": "bad gateway"\n}',
-          rawErrorText: 'bad gateway',
-          recoverApplied: true,
-          downgradeDecision: false,
-          downgradeReason: null,
-          memoryWriteJson: '{\n  "blocked": ["responses"]\n}',
-        },
-      ],
-    });
+    apiMock.getProxyDebugTraceDetail.mockResolvedValue(buildProxyDebugTraceDetail());
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
       proxyDebugTraceEnabled: true,
@@ -531,6 +640,13 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('Codex');
       expect(text).toContain('推测');
       expect(text).toContain('下游 Key: 移动端灰度');
+      expect(text).toContain('客户端应用');
+      expect(text).toContain('客户端配置档');
+      expect(text).toContain('Chat Completions');
+      expect(text).toContain('/v1/chat/completions');
+      expect(text).toContain('缓存读227,072');
+      expect(text).toContain('缓存写1,024');
+      expect(text).toContain('USD 0.0088 · 精确');
       expect(text).toContain('流式');
       expect(text).toContain('首字延迟');
       expect(text).toContain('80ms');
@@ -541,7 +657,248 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
-  it('shows proxy debug traces inline and edits settings through the modal', async () => {
+  it('integrates matching debug evidence and session identity into the request row', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101');
+      expect(collectText(row)).toContain('sess-debug-1');
+      expect(row.findAll((node) => node.props['aria-label'] === '已采集调试信息')).toHaveLength(1);
+      expect(root.root.findAll((node) => node.props['data-debug-trace-panel-body'] === true)).toHaveLength(0);
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('groups scheduler counters with their target and labels them as selection-time state', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
+      ));
+      await act(async () => row.props.onClick());
+      await flushMicrotasks();
+
+      const targetNode = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('proxy-log-decision-node-token')
+      ));
+      const targetText = collectText(targetNode);
+      expect(targetText).toContain('本次执行目标');
+      expect(targetText).toContain('main-site · tester');
+      expect(targetText).toContain('模型调用 KeyPremium Token');
+      expect(targetText).not.toContain('站点main-site');
+      expect(targetText).not.toContain('账号tester');
+      expect(targetText).not.toContain('实际模型gpt-4o');
+      expect(targetText).not.toContain('ready');
+      expect(targetText).toContain('选择前状态');
+      expect(targetText).toContain('成功 11');
+      expect(targetText).toContain('失败 2');
+      const selectionState = targetNode.find((node) => (
+        node.props['aria-label'] === '选择前状态'
+      ));
+      expect(selectionState.props['aria-description']).toBe('路由作出选择前读取，不含本次结果');
+
+      const detachedStats = root.root.find((node) => (
+        node.props.className === 'proxy-log-decision-stats'
+      ));
+      expect(collectText(detachedStats)).not.toContain('成功 11');
+      expect(collectText(detachedStats)).not.toContain('失败 2');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('refreshes an expanded request detail when later attempts arrive', async () => {
+    const initialRequest = {
+      ...buildProxyRequestFixture({
+        id: 160,
+        createdAt: '2026-08-17 14:34:17',
+        modelRequested: 'gpt-5.6-terra',
+        modelActual: 'gpt-5.6-terra',
+        status: 'retried',
+        httpStatus: 403,
+        latencyMs: 800,
+        username: 'Krill',
+        siteName: 'Krill Coding',
+        tokenName: 'default',
+        executionAttemptId: 'attempt:krill',
+      }),
+      status: 'running',
+      httpStatus: null,
+      completedAt: null,
+      finalExecutionAttemptId: null,
+      debugTrace: {
+        id: 7160,
+        updatedAt: '2026-08-17 14:34:17',
+        selectedExecutionAttemptId: 'attempt:krill',
+        finalStatus: null,
+        finalHttpStatus: null,
+      },
+    };
+
+    const completedRequestBase = buildProxyRequestFixture({
+      id: 161,
+      createdAt: '2026-08-17 14:34:57',
+      modelRequested: 'gpt-5.6-terra',
+      modelActual: 'gpt-5.6-terra',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 38_000,
+      username: 'a1208733578',
+      siteName: '猫肥',
+      tokenName: 'metapi Sub',
+      executionAttemptId: 'attempt:cat-sub',
+    });
+    const completedRequest = {
+      ...completedRequestBase,
+      id: initialRequest.id,
+      startedAt: initialRequest.startedAt,
+      attempts: [
+        initialRequest.attempts[0],
+        completedRequestBase.attempts[0],
+      ],
+      decisionSnapshot: {
+        source: 'snapshot',
+        capturedAt: '2026-08-17 14:34:57',
+        request: { downstreamPath: '/v1/responses', stream: true },
+        compiledRuntime: {
+          runtimeArtifactId: 'runtime-artifact:retry-success',
+          bundleHash: 'bundle:retry-success',
+        },
+        match: {
+          requestedModel: 'gpt-5.6-terra',
+          actualModel: 'gpt-5.6-terra',
+          planId: 'entry:gpt-5.6-terra',
+          entryId: 'entry:gpt-5.6-terra',
+          publicModelName: 'gpt-5.6-terra',
+          terminalKind: 'endpoint',
+        },
+        metadata: {
+          graph: null,
+          plan: null,
+          selection: null,
+          endpoint: null,
+          executionAttempt: null,
+        },
+        decision: null,
+        endpoint: {
+          endpointId: 'endpoint:cat-sub',
+          executionTargetId: 589,
+          compatibilityPolicy: null,
+        },
+        executionAttempt: {
+          executionAttemptId: 'attempt:cat-sub',
+          model: 'gpt-5.6-terra',
+          executionTargetId: 589,
+          accountId: 24,
+          tokenId: 22,
+          siteId: 29,
+          credential: {
+            site: { id: 29, name: '猫肥', url: 'https://example.test', platform: 'sub2api' },
+            account: { id: 24, username: 'a1208733578', status: 'active' },
+            token: { id: 22, name: 'metapi Sub', tokenGroup: '32', enabled: true, valueStatus: 'ready', source: 'sync' },
+          },
+          affinity: null,
+        },
+        requestUsage: { inputBytes: 128, maxOutputTokens: null },
+        state: {
+          failureOverlay: {
+            disabledExecutionAttemptIds: ['attempt:krill'],
+            disabledExecutionTargetIds: [1293],
+          },
+          executionAttemptState: null,
+        },
+        filters: { endpointPreference: 'responses', postBuild: null },
+        syntheticResponse: null,
+      },
+      debugTrace: {
+        ...initialRequest.debugTrace,
+        updatedAt: '2026-08-17 14:34:57',
+        selectedExecutionAttemptId: 'attempt:cat-sub',
+        finalStatus: 'success',
+        finalHttpStatus: 200,
+        finalUpstreamPath: '/v1/responses',
+      },
+    };
+
+    apiMock.getProxyLogs
+      .mockResolvedValueOnce(buildListResponse({ items: [initialRequest] }))
+      .mockResolvedValue(buildListResponse({ items: [completedRequest] }));
+    apiMock.getProxyRequestLogDetail
+      .mockResolvedValueOnce(initialRequest)
+      .mockResolvedValue(completedRequest);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => (
+        node.type === 'tr'
+        && node.props['data-testid'] === `proxy-log-row-${initialRequest.id}`
+      ));
+      await act(async () => row.props.onClick());
+      await flushMicrotasks();
+      expect(collectText(root.root)).toContain('Krill Coding');
+      expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(1);
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(1);
+
+      const refresh = root.root.find((node) => (
+        node.type === 'button' && collectText(node) === '刷新'
+      ));
+      await act(async () => refresh.props.onClick());
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const refreshedText = collectText(root.root);
+      expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(2);
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(2);
+      expect(refreshedText).toContain('执行尝试 1');
+      expect(refreshedText).toContain('执行尝试 2');
+      expect(refreshedText).toContain('Krill Coding');
+      expect(refreshedText).toContain('猫肥');
+      expect(refreshedText).toContain('a1208733578');
+      expect(refreshedText).toContain('metapi Sub');
+      expect(refreshedText).toContain('路由结果');
+      expect(refreshedText).toContain('关联尝试 2');
+      const firstAttempt = root.root.find((node) => (
+        node.props['data-testid'] === 'proxy-log-execution-attempt-160'
+      ));
+      const secondAttempt = root.root.find((node) => (
+        node.props['data-testid'] === 'proxy-log-execution-attempt-161'
+      ));
+      expect(collectText(firstAttempt)).not.toContain('已选目标');
+      expect(collectText(secondAttempt)).toContain('已选目标');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('edits debug capture settings without loading a separate trace feed', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -557,9 +914,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getRuntimeSettings).toHaveBeenCalled();
-      expect(apiMock.getProxyDebugTraces).toHaveBeenCalled();
-      expect(collectText(root.root)).toContain('最近调试追踪');
-      expect(collectText(root.root)).toContain('sess-debug-1');
+      expect(root.root.findAll((node) => node.props['data-debug-trace-panel-body'] === true)).toHaveLength(0);
 
       const debugSettingsButton = root.root.find((node) => (
         node.type === 'button'
@@ -614,197 +969,11 @@ describe('ProxyLogs server-driven page', () => {
         proxyDebugRetentionHours: 12,
       }));
     } finally {
-      root?.unmount();
+      await act(async () => root?.unmount());
     }
   });
 
-  it('paginates debug traces in groups of five instead of rendering the whole trace list at once', async () => {
-    apiMock.getProxyDebugTraces.mockResolvedValue({
-      items: Array.from({ length: 7 }, (_, index) => ({
-        id: 701 + index,
-        createdAt: `2026-03-28 18:0${index}:00`,
-        requestedModel: `gpt-4o-mini-${index + 1}`,
-        downstreamPath: '/v1/responses',
-        finalStatus: index % 2 === 0 ? 'failed' : 'success',
-        finalUpstreamPath: '/responses',
-        clientKind: 'codex',
-        sessionId: `sess-debug-${index + 1}`,
-      })),
-    });
-
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('显示第 1 - 5 条，共 7 条');
-      expect(collectText(root.root)).toContain('sess-debug-1');
-      expect(collectText(root.root)).not.toContain('sess-debug-6');
-
-      const detailButtons = root.root.findAll((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '查看详情'
-      ));
-      expect(detailButtons).toHaveLength(5);
-
-      const nextPageButton = root.root.find((node) => (
-        node.type === 'button'
-        && node.props['aria-label'] === '调试追踪下一页'
-      ));
-
-      await act(async () => {
-        nextPageButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('显示第 6 - 7 条，共 7 条');
-      expect(collectText(root.root)).toContain('sess-debug-6');
-      expect(collectText(root.root)).not.toContain('sess-debug-1');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('allows collapsing and expanding the debug trace panel to reduce page footprint', async () => {
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const toggleButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && node.props['data-debug-trace-panel-toggle'] === true
-      ));
-      const panelBody = root.root.find((node) => (
-        node.type === 'div'
-        && node.props['data-debug-trace-panel-body'] === true
-      ));
-
-      expect(toggleButton.props['aria-expanded']).toBe(true);
-      expect(String(panelBody.props.className || '')).toContain('is-open');
-
-      await act(async () => {
-        toggleButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const collapsedToggleButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && node.props['data-debug-trace-panel-toggle'] === true
-      ));
-      const collapsedPanelBody = root.root.find((node) => (
-        node.type === 'div'
-        && node.props['data-debug-trace-panel-body'] === true
-      ));
-
-      expect(collapsedToggleButton.props['aria-expanded']).toBe(false);
-      expect(String(collapsedPanelBody.props.className || '')).not.toContain('is-open');
-
-      await act(async () => {
-        collapsedToggleButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const expandedToggleButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && node.props['data-debug-trace-panel-toggle'] === true
-      ));
-      const expandedPanelBody = root.root.find((node) => (
-        node.type === 'div'
-        && node.props['data-debug-trace-panel-body'] === true
-      ));
-
-      expect(expandedToggleButton.props['aria-expanded']).toBe(true);
-      expect(String(expandedPanelBody.props.className || '')).toContain('is-open');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('remembers the collapsed debug trace panel state across remounts', async () => {
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const toggleButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && node.props['data-debug-trace-panel-toggle'] === true
-      ));
-
-      await act(async () => {
-        toggleButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(globalThis.localStorage.setItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded', 'false');
-
-      await act(async () => {
-        root.unmount();
-      });
-
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const restoredToggleButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && node.props['data-debug-trace-panel-toggle'] === true
-      ));
-      const restoredPanelBody = root.root.find((node) => (
-        node.type === 'div'
-        && node.props['data-debug-trace-panel-body'] === true
-      ));
-
-      expect(globalThis.localStorage.getItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded');
-      expect(restoredToggleButton.props['aria-expanded']).toBe(false);
-      expect(String(restoredPanelBody.props.className || '')).not.toContain('is-open');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('opens debug trace detail on demand instead of preloading the first trace inline', async () => {
+  it('loads request-linked diagnostic evidence on expand and opens only raw payloads in a viewer', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -821,197 +990,53 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyDebugTraceDetail).not.toHaveBeenCalled();
 
-      const viewDetailButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '查看详情'
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr'
+        && node.props['data-testid'] === 'proxy-log-row-request:test:101'
       ));
 
       await act(async () => {
-        viewDetailButton.props.onClick();
+        requestRow.props.onClick();
       });
       await flushMicrotasks();
 
       expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
+      expect(collectText(root.root)).toContain('调试详情');
       expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).toContain('Attempt 时间线');
-      expect(collectText(root.root)).toContain('ea_2j');
-      expect(collectText(root.root)).toContain('gpt-4o');
-      expect(collectText(root.root)).not.toContain('GPT-4o production route (#31)');
-      expect(collectText(root.root)).toContain('main-site · new-api');
-      expect(collectText(root.root)).not.toContain('main-site · new-api (#12)');
-      expect(collectText(root.root)).toContain('运行时状态更新');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('polls debug traces after tracing is enabled so new results are not hidden behind the settings modal', async () => {
-    vi.useFakeTimers();
-    apiMock.getRuntimeSettings.mockResolvedValue({
-      proxyDebugTraceEnabled: true,
-      proxyDebugCaptureHeaders: true,
-      proxyDebugCaptureBodies: false,
-      proxyDebugCaptureStreamChunks: false,
-      proxyDebugFilterSessionId: '',
-      proxyDebugFilterClientKind: '',
-      proxyDebugFilterModel: '',
-      proxyDebugRetentionHours: 24,
-      proxyDebugMaxBodyBytes: 262144,
-    });
-
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const initialCalls = apiMock.getProxyDebugTraces.mock.calls.length;
-
-      await act(async () => {
-        vi.advanceTimersByTime(2100);
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.getProxyDebugTraces.mock.calls.length).toBeGreaterThan(initialCalls);
-    } finally {
-      await act(async () => {
-        root?.unmount();
-      });
-      vi.runOnlyPendingTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('keeps debug trace detail visible during polling refresh instead of flashing back to loading', async () => {
-    vi.useFakeTimers();
-    apiMock.getRuntimeSettings.mockResolvedValue({
-      proxyDebugTraceEnabled: true,
-      proxyDebugCaptureHeaders: true,
-      proxyDebugCaptureBodies: false,
-      proxyDebugCaptureStreamChunks: false,
-      proxyDebugFilterSessionId: '',
-      proxyDebugFilterClientKind: '',
-      proxyDebugFilterModel: '',
-      proxyDebugRetentionHours: 24,
-      proxyDebugMaxBodyBytes: 262144,
-    });
-
-    let resolveDetail!: (value: any) => void;
-    apiMock.getProxyDebugTraceDetail
-      .mockResolvedValueOnce({
-        trace: {
-          id: 701,
-          requestedModel: 'gpt-4o',
-          sessionId: 'sess-debug-1',
-          requestHeadersJson: '{\"before\":true}',
-        },
-        attempts: [],
-      })
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        resolveDetail = resolve;
-      }));
-
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const viewDetailButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '查看详情'
-      ));
-
-      await act(async () => {
-        viewDetailButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
-
-      await act(async () => {
-        vi.advanceTimersByTime(2100);
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
-
-      await act(async () => {
-        resolveDetail({
-          trace: {
-            id: 701,
-            requestedModel: 'gpt-4o',
-            sessionId: 'sess-debug-1',
-            requestHeadersJson: '{\"after\":true}',
-          },
-          attempts: [],
-        });
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
-    } finally {
-      await act(async () => {
-        root?.unmount();
-      });
-      vi.runOnlyPendingTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('copies the saved request headers content from the trace detail modal', async () => {
-    let root!: WebTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/logs']}>
-            <ToastProvider>
-              <ProxyLogs />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const viewDetailButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '查看详情'
-      ));
-
-      await act(async () => {
-        viewDetailButton.props.onClick();
-      });
-      await flushMicrotasks();
-
+      expect(collectText(root.root)).toContain('最终响应头');
+      expect(collectText(root.root)).toContain('执行尝试');
+      expect(collectText(root.root)).toContain('1 次上游调用');
+      expect(collectText(root.root)).not.toContain('查看详情');
       expect(collectText(root.root)).not.toContain('Bearer demo');
+      expect(root.root.findAll((node) => node.props['aria-label'] === '选择详情').length).toBeGreaterThan(0);
+
+      const expandAttemptButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['aria-label'] === '展开 上游调用 1'
+      ));
+
+      await act(async () => {
+        expandAttemptButton.props.onClick({ defaultPrevented: false });
+      });
+      await flushMicrotasks();
+
+      const attemptText = collectText(root.root);
+      expect(attemptText).toContain('OpenAI Responses');
+      expect(attemptText).toContain('openai.responses');
+      expect(attemptText).toContain('上游交换数据');
+      expect(attemptText).toContain('发送到上游');
+      expect(attemptText).toContain('上游返回');
+      expect(attemptText).toContain('请求头');
+      expect(attemptText).toContain('响应体');
+      expect(attemptText).not.toContain('请求/响应头');
+      expect(attemptText).toContain('下游交换数据');
+      expect(attemptText.match(/OpenAI Responses/g)?.length).toBe(1);
 
       const expandHeadersButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && node.props['aria-label'] === '展开原始下游请求头'
+        && node.props['aria-label'] === '展开 原始下游请求头'
       ));
 
       await act(async () => {
@@ -1020,6 +1045,20 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(collectText(root.root)).toContain('Bearer demo');
+
+      const viewRawButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['aria-label'] === '查看原始下游请求头原始内容'
+      ));
+
+      await act(async () => {
+        viewRawButton.props.onClick({ stopPropagation: () => undefined, preventDefault: () => undefined });
+      });
+      await flushMicrotasks();
+
+      expect(root.root.findAll((node) => node.props.role === 'dialog').length).toBeGreaterThan(0);
+      expect(collectText(root.root)).toContain('原始下游请求头');
 
       const copyButton = root.root.find((node) => (
         node.type === 'button'
@@ -1034,7 +1073,366 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(globalThis.navigator.clipboard.writeText).toHaveBeenCalledWith('{\n  "authorization": "Bearer demo"\n}');
     } finally {
-      root?.unmount();
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('loads large trace bodies only after a body disclosure is opened', async () => {
+    apiMock.getProxyDebugTraceDetail.mockImplementation((_id: number, options?: { includeBodies?: boolean; attemptId?: number }) => (
+      Promise.resolve(buildProxyDebugTraceDetail({
+        includeBodies: options?.includeBodies === true,
+        attemptId: options?.attemptId,
+      }))
+    ));
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(1);
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenLastCalledWith(701);
+
+      const expandAttemptButton = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '展开 上游调用 1'
+      ));
+      await act(async () => expandAttemptButton.props.onClick({ defaultPrevented: false }));
+
+      const expandRequestBodyButton = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '展开 请求体'
+      ));
+      await act(async () => expandRequestBodyButton.props.onClick({ defaultPrevented: false }));
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(2);
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenLastCalledWith(701, {
+        includeBodies: true,
+        attemptId: 9001,
+      });
+      expect(collectText(root.root)).toContain('"model": "gpt-4o"');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('shows a recorded-empty state after runtime updates finish loading', async () => {
+    apiMock.getProxyDebugTraceDetail.mockImplementation((_id: number, options?: { includeBodies?: boolean; attemptId?: number }) => {
+      const detail = buildProxyDebugTraceDetail({
+        includeBodies: options?.includeBodies === true,
+        attemptId: options?.attemptId,
+      });
+      if (options?.includeBodies && options?.attemptId === 9001) {
+        delete detail.attempts[0].memoryWriteJson;
+      }
+      return Promise.resolve(detail);
+    });
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+
+      const expandAttemptButton = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '展开 上游调用 1'
+      ));
+      await act(async () => expandAttemptButton.props.onClick({ defaultPrevented: false }));
+
+      const expandRuntimeUpdateButton = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '展开 运行时状态更新'
+      ));
+      await act(async () => expandRuntimeUpdateButton.props.onClick({ defaultPrevented: false }));
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenLastCalledWith(701, {
+        includeBodies: true,
+        attemptId: 9001,
+      });
+      let runtimeUpdateDisclosure: ReactTestInstance | null = expandRuntimeUpdateButton;
+      while (
+        runtimeUpdateDisclosure
+        && runtimeUpdateDisclosure.props.className !== 'proxy-log-disclosure'
+      ) {
+        runtimeUpdateDisclosure = runtimeUpdateDisclosure.parent;
+      }
+      expect(runtimeUpdateDisclosure).not.toBeNull();
+      expect(collectText(runtimeUpdateDisclosure!)).toContain('本次执行未更新端点运行时状态');
+      expect(collectText(runtimeUpdateDisclosure!)).not.toContain('展开后加载原始内容');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('nests each captured upstream exchange under its owning graph execution attempt', async () => {
+    const firstAttempt = buildProxyRequestFixture({
+      id: 301,
+      createdAt: '2026-03-09 18:00:00',
+      modelRequested: 'gpt-4o',
+      status: 'failed',
+      latencyMs: 180,
+      executionAttemptId: 'attempt:primary',
+      siteName: 'primary-site',
+      username: 'primary-user',
+      tokenName: 'primary-key',
+    });
+    const secondAttempt = {
+      ...firstAttempt.attempts[0],
+      id: 302,
+      status: 'success',
+      httpStatus: 200,
+      executionAttemptId: 'attempt:fallback',
+      siteName: 'primary-site',
+      username: 'primary-user',
+      tokenName: 'fallback-key',
+    };
+    const request = {
+      ...firstAttempt,
+      status: 'success',
+      httpStatus: 200,
+      finalExecutionAttemptId: 'attempt:fallback',
+      attempts: [firstAttempt.attempts[0], secondAttempt],
+      debugTrace: {
+        id: 702,
+        requestId: firstAttempt.id,
+        createdAt: '2026-03-09 18:00:00',
+        downstreamPath: '/v1/responses',
+        selectedExecutionAttemptId: 'attempt:fallback',
+        finalStatus: 'success',
+        finalHttpStatus: 200,
+        finalUpstreamPath: '/v1/chat/completions',
+      },
+    };
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({ items: [request] }));
+    apiMock.getProxyRequestLogDetail.mockResolvedValue(request);
+    apiMock.getProxyDebugTraceDetail.mockResolvedValue({
+      trace: {
+        id: 702,
+        selectedExecutionAttemptId: 'attempt:fallback',
+      },
+      attempts: [
+        {
+          id: 9101,
+          attemptIndex: 0,
+          executionAttemptId: 'attempt:primary',
+          endpoint: 'responses',
+          endpointType: 'openai.responses',
+          requestPath: '/v1/responses',
+          targetUrl: 'https://primary.example/v1/responses',
+          runtimeExecutor: 'default',
+          responseStatus: 503,
+          rawErrorText: 'primary unavailable',
+        },
+        {
+          id: 9102,
+          attemptIndex: 1,
+          executionAttemptId: 'attempt:fallback',
+          endpoint: 'chat',
+          endpointType: 'openai.chat_completions',
+          requestPath: '/v1/chat/completions',
+          targetUrl: 'https://fallback.example/v1/chat/completions',
+          runtimeExecutor: 'default',
+          responseStatus: 200,
+        },
+      ],
+    });
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:301'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+
+      const primaryAttempt = root.root.find((node) => node.props['data-testid'] === 'proxy-log-execution-attempt-301');
+      const fallbackAttempt = root.root.find((node) => node.props['data-testid'] === 'proxy-log-execution-attempt-302');
+      expect(collectText(primaryAttempt)).toContain('OpenAI Responses');
+      expect(collectText(primaryAttempt)).not.toContain('OpenAI Chat Completions');
+      expect(collectText(fallbackAttempt)).toContain('OpenAI Chat Completions');
+      expect(collectText(fallbackAttempt)).not.toContain('OpenAI Responses');
+      expect(collectText(primaryAttempt)).toContain('1 次上游调用');
+      expect(collectText(fallbackAttempt)).toContain('1 次上游调用');
+      expect(collectText(primaryAttempt)).toContain('primary-site · primary-user');
+      expect(collectText(primaryAttempt)).toContain('模型调用 Keyprimary-key');
+      expect(collectText(fallbackAttempt)).toContain('primary-site · primary-user');
+      expect(collectText(fallbackAttempt)).toContain('模型调用 Keyfallback-key');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('explains a site endpoint cooldown when an attempt has no upstream exchange', async () => {
+    const request = buildProxyRequestFixture({
+      id: 303,
+      createdAt: '2026-03-09 18:00:00',
+      modelRequested: 'gpt-4o',
+      status: 'failed',
+      executionAttemptId: 'attempt:cooldown',
+      siteName: 'cooldown-site',
+      username: 'cooldown-account',
+      tokenName: 'primary-key',
+      debugTrace: {
+        id: 703,
+        requestId: 'request:test:303',
+        createdAt: '2026-03-09 18:00:00',
+        downstreamPath: '/v1/chat/completions',
+        finalStatus: 'failed',
+      },
+    });
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({ items: [request] }));
+    apiMock.getProxyRequestLogDetail.mockResolvedValue(request);
+    apiMock.getProxyDebugTraceDetail.mockResolvedValue({
+      trace: {
+        id: 703,
+        selectedExecutionAttemptId: 'attempt:cooldown',
+        runtimeTraceJson: JSON.stringify({
+          preflightOutcomes: [{
+            executionAttemptId: 'attempt:cooldown',
+            kind: 'site_api_endpoint_pool_unavailable',
+            reason: 'all_endpoints_cooling_down',
+            configuredEndpointCount: 1,
+            enabledEndpointCount: 1,
+            coolingDownEndpointCount: 1,
+            nextAvailableAt: '2026-03-09T18:05:00.000Z',
+            endpointFailures: [{
+              endpointId: 21,
+              url: 'https://api-cooling.example.com',
+              enabled: true,
+              cooldownUntil: '2026-03-09T18:05:00.000Z',
+              lastFailureReason: 'HTTP 502: fetch failed',
+            }],
+          }],
+        }),
+      },
+      attempts: [],
+    });
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:303'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+      const attempt = root.root.find((node) => node.props['data-testid'] === 'proxy-log-execution-attempt-303');
+      expect(collectText(attempt)).toContain('请求未发送上游');
+      expect(collectText(attempt)).toContain('全部 1 个 API 地址处于冷却退避中');
+      expect(collectText(attempt)).toContain('冷却至');
+      expect(collectText(attempt)).toContain('HTTP 502: fetch failed');
+      expect(collectText(attempt)).toContain('https://api-cooling.example.com');
+      expect(collectText(attempt)).not.toContain('上游交换数据');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('keeps trace loading failures inline and retries without reopening the request', async () => {
+    apiMock.getProxyDebugTraceDetail.mockRejectedValueOnce(new Error('trace temporarily unavailable'));
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('trace temporarily unavailable');
+      const retryButton = root.root.find((node) => (
+        node.type === 'button' && collectText(node).includes('重试诊断加载')
+      ));
+      await act(async () => retryButton.props.onClick());
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(2);
+      expect(collectText(root.root)).toContain('调试详情');
+      expect(collectText(root.root)).not.toContain('trace temporarily unavailable');
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
+  it('does not render an empty diagnostic section when a request has no linked trace', async () => {
+    const requestWithoutTrace = buildProxyRequestFixture({
+      id: 202,
+      createdAt: '2026-03-09 17:00:00',
+      modelRequested: 'gpt-4o-mini',
+      status: 'success',
+      latencyMs: 75,
+      debugTrace: null,
+    });
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({ items: [requestWithoutTrace] }));
+    apiMock.getProxyRequestLogDetail.mockResolvedValue(requestWithoutTrace);
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const requestRow = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:202'
+      ));
+      await act(async () => requestRow.props.onClick());
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).not.toHaveBeenCalled();
+      expect(root.root.findAll((node) => String(node.props['data-testid'] || '').startsWith('proxy-log-debug-evidence-'))).toHaveLength(0);
+    } finally {
+      await act(async () => root?.unmount());
     }
   });
 
@@ -1065,6 +1463,44 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('shows a rewritten upstream model only once in the desktop overview row', async () => {
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
+      items: [
+        buildProxyRequestFixture({
+          id: 303,
+          createdAt: '2026-03-09 16:00:00',
+          modelRequested: 'gpt-4o',
+          modelActual: 'gpt-4o-mini',
+          status: 'success',
+          latencyMs: 120,
+          username: 'tester',
+          siteName: 'main-site',
+          tokenName: 'site-key-main',
+        }),
+      ],
+      total: 1,
+    }));
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:303'
+      ));
+      expect(collectText(row).match(/gpt-4o-mini/g)).toHaveLength(1);
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+
   it('renders explicit client self-reports before protocol-family fallback labels', async () => {
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
       items: [
@@ -1086,6 +1522,8 @@ describe('ProxyLogs server-driven page', () => {
           username: 'tester',
           siteName: 'main-site',
           siteUrl: 'https://main-site.example.com',
+          tokenName: 'site-key-main',
+          tokenGroup: 'production',
           clientFamily: 'codex',
           clientAppId: 'openclaw',
           clientAppName: 'openclaw',
@@ -1117,6 +1555,9 @@ describe('ProxyLogs server-driven page', () => {
       const rowText = collectText(row);
       expect(rowText).toContain('openclaw');
       expect(rowText).toContain('Codex');
+      expect(rowText).toContain('tester');
+      expect(rowText).toContain('site-key-main');
+      expect(rowText).toContain('production');
       expect(rowText).not.toContain('推测');
     } finally {
       root?.unmount();
@@ -1225,7 +1666,7 @@ describe('ProxyLogs server-driven page', () => {
       expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(1);
       const expandedText = collectText(root.root);
       expect(expandedText).toContain('路由决策快照');
-      expect(expandedText).toContain('请求时记录');
+      expect(expandedText).toContain('选择前状态');
       expect(expandedText).toContain('plan:gpt-4o');
       expect(expandedText).toContain('endpoint:gpt-4o');
       expect(expandedText).toContain('Premium Token');
@@ -1233,15 +1674,43 @@ describe('ProxyLogs server-driven page', () => {
       expect(expandedText).not.toContain('dispatcher:gpt-4o');
       expect(expandedText).not.toContain('arg:gpt-4o');
       expect(expandedText).not.toContain('entry:legacy');
-      expect(expandedText).toContain('运行时统计');
-      expect(expandedText).toContain('近 30 天');
-      expect(expandedText).toContain('执行目标');
-      expect(expandedText).toContain('#12');
+      expect(expandedText).toContain('执行尝试');
       expect(expandedText).toContain('公开模型');
       expect(expandedText).toContain('Premium Token');
       expect(expandedText).toContain('main-site');
-      expect(expandedText).toContain('87.5%');
-      expect(expandedText).toContain('230ms');
+      const usageDisclosure = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '展开 用量与费用'
+      ));
+      await act(async () => usageDisclosure.props.onClick({ defaultPrevented: false }));
+      const usageText = collectText(root.root);
+      expect(usageText).toContain('历史运行表现');
+      expect(usageText).toContain('近 30 天');
+      expect(usageText).toContain('87.5%');
+      expect(usageText).toContain('230ms');
+      expect(usageText).toContain('调用');
+      expect(usageText).toContain('120');
+      expect(usageText).not.toContain('105 / 120');
+
+      const selectionSteps = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '选择详情'
+      ));
+      await act(async () => {
+        selectionSteps.props.onClick({ defaultPrevented: false });
+      });
+      const decisionText = collectText(root.root);
+      expect(decisionText).toContain('policy:cost-aware');
+      expect(decisionText).toContain('选择步骤 1');
+      expect(decisionText).toContain('main-site');
+      expect(decisionText).toContain('tester · Premium Token');
+      expect(decisionText).toContain('backup-site');
+      expect(decisionText).toContain('backup-user · Backup Token');
+      expect(decisionText).toContain('不可用');
+      expect(decisionText).toContain('权重 80 × 贡献 0.9');
+      expect(decisionText).toContain('stage:secondary');
+      expect(decisionText).toContain('已提升为 Primary');
+      expect(decisionText).toContain('pool:fallback');
+      expect(decisionText).not.toContain('pages.proxyLogs.');
+      expect(decisionText).not.toContain('components.modelRouteFlow.');
 
       await act(async () => {
         row.props.onClick();
@@ -1255,6 +1724,100 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(1);
       expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledWith('request:test:101');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('renders request-level unavailable routing evidence when no attempt was executed', async () => {
+    apiMock.getProxyRequestLogDetail.mockResolvedValue(buildProxyRequestFixture({
+      id: 101,
+      createdAt: '2026-03-09 16:00:00',
+      modelRequested: 'gpt-unavailable',
+      status: 'failure',
+      errorMessage: '所有执行尝试均不可用，请稍后重试',
+      decisionSnapshot: {
+        source: 'snapshot',
+        capturedAt: '2026-03-09 15:56:30',
+        request: { downstreamPath: '/v1/responses', stream: true },
+        compiledRuntime: {
+          runtimeArtifactId: 'runtime-artifact-unavailable',
+          bundleHash: 'bundle-unavailable',
+          program: null,
+        },
+        match: {
+          requestedModel: 'gpt-unavailable',
+          actualModel: null,
+          planId: 'plan:gpt-unavailable',
+          entryId: 'entry:gpt-unavailable',
+          publicModelName: 'gpt-unavailable',
+          terminalKind: 'endpoint',
+        },
+        metadata: {
+          graph: null,
+          plan: null,
+          selection: null,
+          endpoint: null,
+          executionAttempt: null,
+        },
+        decision: {
+          selectedAlternativeId: 'choice:cooldown',
+          selectors: [],
+          fallbackStages: [],
+          unavailable: {
+            reason: 'execution_attempts_exhausted',
+            rejectedAttempts: [
+              { executionAttemptId: 'program:macro:route:managed:19a74079-3e2e-4753-9a5c-c9c5e80ce0ef:entry:candidate:macro:route:managed:19a74079-3e2e-4753-9a5c-c9c5e80ce0ef:edge:candidate:fallback-stage:managed:5625f9e5-cec1-4971-baf5-32e06ce5418d:route-endpoint:managed:8631ed20-133d-4cc8-ac3a-7ce238614d26', executionTargetId: 12, reason: 'cooldown' },
+              { executionAttemptId: 'program:macro:route:managed:19a74079-3e2e-4753-9a5c-c9c5e80ce0ef:entry:candidate:macro:route:managed:19a74079-3e2e-4753-9a5c-c9c5e80ce0ef:edge:candidate:fallback-stage:managed:5625f9e5-cec1-4971-baf5-32e06ce5418d:route-endpoint:managed:8631ed20-133d-4cc8-ac3a-7ce238614d11', executionTargetId: 15, reason: 'missing_token' },
+            ],
+          },
+        },
+        endpoint: null,
+        executionAttempt: null,
+        requestUsage: { inputBytes: 64, maxOutputTokens: null },
+        state: {
+          failureOverlay: {
+            disabledExecutionAttemptIds: ['attempt:cooldown', 'attempt:no-key'],
+            disabledExecutionTargetIds: [12, 15],
+          },
+          executionAttemptState: null,
+        },
+        filters: { endpointPreference: 'responses', postBuild: {} },
+        syntheticResponse: null,
+      },
+    }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      const row = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
+      ));
+      await act(async () => row.props.onClick());
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).not.toContain('未记录路由运行快照');
+      const selectionSteps = root.root.find((node) => (
+        node.type === 'button' && node.props['aria-label'] === '选择详情'
+      ));
+      await act(async () => selectionSteps.props.onClick({ defaultPrevented: false }));
+      const text = collectText(root.root);
+      expect(text).toContain('候选不可用明细');
+      expect(text).toContain('2 个候选不可用');
+      expect(text).toContain('失败退避中');
+      expect(text).toContain('缺少可用模型调用 Key');
+      expect(text).toContain('执行尝试');
+      expect(text).not.toContain('program:macro:route:managed:19a74079-3e2e-4753-9a5c-c9c5e80ce0ef');
+      expect(root.root.findAll((node) => node.props['data-full-value']?.endsWith('8631ed20-133d-4cc8-ac3a-7ce238614d26')).length).toBe(1);
+      expect(text).not.toContain('#12');
+      expect(text).not.toContain('#15');
     } finally {
       root?.unmount();
     }
