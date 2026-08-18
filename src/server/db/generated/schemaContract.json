@@ -1957,6 +1957,12 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "execution_attempt_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2110,6 +2116,12 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "request_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }
@@ -3545,6 +3557,12 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "api_endpoint_backoff_policy": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -4480,6 +4498,14 @@
       "unique": false
     },
     {
+      "name": "proxy_debug_attempts_execution_attempt_idx",
+      "table": "proxy_debug_attempts",
+      "columns": [
+        "execution_attempt_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_debug_attempts_trace_attempt_unique",
       "table": "proxy_debug_attempts",
       "columns": [
@@ -4520,6 +4546,14 @@
       "columns": [
         "requested_model",
         "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_debug_traces_request_id_idx",
+      "table": "proxy_debug_traces",
+      "columns": [
+        "request_id"
       ],
       "unique": false
     },
@@ -5758,6 +5792,17 @@
         "id"
       ],
       "onDelete": "CASCADE"
+    },
+    {
+      "table": "proxy_debug_traces",
+      "columns": [
+        "request_id"
+      ],
+      "referencedTable": "proxy_requests",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "NO ACTION"
     },
     {
       "table": "proxy_logs",

@@ -16,6 +16,7 @@ export const sites = sqliteTable('sites', {
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
+  apiEndpointBackoffPolicy: text('api_endpoint_backoff_policy'),
   apiKey: text('api_key'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -588,6 +589,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
 
 export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  requestId: text('request_id').references(() => proxyRequests.id, { onDelete: 'cascade' }),
   downstreamPath: text('downstream_path').notNull(),
   clientKind: text('client_kind'),
   sessionId: text('session_id'),
@@ -613,6 +615,7 @@ export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
+  requestIdIdx: index('proxy_debug_traces_request_id_idx').on(table.requestId),
   createdAtIdx: index('proxy_debug_traces_created_at_idx').on(table.createdAt),
   sessionCreatedIdx: index('proxy_debug_traces_session_created_at_idx').on(table.sessionId, table.createdAt),
   modelCreatedIdx: index('proxy_debug_traces_model_created_at_idx').on(table.requestedModel, table.createdAt),
@@ -623,6 +626,7 @@ export const proxyDebugAttempts = sqliteTable('proxy_debug_attempts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   traceId: integer('trace_id').notNull().references(() => proxyDebugTraces.id, { onDelete: 'cascade' }),
   attemptIndex: integer('attempt_index').notNull(),
+  executionAttemptId: text('execution_attempt_id'),
   endpoint: text('endpoint').notNull(),
   requestPath: text('request_path').notNull(),
   targetUrl: text('target_url').notNull(),
@@ -643,6 +647,7 @@ export const proxyDebugAttempts = sqliteTable('proxy_debug_attempts', {
 }, (table) => ({
   traceAttemptUnique: uniqueIndex('proxy_debug_attempts_trace_attempt_unique').on(table.traceId, table.attemptIndex),
   traceCreatedIdx: index('proxy_debug_attempts_trace_created_at_idx').on(table.traceId, table.createdAt),
+  executionAttemptIdx: index('proxy_debug_attempts_execution_attempt_idx').on(table.executionAttemptId),
 }));
 
 export const proxyVideoTasks = sqliteTable('proxy_video_tasks', {

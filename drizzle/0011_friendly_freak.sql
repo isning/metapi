@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `api_endpoint_backoff_policy` text;

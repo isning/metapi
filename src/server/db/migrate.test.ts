@@ -37,6 +37,11 @@ describe('runSqliteMigrations', () => {
       sqlite.exec('ALTER TABLE accounts DROP COLUMN credential_kind');
       sqlite.exec('ALTER TABLE accounts RENAME COLUMN credential TO access_token');
       sqlite.exec('ALTER TABLE accounts ADD COLUMN unit_cost real');
+      sqlite.exec('DROP INDEX proxy_debug_traces_request_id_idx');
+      sqlite.exec('ALTER TABLE proxy_debug_traces DROP COLUMN request_id');
+      sqlite.exec('DROP INDEX proxy_debug_attempts_execution_attempt_idx');
+      sqlite.exec('ALTER TABLE proxy_debug_attempts DROP COLUMN execution_attempt_id');
+      sqlite.exec('ALTER TABLE sites DROP COLUMN api_endpoint_backoff_policy');
       sqlite.exec(`
         ALTER TABLE sites ADD COLUMN post_refresh_probe_enabled integer DEFAULT false;
         ALTER TABLE sites ADD COLUMN post_refresh_probe_model text DEFAULT '';

@@ -1,0 +1,2 @@
+ALTER TABLE `proxy_debug_attempts` ADD `execution_attempt_id` text;--> statement-breakpoint
+CREATE INDEX `proxy_debug_attempts_execution_attempt_idx` ON `proxy_debug_attempts` (`execution_attempt_id`);
